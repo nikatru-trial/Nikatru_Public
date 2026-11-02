@@ -490,16 +490,18 @@ jobs:
         run: |
           NIKATRU_QUIET="$(mktemp "${RUNNER_TEMP:-/tmp}/nikatru-step.XXXXXX")"
           cat > "$NIKATRU_QUIET" <<'NIKATRU_QUIET_EOF'
-          cp apps/probe/lib/state/providers.dart "$RUNNER_TEMP/probe-providers.dart"
-          echo "import { readFileSync, writeFileSync } from 'node:fs'; const p = process.argv[2]; const t = readFileSync(p, 'utf8'); const n = t.replace('class ReviewPromptController ', 'class ReviewSeamRemovedForTheRedControl ').replace('.requestReview(', '.reviewSeamRemovedForTheRedControl('); if (n === t || n.includes('class ReviewPromptController ') || n.includes('.requestReview(')) { console.error('the review seam (its declaration and its one call) was not found once in ' + p); process.exit(3); } writeFileSync(p, n);" > "$RUNNER_TEMP/remove-review-seam.mjs"
-          node "$RUNNER_TEMP/remove-review-seam.mjs" apps/probe/lib/state/providers.dart
+          seam="$(grep -rlF 'class ReviewPromptController ' apps/probe/lib/state || true)"
+          if [ -z "$seam" ] || [ "$(printf '%s\n' "$seam" | wc -l)" -ne 1 ]; then echo "::error::the probe's review seam (class ReviewPromptController) is not declared in exactly one file under apps/probe/lib/state: ${seam:-none}"; exit 3; fi
+          cp "$seam" "$RUNNER_TEMP/probe-review-seam.dart"
+          echo "import { readFileSync, writeFileSync } from 'node:fs'; const p = process.argv[2]; const t = readFileSync(p, 'utf8'); const n = t.replace('class ReviewPromptController ', 'class ReviewSeamRemovedForTheRedControl ').replaceAll('.requestReview(', '.reviewSeamRemovedForTheRedControl('); if (n === t || !t.includes('.requestReview(') || n.includes('class ReviewPromptController ') || n.includes('.requestReview(')) { console.error('the review seam (its declaration and its call) was not found in ' + p); process.exit(3); } writeFileSync(p, n);" > "$RUNNER_TEMP/remove-review-seam.mjs"
+          node "$RUNNER_TEMP/remove-review-seam.mjs" "$seam"
           set +e
           node tooling/ci/assert-seams-wired.mjs > "$RUNNER_TEMP/seams-red.log" 2>&1
           code=$?
           set -e
           cat "$RUNNER_TEMP/seams-red.log"
           echo "assert-seams-wired exit: $code"
-          cp "$RUNNER_TEMP/probe-providers.dart" apps/probe/lib/state/providers.dart
+          cp "$RUNNER_TEMP/probe-review-seam.dart" "$seam"
           if [ "$code" -ne 2 ]; then echo "::error::assert-seams-wired exited $code with the probe's review seam removed; the red control requires exactly 2"; exit 1; fi
           if ! grep -qF 'apps/probe' "$RUNNER_TEMP/seams-red.log"; then echo "::error::assert-seams-wired exited 2 without naming apps/probe"; exit 1; fi
           node tooling/ci/assert-seams-wired.mjs
