@@ -171,7 +171,7 @@ jobs:
     permissions:
       contents: read
     strategy:
-      fail-fast: true
+      fail-fast: false
       matrix:
         worker: ${{ fromJSON(needs.detect.outputs.workers) }}
     defaults:
@@ -387,6 +387,7 @@ jobs:
           sparse-checkout: |
             tooling
             .github/workflows
+            services/gh-bridge
           ssh-key: ${{ secrets.PRIVATE_DEPLOY_KEY }}
           persist-credentials: false
       - id: node-pin

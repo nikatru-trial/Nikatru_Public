@@ -412,8 +412,9 @@ jobs:
           mkdir -p "$RUNNER_TEMP/catalog-sync"
           archive=()
           for target in $NIKATRU_ARCHIVE; do archive+=(--archive "$target"); done
-          node tooling/catalog/sync-products.mjs --apply --report "$RUNNER_TEMP/catalog-sync/apply.md" "${archive[@]}" > "$RUNNER_TEMP/catalog-sync/apply.log" 2>&1
-          code=$?
+          # why (assert-exit-capture-under-e EC-1): bash -e ends the step on a bare failing command, so the status is read as `|| code=$?`.
+          code=0
+          node tooling/catalog/sync-products.mjs --apply --report "$RUNNER_TEMP/catalog-sync/apply.md" "${archive[@]}" > "$RUNNER_TEMP/catalog-sync/apply.log" 2>&1 || code=$?
           echo "catalog-sync --apply exited $code; its report is the private artifact catalog-sync-apply (never this log)."
           exit "$code"
       - name: Record what the catalogue write shipped

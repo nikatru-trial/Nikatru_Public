@@ -5,7 +5,7 @@ env:
 
 name: Kill switch
 
-run-name: "Kill switch · ${{ inputs.switch }} · ${{ inputs.environment }} · ${{ inputs.execute }}${{ inputs.rail && format(' · rail {0}', inputs.rail) || '' }}${{ inputs.app && format(' · app {0}', inputs.app) || '' }}"
+run-name: "Kill switch · ${{ inputs.switch }} · ${{ inputs.reason }} · ${{ inputs.environment }} · ${{ inputs.execute }}${{ inputs.rail && format(' · rail {0}', inputs.rail) || '' }}${{ inputs.app && format(' · app {0}', inputs.app) || '' }}"
 
 on:
   workflow_dispatch:
@@ -32,10 +32,9 @@ on:
         type: string
         default: ''
       reason:
-        description: 'One line: what is wrong, or why it is undone. REQUIRED to execute any switch: it pages the owner and goes to the audit line in this run''s PUBLIC log (write it as for the status page), never to the served config.'
-        required: false
+        description: 'One line: what is wrong, or why it is undone. REQUIRED on every dispatch, a dry run too (a drill says why): executed, it pages the owner and goes to the audit line in this run''s PUBLIC log and is the public CI shell''s run TITLE, shown in run lists and notification mails (write it as for the status page, no user or payment detail), never to the served config.'
+        required: true
         type: string
-        default: ''
       incident:
         description: 'Optional incident id (the status-page slug).'
         required: false

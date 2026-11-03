@@ -228,23 +228,23 @@ jobs:
           rm -rf ../.nikatru-shell
           mv .nikatru-shell/.github/nikatru ../.nikatru-shell
           rm -rf .nikatru-shell
-      - name: Check out private main's composite actions (generated)
+      - name: "Check out private main's gate script beside the judged tree (the gate below runs it) (generated: the private tree)"
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
         with:
           repository: ${{ env.NIKATRU_PRIVATE_REPO }}
-          ref: refs/heads/main
-          path: .nikatru-trusted
-          sparse-checkout: .github/actions
+          ref: main
+          path: .gate-main
+          sparse-checkout: |
+            tooling/ci
+            tooling/ops
+            tooling/generated
           ssh-key: ${{ secrets.PRIVATE_DEPLOY_KEY }}
           persist-credentials: false
-      - name: Keep private main's composite actions out of the branch's tree (generated)
-        shell: bash
-        working-directory: ${{ github.workspace }}
-        run: printf '/.nikatru-trusted/\n' >> "$(git rev-parse --git-path info/exclude)"
-      - uses: ./.nikatru-trusted/.github/actions/setup-node
       - name: Require ci-gate to have passed for this commit
         id: verdict
+        working-directory: .gate-main
         env:
+          NIKATRU_JUDGED_TREE: ${{ github.workspace }}
           GITHUB_TOKEN: ${{ github.token }}
           GITHUB_REPOSITORY: ${{ github.repository }}
           EVENT_NAME: ${{ (github.event.client_payload.event || github.event_name) }}

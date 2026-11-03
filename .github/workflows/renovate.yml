@@ -124,7 +124,10 @@ jobs:
           NIKATRU_QUIET="$(mktemp "${RUNNER_TEMP:-/tmp}/nikatru-step.XXXXXX")"
           cat > "$NIKATRU_QUIET" <<'NIKATRU_QUIET_EOF'
           if [ -s /tmp/nikatru-renovate.log ]; then tail -n 400 /tmp/nikatru-renovate.log; fi
+          summary=0
+          node tooling/ops/renovate-log-summary.mjs /tmp/nikatru-renovate.log || summary=$?
           test "$RENOVATE_OUTCOME" = success
+          exit "$summary"
           NIKATRU_QUIET_EOF
           NIKATRU_SHELL="${BASH:-bash}"; if command -v cygpath >/dev/null 2>&1; then NIKATRU_SHELL="$(cygpath -w "$NIKATRU_SHELL")"; fi
           node "$GITHUB_WORKSPACE/../.nikatru-shell/quiet-step.mjs" --name renovate.renovate.3 -- "$NIKATRU_SHELL" --noprofile --norc -eo pipefail "$NIKATRU_QUIET"

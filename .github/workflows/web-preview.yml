@@ -651,8 +651,9 @@ jobs:
           node "$GITHUB_WORKSPACE/tooling/ops/npm-ci-retry.mjs" -- npm ci --ignore-scripts --no-audit --no-fund --prefix tooling/wrangler > "$log" 2>&1 || { echo "::error title=web preview::the tooling/wrangler island did not install from its lockfile"; tail -n 20 "$log"; exit 1; }
           got="$(node -p "require('./tooling/wrangler/node_modules/wrangler/package.json').version")"
           if [ "$got" != "$wranglerVersion" ]; then echo "::error title=web preview::the island installed wrangler ${got}, not the ${wranglerVersion} this file pins"; exit 1; fi
-          node tooling/ci/pages-deploy.mjs deploy --cwd "$RUNNER_TEMP/wrangler-cwd" --dir "$site" --project-name "$PROJECT" --branch "$BRANCH" --commit-hash "$HEAD_SHA" --commit-dirty --expect-environment preview --log "$log"
-          code=$?
+          # why (assert-exit-capture-under-e EC-1): bash -e ends the step on a bare failing command, so the status is read as `|| code=$?`.
+          code=0
+          node tooling/ci/pages-deploy.mjs deploy --cwd "$RUNNER_TEMP/wrangler-cwd" --dir "$site" --project-name "$PROJECT" --branch "$BRANCH" --commit-hash "$HEAD_SHA" --commit-dirty --expect-environment preview --log "$log" || code=$?
           if [ "$code" -ne 0 ]; then echo "::error title=web preview::the preview deploy exited ${code}"; exit 1; fi
           echo "uploaded to the ${BRANCH} alias of ${PROJECT}"
       - name: Smoke the preview — the smoke production runs, on the pr-<n> alias

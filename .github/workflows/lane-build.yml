@@ -259,7 +259,7 @@ jobs:
     permissions:
       contents: read
     strategy:
-      fail-fast: true
+      fail-fast: false
       matrix:
         app: ${{ fromJSON(needs.prepare.outputs.apps) }}
     steps:
@@ -478,6 +478,22 @@ jobs:
         with:
           distribution: temurin
           java-version: '17'
+      - name: Check out private main's composite actions (generated)
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
+        with:
+          repository: ${{ env.NIKATRU_PRIVATE_REPO }}
+          ref: refs/heads/main
+          path: .nikatru-trusted
+          sparse-checkout: .github/actions
+          ssh-key: ${{ secrets.PRIVATE_DEPLOY_KEY }}
+          persist-credentials: false
+      - name: Keep private main's composite actions out of the branch's tree (generated)
+        shell: bash
+        working-directory: ${{ github.workspace }}
+        run: printf '/.nikatru-trusted/\n' >> "$(git rev-parse --git-path info/exclude)"
+      - uses: ./.nikatru-trusted/.github/actions/setup-flutter
+        with:
+          android-ndk: 'true'
       - name: Restore the Gradle caches (dependencies, wrapper, task outputs)
         id: gradle-cache
         uses: actions/cache/restore@55cc8345863c7cc4c66a329aec7e433d2d1c52a9
@@ -496,7 +512,7 @@ jobs:
           echo 'org.gradle.caching=true' >> ~/.gradle/gradle.properties
           NIKATRU_QUIET_EOF
           NIKATRU_SHELL="${BASH:-bash}"; if command -v cygpath >/dev/null 2>&1; then NIKATRU_SHELL="$(cygpath -w "$NIKATRU_SHELL")"; fi
-          node "$GITHUB_WORKSPACE/../.nikatru-shell/quiet-step.mjs" --name lane-build.android-artifacts.4 -- "$NIKATRU_SHELL" -e "$NIKATRU_QUIET"
+          node "$GITHUB_WORKSPACE/../.nikatru-shell/quiet-step.mjs" --name lane-build.android-artifacts.5 -- "$NIKATRU_SHELL" -e "$NIKATRU_QUIET"
       - name: Turn on Gradle's cache cleanup (a run of main only, on a key miss, from the saving leg)
         if: ((env.NIKATRU_REF || (github.event.client_payload.ref || 'refs/heads/main')) == 'refs/heads/main' && contains(fromJSON('["push","schedule","workflow_dispatch"]'), env.NIKATRU_EVENT_NAME || (github.event.client_payload.event || github.event_name)) && !env.NIKATRU_PR) && steps.gradle-cache.outputs.cache-hit != 'true' && matrix.app == fromJSON(needs.prepare.outputs.apps)[0]
         run: |
@@ -506,23 +522,7 @@ jobs:
           cp tooling/ci/gradle-cache-cleanup.init.gradle ~/.gradle/init.d/
           NIKATRU_QUIET_EOF
           NIKATRU_SHELL="${BASH:-bash}"; if command -v cygpath >/dev/null 2>&1; then NIKATRU_SHELL="$(cygpath -w "$NIKATRU_SHELL")"; fi
-          node "$GITHUB_WORKSPACE/../.nikatru-shell/quiet-step.mjs" --name lane-build.android-artifacts.5 -- "$NIKATRU_SHELL" -e "$NIKATRU_QUIET"
-      - name: Check out private main's composite actions (generated)
-        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
-        with:
-          repository: ${{ env.NIKATRU_PRIVATE_REPO }}
-          ref: refs/heads/main
-          path: .nikatru-trusted
-          sparse-checkout: .github/actions
-          ssh-key: ${{ secrets.PRIVATE_DEPLOY_KEY }}
-          persist-credentials: false
-      - name: Keep private main's composite actions out of the branch's tree (generated)
-        shell: bash
-        working-directory: ${{ github.workspace }}
-        run: printf '/.nikatru-trusted/\n' >> "$(git rev-parse --git-path info/exclude)"
-      - uses: ./.nikatru-trusted/.github/actions/setup-flutter
-        with:
-          android-ndk: 'true'
+          node "$GITHUB_WORKSPACE/../.nikatru-shell/quiet-step.mjs" --name lane-build.android-artifacts.6 -- "$NIKATRU_SHELL" -e "$NIKATRU_QUIET"
       - name: Resolve the workspace
         run: |
           NIKATRU_QUIET="$(mktemp "${RUNNER_TEMP:-/tmp}/nikatru-step.XXXXXX")"
@@ -729,7 +729,7 @@ jobs:
       contents: read
     needs: [detect, prepare, pool-build]
     strategy:
-      fail-fast: true
+      fail-fast: false
       matrix:
         app: ${{ fromJSON(needs.prepare.outputs.apps) }}
     steps:
@@ -996,8 +996,9 @@ jobs:
           fi
           status=0
           for project in $projects; do
-            WEB_ENGINE_PROJECT="$project" node --import "$SPAWN_CEILING" --test-timeout=600000 --test --test-reporter=spec tooling/e2e/web-engines/core-flow.spec.mjs
-            code=$?
+            # why (assert-exit-capture-under-e EC-1): bash -e ends the step on a bare failing command, so the status is read as `|| code=$?`.
+            code=0
+            WEB_ENGINE_PROJECT="$project" node --import "$SPAWN_CEILING" --test-timeout=600000 --test --test-reporter=spec tooling/e2e/web-engines/core-flow.spec.mjs || code=$?
             if [ "$code" -ne 0 ]; then
               echo "::error title=Web engines (PR)::the core flow failed in ${project} (exit ${code})"
               status=1
@@ -1680,6 +1681,7 @@ jobs:
           sparse-checkout: |
             tooling
             .github/workflows
+            services/gh-bridge
           ssh-key: ${{ secrets.PRIVATE_DEPLOY_KEY }}
           persist-credentials: false
       - id: node-pin

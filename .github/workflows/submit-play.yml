@@ -755,6 +755,7 @@ jobs:
       contents: read
       checks: read
       deployments: write
+      id-token: write
     env:
       APP: ${{ needs.gate.outputs.app }}
     steps:
@@ -871,19 +872,8 @@ jobs:
           set -euo pipefail
           RECORDED="$(node tooling/ci/read-ledger-version-code.mjs "${APP}-android-play")"
           node tooling/ci/assert-app-versioning.mjs --play-floor "$RUN_NUMBER" --app "$APP" --recorded-upload "$RECORDED"
-      - name: Restore the ${{ needs.dry-run.outputs.artifact }} hand-off (generated)
-        id: nikatru-restore-3
-        timeout-minutes: 2
-        continue-on-error: true
-        uses: actions/cache/restore@55cc8345863c7cc4c66a329aec7e433d2d1c52a9
-        with:
-          path: .nikatru-handoff/sealed
-          key: nikatru-handoff-${{ needs.dry-run.outputs.artifact }}-${{ github.run_id }}-${{ github.run_attempt }}
-          restore-keys: nikatru-handoff-${{ needs.dry-run.outputs.artifact }}-${{ github.run_id }}-
-          enableCrossOsArchive: true
-      - name: Look up the ${{ needs.dry-run.outputs.artifact }} hand-off, as its restore matched nothing (generated)
+      - name: Find the ${{ needs.dry-run.outputs.artifact }} hand-off's key, downloading nothing (generated)
         id: nikatru-probe-3
-        if: ${{ (success()) && steps.nikatru-restore-3.outputs.cache-matched-key == '' }}
         uses: actions/cache/restore@55cc8345863c7cc4c66a329aec7e433d2d1c52a9
         with:
           path: .nikatru-handoff/sealed
@@ -891,35 +881,52 @@ jobs:
           restore-keys: nikatru-handoff-${{ needs.dry-run.outputs.artifact }}-${{ github.run_id }}-
           lookup-only: true
           enableCrossOsArchive: true
+      - name: Hold the ${{ needs.dry-run.outputs.artifact }} hand-off's key to this run's (generated)
+        id: nikatru-key-3
+        if: ${{ (success()) && steps.nikatru-probe-3.outputs.cache-matched-key != '' }}
+        shell: bash
+        env:
+          NIKATRU_MATCHED: ${{ steps.nikatru-probe-3.outputs.cache-matched-key }}
+          NIKATRU_HANDOFF_PREFIX: nikatru-handoff-${{ needs.dry-run.outputs.artifact }}-${{ github.run_id }}-
+          NIKATRU_ATTEMPT: ${{ github.run_attempt }}
+        run: case "$NIKATRU_MATCHED" in "$NIKATRU_HANDOFF_PREFIX"*) a="${NIKATRU_MATCHED#"$NIKATRU_HANDOFF_PREFIX"}";; *) a=x;; esac; if [ -n "$NIKATRU_MATCHED" ] && [[ "$a" =~ ^([1-9][0-9]{0,3})(-r2|-r3)?$ ]] && [ "${BASH_REMATCH[1]}" -le "$NIKATRU_ATTEMPT" ] && [[ "$NIKATRU_MATCHED" =~ ^[A-Za-z0-9._-]+$ ]]; then echo "key=$NIKATRU_MATCHED" >> "$GITHUB_OUTPUT"; elif [ -n "$NIKATRU_MATCHED" ]; then echo "::warning title=hand-off::the cache matched $NIKATRU_MATCHED, which is not this run's hand-off key (an attempt of this run, at most this one), so it is not restored"; fi
+      - name: Restore the ${{ needs.dry-run.outputs.artifact }} hand-off (generated)
+        id: nikatru-restore-3
+        if: ${{ (success()) && steps.nikatru-key-3.outputs.key != '' }}
+        timeout-minutes: 2
+        continue-on-error: true
+        uses: actions/cache/restore@55cc8345863c7cc4c66a329aec7e433d2d1c52a9
+        with:
+          path: .nikatru-handoff/sealed
+          key: ${{ steps.nikatru-key-3.outputs.key }}
+          enableCrossOsArchive: true
       - name: Wait 20 s before restoring the ${{ needs.dry-run.outputs.artifact }} hand-off again (generated)
-        if: ${{ (success()) && steps.nikatru-restore-3.outputs.cache-matched-key == '' && steps.nikatru-probe-3.outputs.cache-matched-key != '' }}
+        if: ${{ (success()) && steps.nikatru-restore-3.outputs.cache-matched-key == '' && steps.nikatru-key-3.outputs.key != '' }}
         shell: bash
         run: sleep 20
       - name: "Restore the ${{ needs.dry-run.outputs.artifact }} hand-off again (attempt 2): the entry is in the cache, its download was refused (generated)"
         id: nikatru-restore-3-b
-        if: ${{ (success()) && steps.nikatru-restore-3.outputs.cache-matched-key == '' && steps.nikatru-probe-3.outputs.cache-matched-key != '' }}
+        if: ${{ (success()) && steps.nikatru-restore-3.outputs.cache-matched-key == '' && steps.nikatru-key-3.outputs.key != '' }}
         timeout-minutes: 2
         continue-on-error: true
         uses: actions/cache/restore@55cc8345863c7cc4c66a329aec7e433d2d1c52a9
         with:
           path: .nikatru-handoff/sealed
-          key: nikatru-handoff-${{ needs.dry-run.outputs.artifact }}-${{ github.run_id }}-${{ github.run_attempt }}
-          restore-keys: nikatru-handoff-${{ needs.dry-run.outputs.artifact }}-${{ github.run_id }}-
+          key: ${{ steps.nikatru-key-3.outputs.key }}
           enableCrossOsArchive: true
       - name: Wait 60 s before restoring the ${{ needs.dry-run.outputs.artifact }} hand-off again (generated)
-        if: ${{ (success()) && steps.nikatru-restore-3.outputs.cache-matched-key == '' && steps.nikatru-restore-3-b.outputs.cache-matched-key == '' && steps.nikatru-probe-3.outputs.cache-matched-key != '' }}
+        if: ${{ (success()) && steps.nikatru-restore-3.outputs.cache-matched-key == '' && steps.nikatru-restore-3-b.outputs.cache-matched-key == '' && steps.nikatru-key-3.outputs.key != '' }}
         shell: bash
         run: sleep 60
       - name: "Restore the ${{ needs.dry-run.outputs.artifact }} hand-off again (attempt 3): the entry is in the cache, its download was refused (generated)"
         id: nikatru-restore-3-c
-        if: ${{ (success()) && steps.nikatru-restore-3.outputs.cache-matched-key == '' && steps.nikatru-restore-3-b.outputs.cache-matched-key == '' && steps.nikatru-probe-3.outputs.cache-matched-key != '' }}
+        if: ${{ (success()) && steps.nikatru-restore-3.outputs.cache-matched-key == '' && steps.nikatru-restore-3-b.outputs.cache-matched-key == '' && steps.nikatru-key-3.outputs.key != '' }}
         timeout-minutes: 2
         continue-on-error: true
         uses: actions/cache/restore@55cc8345863c7cc4c66a329aec7e433d2d1c52a9
         with:
           path: .nikatru-handoff/sealed
-          key: nikatru-handoff-${{ needs.dry-run.outputs.artifact }}-${{ github.run_id }}-${{ github.run_attempt }}
-          restore-keys: nikatru-handoff-${{ needs.dry-run.outputs.artifact }}-${{ github.run_id }}-
+          key: ${{ steps.nikatru-key-3.outputs.key }}
           enableCrossOsArchive: true
       - name: Fail when no ${{ needs.dry-run.outputs.artifact }} hand-off was restored (generated)
         id: nikatru-unrestored-3
@@ -927,7 +934,7 @@ jobs:
         shell: bash
         env:
           NIKATRU_HANDOFF_KEY: nikatru-handoff-${{ needs.dry-run.outputs.artifact }}-${{ github.run_id }}-${{ github.run_attempt }}
-          NIKATRU_PROBED: ${{ steps.nikatru-probe-3.outputs.cache-matched-key }}
+          NIKATRU_PROBED: ${{ steps.nikatru-key-3.outputs.key }}
         run: if [ -n "$NIKATRU_PROBED" ]; then echo "::error title=hand-off::the hand-off $NIKATRU_PROBED is in the cache, but 3 downloads were refused (Egress is over the account limit); a failed-jobs re-run retries it"; else echo "::error title=hand-off::no save of $NIKATRU_HANDOFF_KEY (nor -r2, -r3) is in the cache"; fi; exit 1
       - name: Unseal the ${{ needs.dry-run.outputs.artifact }} hand-off (generated)
         id: nikatru-unseal-3
@@ -970,19 +977,8 @@ jobs:
         run: >
           node --single-threaded tooling/ci/assert-elf-page-alignment.mjs
           "apps/${APP}/build/app/outputs/bundle/release/app-release.aab"
-      - name: Restore the symbols-${{ needs.gate.outputs.app }}-android-play-dry-run hand-off (generated)
-        id: nikatru-restore-4
-        timeout-minutes: 2
-        continue-on-error: true
-        uses: actions/cache/restore@55cc8345863c7cc4c66a329aec7e433d2d1c52a9
-        with:
-          path: .nikatru-handoff/sealed
-          key: nikatru-handoff-symbols-${{ needs.gate.outputs.app }}-android-play-dry-run-${{ github.run_id }}-${{ github.run_attempt }}
-          restore-keys: nikatru-handoff-symbols-${{ needs.gate.outputs.app }}-android-play-dry-run-${{ github.run_id }}-
-          enableCrossOsArchive: true
-      - name: Look up the symbols-${{ needs.gate.outputs.app }}-android-play-dry-run hand-off, as its restore matched nothing (generated)
+      - name: Find the symbols-${{ needs.gate.outputs.app }}-android-play-dry-run hand-off's key, downloading nothing (generated)
         id: nikatru-probe-4
-        if: ${{ (success()) && steps.nikatru-restore-4.outputs.cache-matched-key == '' }}
         uses: actions/cache/restore@55cc8345863c7cc4c66a329aec7e433d2d1c52a9
         with:
           path: .nikatru-handoff/sealed
@@ -990,35 +986,52 @@ jobs:
           restore-keys: nikatru-handoff-symbols-${{ needs.gate.outputs.app }}-android-play-dry-run-${{ github.run_id }}-
           lookup-only: true
           enableCrossOsArchive: true
+      - name: Hold the symbols-${{ needs.gate.outputs.app }}-android-play-dry-run hand-off's key to this run's (generated)
+        id: nikatru-key-4
+        if: ${{ (success()) && steps.nikatru-probe-4.outputs.cache-matched-key != '' }}
+        shell: bash
+        env:
+          NIKATRU_MATCHED: ${{ steps.nikatru-probe-4.outputs.cache-matched-key }}
+          NIKATRU_HANDOFF_PREFIX: nikatru-handoff-symbols-${{ needs.gate.outputs.app }}-android-play-dry-run-${{ github.run_id }}-
+          NIKATRU_ATTEMPT: ${{ github.run_attempt }}
+        run: case "$NIKATRU_MATCHED" in "$NIKATRU_HANDOFF_PREFIX"*) a="${NIKATRU_MATCHED#"$NIKATRU_HANDOFF_PREFIX"}";; *) a=x;; esac; if [ -n "$NIKATRU_MATCHED" ] && [[ "$a" =~ ^([1-9][0-9]{0,3})(-r2|-r3)?$ ]] && [ "${BASH_REMATCH[1]}" -le "$NIKATRU_ATTEMPT" ] && [[ "$NIKATRU_MATCHED" =~ ^[A-Za-z0-9._-]+$ ]]; then echo "key=$NIKATRU_MATCHED" >> "$GITHUB_OUTPUT"; elif [ -n "$NIKATRU_MATCHED" ]; then echo "::warning title=hand-off::the cache matched $NIKATRU_MATCHED, which is not this run's hand-off key (an attempt of this run, at most this one), so it is not restored"; fi
+      - name: Restore the symbols-${{ needs.gate.outputs.app }}-android-play-dry-run hand-off (generated)
+        id: nikatru-restore-4
+        if: ${{ (success()) && steps.nikatru-key-4.outputs.key != '' }}
+        timeout-minutes: 2
+        continue-on-error: true
+        uses: actions/cache/restore@55cc8345863c7cc4c66a329aec7e433d2d1c52a9
+        with:
+          path: .nikatru-handoff/sealed
+          key: ${{ steps.nikatru-key-4.outputs.key }}
+          enableCrossOsArchive: true
       - name: Wait 20 s before restoring the symbols-${{ needs.gate.outputs.app }}-android-play-dry-run hand-off again (generated)
-        if: ${{ (success()) && steps.nikatru-restore-4.outputs.cache-matched-key == '' && steps.nikatru-probe-4.outputs.cache-matched-key != '' }}
+        if: ${{ (success()) && steps.nikatru-restore-4.outputs.cache-matched-key == '' && steps.nikatru-key-4.outputs.key != '' }}
         shell: bash
         run: sleep 20
       - name: "Restore the symbols-${{ needs.gate.outputs.app }}-android-play-dry-run hand-off again (attempt 2): the entry is in the cache, its download was refused (generated)"
         id: nikatru-restore-4-b
-        if: ${{ (success()) && steps.nikatru-restore-4.outputs.cache-matched-key == '' && steps.nikatru-probe-4.outputs.cache-matched-key != '' }}
+        if: ${{ (success()) && steps.nikatru-restore-4.outputs.cache-matched-key == '' && steps.nikatru-key-4.outputs.key != '' }}
         timeout-minutes: 2
         continue-on-error: true
         uses: actions/cache/restore@55cc8345863c7cc4c66a329aec7e433d2d1c52a9
         with:
           path: .nikatru-handoff/sealed
-          key: nikatru-handoff-symbols-${{ needs.gate.outputs.app }}-android-play-dry-run-${{ github.run_id }}-${{ github.run_attempt }}
-          restore-keys: nikatru-handoff-symbols-${{ needs.gate.outputs.app }}-android-play-dry-run-${{ github.run_id }}-
+          key: ${{ steps.nikatru-key-4.outputs.key }}
           enableCrossOsArchive: true
       - name: Wait 60 s before restoring the symbols-${{ needs.gate.outputs.app }}-android-play-dry-run hand-off again (generated)
-        if: ${{ (success()) && steps.nikatru-restore-4.outputs.cache-matched-key == '' && steps.nikatru-restore-4-b.outputs.cache-matched-key == '' && steps.nikatru-probe-4.outputs.cache-matched-key != '' }}
+        if: ${{ (success()) && steps.nikatru-restore-4.outputs.cache-matched-key == '' && steps.nikatru-restore-4-b.outputs.cache-matched-key == '' && steps.nikatru-key-4.outputs.key != '' }}
         shell: bash
         run: sleep 60
       - name: "Restore the symbols-${{ needs.gate.outputs.app }}-android-play-dry-run hand-off again (attempt 3): the entry is in the cache, its download was refused (generated)"
         id: nikatru-restore-4-c
-        if: ${{ (success()) && steps.nikatru-restore-4.outputs.cache-matched-key == '' && steps.nikatru-restore-4-b.outputs.cache-matched-key == '' && steps.nikatru-probe-4.outputs.cache-matched-key != '' }}
+        if: ${{ (success()) && steps.nikatru-restore-4.outputs.cache-matched-key == '' && steps.nikatru-restore-4-b.outputs.cache-matched-key == '' && steps.nikatru-key-4.outputs.key != '' }}
         timeout-minutes: 2
         continue-on-error: true
         uses: actions/cache/restore@55cc8345863c7cc4c66a329aec7e433d2d1c52a9
         with:
           path: .nikatru-handoff/sealed
-          key: nikatru-handoff-symbols-${{ needs.gate.outputs.app }}-android-play-dry-run-${{ github.run_id }}-${{ github.run_attempt }}
-          restore-keys: nikatru-handoff-symbols-${{ needs.gate.outputs.app }}-android-play-dry-run-${{ github.run_id }}-
+          key: ${{ steps.nikatru-key-4.outputs.key }}
           enableCrossOsArchive: true
       - name: Fail when no symbols-${{ needs.gate.outputs.app }}-android-play-dry-run hand-off was restored (generated)
         id: nikatru-unrestored-4
@@ -1026,7 +1039,7 @@ jobs:
         shell: bash
         env:
           NIKATRU_HANDOFF_KEY: nikatru-handoff-symbols-${{ needs.gate.outputs.app }}-android-play-dry-run-${{ github.run_id }}-${{ github.run_attempt }}
-          NIKATRU_PROBED: ${{ steps.nikatru-probe-4.outputs.cache-matched-key }}
+          NIKATRU_PROBED: ${{ steps.nikatru-key-4.outputs.key }}
         run: if [ -n "$NIKATRU_PROBED" ]; then echo "::error title=hand-off::the hand-off $NIKATRU_PROBED is in the cache, but 3 downloads were refused (Egress is over the account limit); a failed-jobs re-run retries it"; else echo "::error title=hand-off::no save of $NIKATRU_HANDOFF_KEY (nor -r2, -r3) is in the cache"; fi; exit 1
       - name: Unseal the symbols-${{ needs.gate.outputs.app }}-android-play-dry-run hand-off (generated)
         id: nikatru-unseal-4
@@ -1108,8 +1121,9 @@ jobs:
           ')"
           echo "⬜ [14]O-7 reading the Play track state for ${APPLICATION_ID}, expecting versionCode ${VERSION_CODE}"
           node tooling/ops/post-deploy-smoke.mjs --play-package "${APPLICATION_ID}" --expect "${VERSION_CODE}"
-          echo "::notice title=Play versionCode high-water::versionCode ${VERSION_CODE} is consumed, and the ledger now holds it: the next dispatch stops until the mark is raised. One command moves the mark AND the release-notes header together (review B5-store-channels m7) - node tooling/release/advance-play-mark.mjs --app ${APP} --consumed ${VERSION_CODE} --run ${GITHUB_RUN_ID} --notes <next release notes file> (or --keep-notes for a hotfix), then commit both files"
+          echo "::notice title=Play versionCode high-water::versionCode ${VERSION_CODE} is consumed, and the ledger now holds it: the next dispatch stops until the mark is raised. This job proposes the mark itself (step 'Propose the consumed mark into main (pull request)'); merge that pull request. If none opened, the hand fallback moves the mark AND the release-notes header together (review B5-store-channels m7) - node tooling/release/advance-play-mark.mjs --app ${APP} --consumed ${VERSION_CODE} --run ${GITHUB_RUN_ID} --keep-notes (or --notes <file>), then commit both files"
       - name: Record the submission in the [10]D-9 ledger
+        id: record
         if: always() && steps.upload.outcome == 'success'
         env:
           GH_TOKEN: ${{ github.token }}
@@ -1128,6 +1142,52 @@ jobs:
           else
             node tooling/ci/record-deployment.mjs "${APP}-android-play" --state in_review --listing-url "$LISTING_URL" --version-code "$VERSION_CODE" --mode production --artifact "$AAB" --build-number "$VERSION_CODE" --symbols-record "${RUNNER_TEMP}/symbols-record.json"
           fi
+      - name: Write the consumed mark this upload proved
+        id: mark
+        if: always() && steps.upload.outcome == 'success' && steps.record.outcome == 'success'
+        env:
+          GH_TOKEN: ${{ github.token }}
+          GITHUB_REPOSITORY: ${{ github.repository }}
+          VERSION_CODE: ${{ needs.dry-run.outputs.version_code }}
+        run: |
+          set -euo pipefail
+          LEDGER="$(node tooling/ci/read-ledger-version-code.mjs --deployment-of-run "$GITHUB_RUN_ID" "${APP}-android-play")"
+          read -r DEPLOYMENT LEDGER_CODE <<< "$LEDGER"
+          if [ "$LEDGER_CODE" != "$VERSION_CODE" ]; then
+            echo "::error title=Play mark not proposed::Deployment ${DEPLOYMENT} records versionCode ${LEDGER_CODE}, and this job uploaded ${VERSION_CODE}." >&2
+            exit 1
+          fi
+          mkdir -p "${RUNNER_TEMP}/play-mark"
+          node tooling/release/propose-play-mark.mjs --app "$APP" --consumed "$VERSION_CODE" --run "$GITHUB_RUN_ID" \
+            --run-number "$GITHUB_RUN_NUMBER" --deployment "$DEPLOYMENT" --body-out "${RUNNER_TEMP}/play-mark/pr-body.md" \
+            > "${RUNNER_TEMP}/play-mark/paths.txt"
+          if [ -s "${RUNNER_TEMP}/play-mark/paths.txt" ]; then
+            {
+              echo "propose=true"
+              echo "deployment=${DEPLOYMENT}"
+              echo "paths=$(tr '\n' ' ' < "${RUNNER_TEMP}/play-mark/paths.txt")"
+            } >> "$GITHUB_OUTPUT"
+          fi
+      - name: Propose the consumed mark into main (pull request)
+        if: always() && steps.mark.outputs.propose == 'true'
+        env:
+          NIKATRU_PROPOSE_PATHS: ${{ steps.mark.outputs.paths }}
+          NIKATRU_PROPOSE_BRANCH: chore/play-mark-${{ github.run_id }}
+          NIKATRU_PROPOSE_BASE: main
+          NIKATRU_PROPOSE_TITLE: 'chore(play): record versionCode ${{ needs.dry-run.outputs.version_code }} as consumed (${{ needs.gate.outputs.app }})'
+          NIKATRU_PROPOSE_MESSAGE: |
+            chore(play): record versionCode ${{ needs.dry-run.outputs.version_code }} as consumed (${{ needs.gate.outputs.app }})
+
+            Written by .github/workflows/submit-play.yml's upload job (run ${{ github.run_id }}),
+            from the ledger Deployment ${{ steps.mark.outputs.deployment }} it recorded, with
+            tooling/release/propose-play-mark.mjs. Until this merges, every dispatch stops at
+            --play-floor (the ledger is above the committed mark).
+          NIKATRU_PROPOSE_BODY_FILE: ${{ runner.temp }}/play-mark/pr-body.md
+          NIKATRU_PROPOSE_ARTIFACT: proposal-submit-play.submit
+          BRIDGE_ARTIFACT_SECRET: ${{ secrets.BRIDGE_ARTIFACT_SECRET }}
+          NIKATRU_BRIDGE_ARTIFACT_URL: https://gh-bridge.nikatru.workers.dev/artifact
+          NIKATRU_BRIDGE_PROPOSE_URL: https://gh-bridge.nikatru.workers.dev/propose
+        run: node tooling/ops/bridge-propose.mjs
 
   promote:
     name: Move the production staged rollout (owner-approved)

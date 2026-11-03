@@ -513,6 +513,26 @@ jobs:
           NIKATRU_QUIET_EOF
           NIKATRU_SHELL="${BASH:-bash}"; if command -v cygpath >/dev/null 2>&1; then NIKATRU_SHELL="$(cygpath -w "$NIKATRU_SHELL")"; fi
           node "$GITHUB_WORKSPACE/../.nikatru-shell/quiet-step.mjs" --name ops-watch.heartbeats.17 -- "$NIKATRU_SHELL" -e "$NIKATRU_QUIET"
+      - name: A live-user, money, security or monthly workflow red on main pages its owner (red streak, page class)
+        if: ${{ !cancelled() }}
+        timeout-minutes: 5
+        env:
+          GH_TOKEN: ${{ github.token }}
+          NIKATRU_PAGE_OUT: ${{ runner.temp }}/pipeline-pages.md
+        run: |
+          NIKATRU_QUIET="$(mktemp "${RUNNER_TEMP:-/tmp}/nikatru-step.XXXXXX")"
+          cat > "$NIKATRU_QUIET" <<'NIKATRU_QUIET_EOF'
+          set +e
+          node tooling/ops/check-red-streak.mjs --pages
+          code=$?
+          set -e
+          if [ -s "$NIKATRU_PAGE_OUT" ]; then
+            echo "::error title=A page-class workflow is red on main::$(wc -l < "$NIKATRU_PAGE_OUT") PAGE line(s) above name the workflow and its owner area; alert files this run."
+          fi
+          exit "$code"
+          NIKATRU_QUIET_EOF
+          NIKATRU_SHELL="${BASH:-bash}"; if command -v cygpath >/dev/null 2>&1; then NIKATRU_SHELL="$(cygpath -w "$NIKATRU_SHELL")"; fi
+          node "$GITHUB_WORKSPACE/../.nikatru-shell/quiet-step.mjs" --name ops-watch.heartbeats.18 -- "$NIKATRU_SHELL" -e "$NIKATRU_QUIET"
       - name: No date that flips a gate arrives unannounced (deadline register)
         if: ${{ !cancelled() }}
         env:
@@ -523,7 +543,18 @@ jobs:
           node tooling/ci/assert-deadline-register.mjs --warn --advisory
           NIKATRU_QUIET_EOF
           NIKATRU_SHELL="${BASH:-bash}"; if command -v cygpath >/dev/null 2>&1; then NIKATRU_SHELL="$(cygpath -w "$NIKATRU_SHELL")"; fi
-          node "$GITHUB_WORKSPACE/../.nikatru-shell/quiet-step.mjs" --name ops-watch.heartbeats.18 -- "$NIKATRU_SHELL" -e "$NIKATRU_QUIET"
+          node "$GITHUB_WORKSPACE/../.nikatru-shell/quiet-step.mjs" --name ops-watch.heartbeats.19 -- "$NIKATRU_SHELL" -e "$NIKATRU_QUIET"
+      - name: No register date expires unseen within 72 h (expiry forecast)
+        if: ${{ !cancelled() }}
+        env:
+          NIKATRU_ADVISORY_OUT: ${{ runner.temp }}/pipeline-watch.md
+        run: |
+          NIKATRU_QUIET="$(mktemp "${RUNNER_TEMP:-/tmp}/nikatru-step.XXXXXX")"
+          cat > "$NIKATRU_QUIET" <<'NIKATRU_QUIET_EOF'
+          node tooling/ops/expiry-forecast.mjs --advisory
+          NIKATRU_QUIET_EOF
+          NIKATRU_SHELL="${BASH:-bash}"; if command -v cygpath >/dev/null 2>&1; then NIKATRU_SHELL="$(cygpath -w "$NIKATRU_SHELL")"; fi
+          node "$GITHUB_WORKSPACE/../.nikatru-shell/quiet-step.mjs" --name ops-watch.heartbeats.20 -- "$NIKATRU_SHELL" -e "$NIKATRU_QUIET"
       - name: The store dry runs are fresh
         if: ${{ !cancelled() }}
         timeout-minutes: 6
@@ -536,7 +567,7 @@ jobs:
           node --single-threaded tooling/ci/assert-platform-proof-fresh.mjs --store-lanes
           NIKATRU_QUIET_EOF
           NIKATRU_SHELL="${BASH:-bash}"; if command -v cygpath >/dev/null 2>&1; then NIKATRU_SHELL="$(cygpath -w "$NIKATRU_SHELL")"; fi
-          node "$GITHUB_WORKSPACE/../.nikatru-shell/quiet-step.mjs" --name ops-watch.heartbeats.19 -- "$NIKATRU_SHELL" -e "$NIKATRU_QUIET"
+          node "$GITHUB_WORKSPACE/../.nikatru-shell/quiet-step.mjs" --name ops-watch.heartbeats.21 -- "$NIKATRU_SHELL" -e "$NIKATRU_QUIET"
       - name: No matrix cell runs close to its timeout (p95 against timeout-minutes)
         if: ${{ !cancelled() }}
         env:
@@ -548,7 +579,7 @@ jobs:
           node tooling/ci/assert-timeout-budget.mjs --advisory
           NIKATRU_QUIET_EOF
           NIKATRU_SHELL="${BASH:-bash}"; if command -v cygpath >/dev/null 2>&1; then NIKATRU_SHELL="$(cygpath -w "$NIKATRU_SHELL")"; fi
-          node "$GITHUB_WORKSPACE/../.nikatru-shell/quiet-step.mjs" --name ops-watch.heartbeats.20 -- "$NIKATRU_SHELL" -e "$NIKATRU_QUIET"
+          node "$GITHUB_WORKSPACE/../.nikatru-shell/quiet-step.mjs" --name ops-watch.heartbeats.22 -- "$NIKATRU_SHELL" -e "$NIKATRU_QUIET"
       - name: No CI runner pool is unreachable at main's newest pool-sync
         if: ${{ !cancelled() }}
         env:
@@ -560,7 +591,7 @@ jobs:
           node tooling/ops/check-pool-sync.mjs --advisory
           NIKATRU_QUIET_EOF
           NIKATRU_SHELL="${BASH:-bash}"; if command -v cygpath >/dev/null 2>&1; then NIKATRU_SHELL="$(cygpath -w "$NIKATRU_SHELL")"; fi
-          node "$GITHUB_WORKSPACE/../.nikatru-shell/quiet-step.mjs" --name ops-watch.heartbeats.21 -- "$NIKATRU_SHELL" -e "$NIKATRU_QUIET"
+          node "$GITHUB_WORKSPACE/../.nikatru-shell/quiet-step.mjs" --name ops-watch.heartbeats.23 -- "$NIKATRU_SHELL" -e "$NIKATRU_QUIET"
       - name: File the pipeline watches' warnings against one durable issue
         if: ${{ !cancelled() }}
         env:
@@ -588,7 +619,7 @@ jobs:
           node tooling/ops/ops-issue.mjs --kind pipeline-watch --body-file "$body"
           NIKATRU_QUIET_EOF
           NIKATRU_SHELL="${BASH:-bash}"; if command -v cygpath >/dev/null 2>&1; then NIKATRU_SHELL="$(cygpath -w "$NIKATRU_SHELL")"; fi
-          node "$GITHUB_WORKSPACE/../.nikatru-shell/quiet-step.mjs" --name ops-watch.heartbeats.22 -- "$NIKATRU_SHELL" -e "$NIKATRU_QUIET"
+          node "$GITHUB_WORKSPACE/../.nikatru-shell/quiet-step.mjs" --name ops-watch.heartbeats.24 -- "$NIKATRU_SHELL" -e "$NIKATRU_QUIET"
       - name: Mark this period's weekly readers as run
         if: ${{ !cancelled() && inputs.worker_slot != '' && (needs.status.outputs.mark_weekly == 'true' || needs.status.outputs.mark_twice == 'true') && needs.status.outputs.week != '' }}
         env:
@@ -601,7 +632,7 @@ jobs:
           printf '%s %s %s\n' "$WEEK" "$HALF" "$GITHUB_RUN_ID" > .cache/ops-watch-weekly/marker
           NIKATRU_QUIET_EOF
           NIKATRU_SHELL="${BASH:-bash}"; if command -v cygpath >/dev/null 2>&1; then NIKATRU_SHELL="$(cygpath -w "$NIKATRU_SHELL")"; fi
-          node "$GITHUB_WORKSPACE/../.nikatru-shell/quiet-step.mjs" --name ops-watch.heartbeats.23 -- "$NIKATRU_SHELL" -e "$NIKATRU_QUIET"
+          node "$GITHUB_WORKSPACE/../.nikatru-shell/quiet-step.mjs" --name ops-watch.heartbeats.25 -- "$NIKATRU_SHELL" -e "$NIKATRU_QUIET"
       - name: Save this ISO week's weekly marker
         if: ${{ !cancelled() && inputs.worker_slot != '' && needs.status.outputs.mark_weekly == 'true' && needs.status.outputs.week != '' }}
         uses: actions/cache/save@55cc8345863c7cc4c66a329aec7e433d2d1c52a9
@@ -624,7 +655,7 @@ jobs:
           node tooling/ops/check-last-good-reads.mjs
           NIKATRU_QUIET_EOF
           NIKATRU_SHELL="${BASH:-bash}"; if command -v cygpath >/dev/null 2>&1; then NIKATRU_SHELL="$(cygpath -w "$NIKATRU_SHELL")"; fi
-          node "$GITHUB_WORKSPACE/../.nikatru-shell/quiet-step.mjs" --name ops-watch.heartbeats.26 -- "$NIKATRU_SHELL" -e "$NIKATRU_QUIET"
+          node "$GITHUB_WORKSPACE/../.nikatru-shell/quiet-step.mjs" --name ops-watch.heartbeats.28 -- "$NIKATRU_SHELL" -e "$NIKATRU_QUIET"
       - name: Store this job's red detail in the bridge's private home (generated)
         if: always()
         continue-on-error: true
@@ -1611,9 +1642,11 @@ jobs:
     outputs:
       state: ${{ steps.state.outputs.state }}
       seal: ${{ steps.state.outputs.seal }}
+      matched: ${{ steps.restore.outputs.cache-matched-key }}
     steps:
       - name: Restore the last known vitals grades
         uses: actions/cache/restore@55cc8345863c7cc4c66a329aec7e433d2d1c52a9
+        id: restore
         with:
           path: .cache/store-vitals
           key: store-vitals-${{ github.run_id }}-${{ github.run_attempt }}
@@ -1631,11 +1664,13 @@ jobs:
             echo "state=" >> "$GITHUB_OUTPUT"
             echo "no state.json of at most 32768 bytes restored: store-vitals starts from no known grade"
           fi
-          # why (⏱ 2026-11-02 · review F2): the seal store-vitals wrote beside it, as at most 64 hex characters. This
-          # job holds no key and checks nothing: store-vitals verifies it (state-intake.mjs) before it believes a byte.
+          # why (⏱ 2026-11-02 · review F2): the seal store-vitals wrote beside it, `<run_id>.<run_attempt> <64 hex>`
+          # (⏱ 2026-11-03: the run that sealed it), or nothing. This job holds no key and checks nothing: store-vitals
+          # verifies it (state-intake.mjs) before it believes a byte.
           s=.cache/store-vitals/state.seal
           seal=""
-          if [ -f "$s" ] && [ ! -L "$s" ] && [ "$(wc -c < "$s")" -le 128 ]; then seal="$(tr -dc '0-9a-f' < "$s" | cut -c1-64)"; fi
+          if [ -f "$s" ] && [ ! -L "$s" ] && [ "$(wc -c < "$s")" -le 128 ]; then seal="$(head -n 1 "$s" | tr -dc '0-9a-f. ')"; fi
+          if ! [[ "$seal" =~ ^[0-9]{1,20}\.[0-9]{1,4}\ [0-9a-f]{64}$ ]]; then seal=""; fi
           echo "seal=$seal" >> "$GITHUB_OUTPUT"
 
   store-vitals:
@@ -1723,6 +1758,7 @@ jobs:
         env:
           STORE_VITALS_STATE: ${{ needs.store-vitals-state.outputs.state }}
           STORE_VITALS_SEAL: ${{ needs.store-vitals-state.outputs.seal }}
+          STORE_VITALS_MATCHED_KEY: ${{ needs.store-vitals-state.outputs.matched }}
           NIKATRU_VITALS_KEY_FILE: ${{ github.workspace }}/../.nikatru-shell/vitals.key
         run: |
           NIKATRU_QUIET="$(mktemp "${RUNNER_TEMP:-/tmp}/nikatru-step.XXXXXX")"
@@ -1737,9 +1773,9 @@ jobs:
         timeout-minutes: 6
         env:
           PLAY_SERVICE_ACCOUNT_JSON: ${{ secrets.PLAY_READ_SERVICE_ACCOUNT_JSON }}
-          APP_STORE_CONNECT_KEY_ID: ${{ secrets.APP_STORE_CONNECT_READONLY_KEY_ID }}
-          APP_STORE_CONNECT_ISSUER_ID: ${{ secrets.APP_STORE_CONNECT_ISSUER_ID }}
-          APP_STORE_CONNECT_PRIVATE_KEY: ${{ secrets.APP_STORE_CONNECT_READONLY_PRIVATE_KEY }}
+          APP_STORE_CONNECT_KEY_ID: ${{ secrets.APP_STORE_CONNECT_READ_KEY_ID }}
+          APP_STORE_CONNECT_ISSUER_ID: ${{ secrets.APP_STORE_CONNECT_READ_ISSUER_ID }}
+          APP_STORE_CONNECT_PRIVATE_KEY: ${{ secrets.APP_STORE_CONNECT_READ_PRIVATE_KEY }}
         run: |
           NIKATRU_QUIET="$(mktemp "${RUNNER_TEMP:-/tmp}/nikatru-step.XXXXXX")"
           cat > "$NIKATRU_QUIET" <<'NIKATRU_QUIET_EOF'
@@ -1933,9 +1969,9 @@ jobs:
           CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_READ_TOKEN }}
           CLOUDFLARE_ACCOUNT_ID: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
           PADDLE_API_KEY: ${{ secrets.PADDLE_API_KEY_READ }}
-          APP_STORE_CONNECT_KEY_ID: ${{ secrets.APP_STORE_CONNECT_READONLY_KEY_ID }}
-          APP_STORE_CONNECT_ISSUER_ID: ${{ secrets.APP_STORE_CONNECT_ISSUER_ID }}
-          APP_STORE_CONNECT_PRIVATE_KEY: ${{ secrets.APP_STORE_CONNECT_READONLY_PRIVATE_KEY }}
+          APP_STORE_CONNECT_KEY_ID: ${{ secrets.APP_STORE_CONNECT_READ_KEY_ID }}
+          APP_STORE_CONNECT_ISSUER_ID: ${{ secrets.APP_STORE_CONNECT_READ_ISSUER_ID }}
+          APP_STORE_CONNECT_PRIVATE_KEY: ${{ secrets.APP_STORE_CONNECT_READ_PRIVATE_KEY }}
           PLAY_SERVICE_ACCOUNT_JSON: ${{ secrets.PLAY_READ_SERVICE_ACCOUNT_JSON }}
           MS_STORE_TENANT_ID: ${{ secrets.MS_STORE_READ_TENANT_ID }}
           MS_STORE_CLIENT_ID: ${{ secrets.MS_STORE_READ_CLIENT_ID }}
@@ -2073,6 +2109,7 @@ jobs:
           SELFHOSTED_SUPABASE_ANON_KEY: ${{ secrets.SELFHOSTED_SUPABASE_ANON_KEY }}
           CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_READ_TOKEN }}
           CLOUDFLARE_ACCOUNT_ID: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
+          TURNSTILE_SITE_KEY: ${{ vars.TURNSTILE_SITE_KEY }}
         run: |
           NIKATRU_QUIET="$(mktemp "${RUNNER_TEMP:-/tmp}/nikatru-step.XXXXXX")"
           cat > "$NIKATRU_QUIET" <<'NIKATRU_QUIET_EOF'
@@ -2206,9 +2243,9 @@ jobs:
         if: always()
         timeout-minutes: 3
         env:
-          APP_STORE_CONNECT_ISSUER_ID: ${{ secrets.APP_STORE_CONNECT_ISSUER_ID }}
-          APP_STORE_CONNECT_KEY_ID: ${{ secrets.APP_STORE_CONNECT_READONLY_KEY_ID }}
-          APP_STORE_CONNECT_PRIVATE_KEY: ${{ secrets.APP_STORE_CONNECT_READONLY_PRIVATE_KEY }}
+          APP_STORE_CONNECT_ISSUER_ID: ${{ secrets.APP_STORE_CONNECT_READ_ISSUER_ID }}
+          APP_STORE_CONNECT_KEY_ID: ${{ secrets.APP_STORE_CONNECT_READ_KEY_ID }}
+          APP_STORE_CONNECT_PRIVATE_KEY: ${{ secrets.APP_STORE_CONNECT_READ_PRIVATE_KEY }}
         run: |
           NIKATRU_QUIET="$(mktemp "${RUNNER_TEMP:-/tmp}/nikatru-step.XXXXXX")"
           cat > "$NIKATRU_QUIET" <<'NIKATRU_QUIET_EOF'
@@ -2556,14 +2593,11 @@ jobs:
           NIKATRU_QUIET_EOF
           NIKATRU_SHELL="${BASH:-bash}"; if command -v cygpath >/dev/null 2>&1; then NIKATRU_SHELL="$(cygpath -w "$NIKATRU_SHELL")"; fi
           node "$GITHUB_WORKSPACE/../.nikatru-shell/quiet-step.mjs" --name ops-watch.failure-ledger.3 -- "$NIKATRU_SHELL" -e "$NIKATRU_QUIET"
-      - name: Restore this ISO week's ledger cache, else the previous week's
+      - name: Restore this run's ledger cache (this attempt's exact key only)
         uses: actions/cache/restore@55cc8345863c7cc4c66a329aec7e433d2d1c52a9
         with:
           path: .cache/triage
           key: failure-ledger-${{ steps.week.outputs.week }}-${{ github.run_id }}-${{ github.run_attempt }}
-          restore-keys: |
-            failure-ledger-${{ steps.week.outputs.week }}-
-            failure-ledger-${{ steps.week.outputs.prev }}-
       - name: Every failed run of the last eight days, and the recorded cause it maps to
         id: ledger
         env:

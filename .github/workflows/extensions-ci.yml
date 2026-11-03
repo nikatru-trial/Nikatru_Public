@@ -1301,7 +1301,7 @@ jobs:
     needs: [discover, gates]
     if: needs.discover.outputs.count != '0'
     strategy:
-      fail-fast: true
+      fail-fast: false
       matrix:
         tool: ${{ fromJSON(needs.discover.outputs.tools) }}
         node: ['22', '24']
@@ -1569,7 +1569,7 @@ jobs:
     needs: [discover, sims]
     if: needs.discover.outputs.count != '0'
     strategy:
-      fail-fast: true
+      fail-fast: false
       matrix:
         tool: ${{ fromJSON(needs.discover.outputs.tools) }}
     runs-on: ubuntu-24.04
@@ -2144,7 +2144,7 @@ jobs:
   ops-tooling:
     name: ops tooling tests · ${{ matrix.os }}
     strategy:
-      fail-fast: true
+      fail-fast: false
       matrix:
         os: [ubuntu-24.04, windows-2022]
     runs-on: ${{ matrix.os }}

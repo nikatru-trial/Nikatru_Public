@@ -250,29 +250,31 @@ jobs:
           rm -rf ../.nikatru-shell
           mv .nikatru-shell/.github/nikatru ../.nikatru-shell
           rm -rf .nikatru-shell
-      - name: The app input names one app of the workspace
-        id: app
+      - name: "Check out private main's gate script beside the judged tree (the gate below runs it) (generated: the private tree)"
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
+        with:
+          repository: ${{ env.NIKATRU_PRIVATE_REPO }}
+          ref: main
+          path: .gate-main
+          sparse-checkout: |
+            tooling/ci
+            tooling/ops
+            tooling/generated
+          ssh-key: ${{ secrets.PRIVATE_DEPLOY_KEY }}
+          persist-credentials: false
+      - name: ci-gate passed for this commit (a branch run)
+        working-directory: .gate-main
         env:
-          APP_INPUT: ${{ inputs.app }}
+          NIKATRU_JUDGED_TREE: ${{ github.workspace }}
+          GITHUB_TOKEN: ${{ github.token }}
+          GITHUB_REPOSITORY: ${{ github.repository }}
+          EVENT_NAME: ${{ (github.event.client_payload.event || github.event_name) }}
+          PRIVATE_PR: ${{ inputs.private_pr }}
+          REF: ${{ (github.event.client_payload.ref || inputs.private_ref || 'refs/heads/main') }}
         run: |
           NIKATRU_QUIET="$(mktemp "${RUNNER_TEMP:-/tmp}/nikatru-step.XXXXXX")"
           cat > "$NIKATRU_QUIET" <<'NIKATRU_QUIET_EOF'
-          set -euo pipefail
-          node tooling/ci/assert-release-lane-generic.mjs --emit-apps --app "$APP_INPUT"
-          echo "app=${APP_INPUT}" >> "$GITHUB_OUTPUT"
-          NIKATRU_QUIET_EOF
-          NIKATRU_SHELL="${BASH:-bash}"; if command -v cygpath >/dev/null 2>&1; then NIKATRU_SHELL="$(cygpath -w "$NIKATRU_SHELL")"; fi
-          node "$GITHUB_WORKSPACE/../.nikatru-shell/quiet-step.mjs" --name store-screenshots.gate.2 -- "$NIKATRU_SHELL" -e "$NIKATRU_QUIET"
-      - name: The locales input names listing languages of this channel
-        id: locales
-        env:
-          LOCALES_INPUT: ${{ inputs.locales }}
-          CHANNEL: ${{ inputs.channel || 'android-play' }}
-          APP: ${{ steps.app.outputs.app }}
-        run: |
-          NIKATRU_QUIET="$(mktemp "${RUNNER_TEMP:-/tmp}/nikatru-step.XXXXXX")"
-          cat > "$NIKATRU_QUIET" <<'NIKATRU_QUIET_EOF'
-          node tooling/store/capture-locales.mjs --app "$APP" --channel "$CHANNEL" --github-output
+          node tooling/ci/assert-gate-passed.mjs "$(git -C "$GITHUB_WORKSPACE" rev-parse HEAD)" --event "$EVENT_NAME" --pr "$PRIVATE_PR" --ref "$REF"
           NIKATRU_QUIET_EOF
           NIKATRU_SHELL="${BASH:-bash}"; if command -v cygpath >/dev/null 2>&1; then NIKATRU_SHELL="$(cygpath -w "$NIKATRU_SHELL")"; fi
           node "$GITHUB_WORKSPACE/../.nikatru-shell/quiet-step.mjs" --name store-screenshots.gate.3 -- "$NIKATRU_SHELL" -e "$NIKATRU_QUIET"
@@ -290,20 +292,32 @@ jobs:
         working-directory: ${{ github.workspace }}
         run: printf '/.nikatru-trusted/\n' >> "$(git rev-parse --git-path info/exclude)"
       - uses: ./.nikatru-trusted/.github/actions/setup-node
-      - name: ci-gate passed for this commit (a branch run)
+      - name: The app input names one app of the workspace
+        id: app
         env:
-          GITHUB_TOKEN: ${{ github.token }}
-          GITHUB_REPOSITORY: ${{ github.repository }}
-          EVENT_NAME: ${{ (github.event.client_payload.event || github.event_name) }}
-          PRIVATE_PR: ${{ inputs.private_pr }}
-          REF: ${{ (github.event.client_payload.ref || inputs.private_ref || 'refs/heads/main') }}
+          APP_INPUT: ${{ inputs.app }}
         run: |
           NIKATRU_QUIET="$(mktemp "${RUNNER_TEMP:-/tmp}/nikatru-step.XXXXXX")"
           cat > "$NIKATRU_QUIET" <<'NIKATRU_QUIET_EOF'
-          node tooling/ci/assert-gate-passed.mjs "$(git rev-parse HEAD)" --event "$EVENT_NAME" --pr "$PRIVATE_PR" --ref "$REF"
+          set -euo pipefail
+          node tooling/ci/assert-release-lane-generic.mjs --emit-apps --app "$APP_INPUT"
+          echo "app=${APP_INPUT}" >> "$GITHUB_OUTPUT"
           NIKATRU_QUIET_EOF
           NIKATRU_SHELL="${BASH:-bash}"; if command -v cygpath >/dev/null 2>&1; then NIKATRU_SHELL="$(cygpath -w "$NIKATRU_SHELL")"; fi
           node "$GITHUB_WORKSPACE/../.nikatru-shell/quiet-step.mjs" --name store-screenshots.gate.5 -- "$NIKATRU_SHELL" -e "$NIKATRU_QUIET"
+      - name: The locales input names listing languages of this channel
+        id: locales
+        env:
+          LOCALES_INPUT: ${{ inputs.locales }}
+          CHANNEL: ${{ inputs.channel || 'android-play' }}
+          APP: ${{ steps.app.outputs.app }}
+        run: |
+          NIKATRU_QUIET="$(mktemp "${RUNNER_TEMP:-/tmp}/nikatru-step.XXXXXX")"
+          cat > "$NIKATRU_QUIET" <<'NIKATRU_QUIET_EOF'
+          node tooling/store/capture-locales.mjs --app "$APP" --channel "$CHANNEL" --github-output
+          NIKATRU_QUIET_EOF
+          NIKATRU_SHELL="${BASH:-bash}"; if command -v cygpath >/dev/null 2>&1; then NIKATRU_SHELL="$(cygpath -w "$NIKATRU_SHELL")"; fi
+          node "$GITHUB_WORKSPACE/../.nikatru-shell/quiet-step.mjs" --name store-screenshots.gate.6 -- "$NIKATRU_SHELL" -e "$NIKATRU_QUIET"
       - name: Store this job's red detail in the bridge's private home (generated)
         if: always()
         continue-on-error: true

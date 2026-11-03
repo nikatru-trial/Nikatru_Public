@@ -334,7 +334,7 @@ jobs:
     permissions:
       contents: read
     strategy:
-      fail-fast: ${{ (github.event.client_payload.event || github.event_name) == 'pull_request' }}
+      fail-fast: false
       matrix:
         suite: ${{ fromJSON(needs.e2e-discover.outputs.suites) }}
     steps:
@@ -1218,7 +1218,7 @@ jobs:
         shell: bash
         working-directory: extensions
     strategy:
-      fail-fast: ${{ (github.event.client_payload.event || github.event_name) == 'pull_request' }}
+      fail-fast: false
       matrix:
         suite: ${{ fromJSON(needs.e2e-discover.outputs.suites) }}
         channel: [msedge, chrome]
@@ -1437,10 +1437,12 @@ jobs:
             echo "NIKATRU_DRAFT=$NIKATRU_P_DRAFT"
           } >> "$GITHUB_ENV"
       - name: A dispatch rehearses unless the owner typed one store's word, on the tag
+        id: owner-word
         if: (github.event.client_payload.event || github.event_name) == 'workflow_dispatch' && inputs.dry_run != true
         env:
           CONFIRM: ${{ inputs.confirm }}
           LANE: ${{ inputs.lane }}
+          DOOR_TAG: ${{ inputs.tag }}
         run: |
           set -euo pipefail
           case "$CONFIRM" in
@@ -1453,13 +1455,24 @@ jobs:
             echo "::error::confirm names a store but lane is '${LANE}'. Only lane=release builds the packages a store receives; re-dispatch with lane=release."
             exit 1
           fi
+          # why: ⏱ 2026-11-02 · O-EXT-STORE-PUBLISH-UNREACHABLE (the lead's ruling 2026-11-02T15:00:47Z) — THE TAG-DISPATCH
+          # DOOR. A shell dispatch runs on main and on nothing else (tooling/ci/public-shell.json `privateRef`), so a
+          # publish that needed the run ON the tag was unreachable there. A dispatch on MAIN that names the tag in the
+          # `tag` input is the door: store-publish submits that tag's RELEASE assets (built and checksummed at the tag
+          # push), and its first step refuses any tag the `push: tags:` trigger does not allow. Any other ref refuses.
           case "$NIKATRU_REF" in
-            refs/tags/*) ;;
+            refs/tags/*) where="$NIKATRU_REF_NAME" ;;
+            refs/heads/main)
+              if [ -z "$DOOR_TAG" ]; then
+                echo "::error::confirm names a store but this dispatch runs on main and names no release tag. A store receives a TAGGED Release's bytes and nothing else: dispatch on the tag, or on main with the tag input set to it (gh workflow run extensions.yml -f lane=release -f dry_run=false -f confirm=<word> -f tag=<tool>-v<x.y.z>)."
+                exit 1
+              fi
+              where="main, through the tag door, for the tag input ${DOOR_TAG}" ;;
             *)
-              echo "::error::confirm names a store but this dispatch runs on ${NIKATRU_REF}, not on a release tag. A store receives the TAGGED commit's bytes and nothing else: re-dispatch with 'Use workflow from' set to the tag (gh workflow run extensions.yml --ref <tool>-v<x.y.z> ...)."
+              echo "::error::confirm names a store but this dispatch runs on ${NIKATRU_REF}, not on a release tag or main. A store receives the TAGGED commit's bytes and nothing else: re-dispatch on the tag (gh workflow run extensions.yml --ref <tool>-v<x.y.z> ...), or on main with the tag input set."
               exit 1 ;;
           esac
-          echo "owner word ${CONFIRM} on ${NIKATRU_REF_NAME}: this run may publish to that one store and to no other."
+          echo "owner word ${CONFIRM} on ${where}: this run may publish to that one store and to no other."
       - name: Check out the private tree (generated)
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
         with:
@@ -2124,19 +2137,8 @@ jobs:
             echo "NIKATRU_PR_CREATED_AT=$NIKATRU_P_PR_CREATED_AT"
             echo "NIKATRU_DRAFT=$NIKATRU_P_DRAFT"
           } >> "$GITHUB_ENV"
-      - name: Restore the release-dist-${{ needs.release.outputs.tool }} hand-off (generated)
-        id: nikatru-restore-2
-        timeout-minutes: 2
-        continue-on-error: true
-        uses: actions/cache/restore@55cc8345863c7cc4c66a329aec7e433d2d1c52a9
-        with:
-          path: .nikatru-handoff/sealed
-          key: nikatru-handoff-release-dist-${{ needs.release.outputs.tool }}-${{ github.run_id }}-${{ github.run_attempt }}
-          restore-keys: nikatru-handoff-release-dist-${{ needs.release.outputs.tool }}-${{ github.run_id }}-
-          enableCrossOsArchive: true
-      - name: Look up the release-dist-${{ needs.release.outputs.tool }} hand-off, as its restore matched nothing (generated)
+      - name: Find the release-dist-${{ needs.release.outputs.tool }} hand-off's key, downloading nothing (generated)
         id: nikatru-probe-2
-        if: ${{ (success()) && steps.nikatru-restore-2.outputs.cache-matched-key == '' }}
         uses: actions/cache/restore@55cc8345863c7cc4c66a329aec7e433d2d1c52a9
         with:
           path: .nikatru-handoff/sealed
@@ -2144,35 +2146,52 @@ jobs:
           restore-keys: nikatru-handoff-release-dist-${{ needs.release.outputs.tool }}-${{ github.run_id }}-
           lookup-only: true
           enableCrossOsArchive: true
+      - name: Hold the release-dist-${{ needs.release.outputs.tool }} hand-off's key to this run's (generated)
+        id: nikatru-key-2
+        if: ${{ (success()) && steps.nikatru-probe-2.outputs.cache-matched-key != '' }}
+        shell: bash
+        env:
+          NIKATRU_MATCHED: ${{ steps.nikatru-probe-2.outputs.cache-matched-key }}
+          NIKATRU_HANDOFF_PREFIX: nikatru-handoff-release-dist-${{ needs.release.outputs.tool }}-${{ github.run_id }}-
+          NIKATRU_ATTEMPT: ${{ github.run_attempt }}
+        run: case "$NIKATRU_MATCHED" in "$NIKATRU_HANDOFF_PREFIX"*) a="${NIKATRU_MATCHED#"$NIKATRU_HANDOFF_PREFIX"}";; *) a=x;; esac; if [ -n "$NIKATRU_MATCHED" ] && [[ "$a" =~ ^([1-9][0-9]{0,3})(-r2|-r3)?$ ]] && [ "${BASH_REMATCH[1]}" -le "$NIKATRU_ATTEMPT" ] && [[ "$NIKATRU_MATCHED" =~ ^[A-Za-z0-9._-]+$ ]]; then echo "key=$NIKATRU_MATCHED" >> "$GITHUB_OUTPUT"; elif [ -n "$NIKATRU_MATCHED" ]; then echo "::warning title=hand-off::the cache matched $NIKATRU_MATCHED, which is not this run's hand-off key (an attempt of this run, at most this one), so it is not restored"; fi
+      - name: Restore the release-dist-${{ needs.release.outputs.tool }} hand-off (generated)
+        id: nikatru-restore-2
+        if: ${{ (success()) && steps.nikatru-key-2.outputs.key != '' }}
+        timeout-minutes: 2
+        continue-on-error: true
+        uses: actions/cache/restore@55cc8345863c7cc4c66a329aec7e433d2d1c52a9
+        with:
+          path: .nikatru-handoff/sealed
+          key: ${{ steps.nikatru-key-2.outputs.key }}
+          enableCrossOsArchive: true
       - name: Wait 20 s before restoring the release-dist-${{ needs.release.outputs.tool }} hand-off again (generated)
-        if: ${{ (success()) && steps.nikatru-restore-2.outputs.cache-matched-key == '' && steps.nikatru-probe-2.outputs.cache-matched-key != '' }}
+        if: ${{ (success()) && steps.nikatru-restore-2.outputs.cache-matched-key == '' && steps.nikatru-key-2.outputs.key != '' }}
         shell: bash
         run: sleep 20
       - name: "Restore the release-dist-${{ needs.release.outputs.tool }} hand-off again (attempt 2): the entry is in the cache, its download was refused (generated)"
         id: nikatru-restore-2-b
-        if: ${{ (success()) && steps.nikatru-restore-2.outputs.cache-matched-key == '' && steps.nikatru-probe-2.outputs.cache-matched-key != '' }}
+        if: ${{ (success()) && steps.nikatru-restore-2.outputs.cache-matched-key == '' && steps.nikatru-key-2.outputs.key != '' }}
         timeout-minutes: 2
         continue-on-error: true
         uses: actions/cache/restore@55cc8345863c7cc4c66a329aec7e433d2d1c52a9
         with:
           path: .nikatru-handoff/sealed
-          key: nikatru-handoff-release-dist-${{ needs.release.outputs.tool }}-${{ github.run_id }}-${{ github.run_attempt }}
-          restore-keys: nikatru-handoff-release-dist-${{ needs.release.outputs.tool }}-${{ github.run_id }}-
+          key: ${{ steps.nikatru-key-2.outputs.key }}
           enableCrossOsArchive: true
       - name: Wait 60 s before restoring the release-dist-${{ needs.release.outputs.tool }} hand-off again (generated)
-        if: ${{ (success()) && steps.nikatru-restore-2.outputs.cache-matched-key == '' && steps.nikatru-restore-2-b.outputs.cache-matched-key == '' && steps.nikatru-probe-2.outputs.cache-matched-key != '' }}
+        if: ${{ (success()) && steps.nikatru-restore-2.outputs.cache-matched-key == '' && steps.nikatru-restore-2-b.outputs.cache-matched-key == '' && steps.nikatru-key-2.outputs.key != '' }}
         shell: bash
         run: sleep 60
       - name: "Restore the release-dist-${{ needs.release.outputs.tool }} hand-off again (attempt 3): the entry is in the cache, its download was refused (generated)"
         id: nikatru-restore-2-c
-        if: ${{ (success()) && steps.nikatru-restore-2.outputs.cache-matched-key == '' && steps.nikatru-restore-2-b.outputs.cache-matched-key == '' && steps.nikatru-probe-2.outputs.cache-matched-key != '' }}
+        if: ${{ (success()) && steps.nikatru-restore-2.outputs.cache-matched-key == '' && steps.nikatru-restore-2-b.outputs.cache-matched-key == '' && steps.nikatru-key-2.outputs.key != '' }}
         timeout-minutes: 2
         continue-on-error: true
         uses: actions/cache/restore@55cc8345863c7cc4c66a329aec7e433d2d1c52a9
         with:
           path: .nikatru-handoff/sealed
-          key: nikatru-handoff-release-dist-${{ needs.release.outputs.tool }}-${{ github.run_id }}-${{ github.run_attempt }}
-          restore-keys: nikatru-handoff-release-dist-${{ needs.release.outputs.tool }}-${{ github.run_id }}-
+          key: ${{ steps.nikatru-key-2.outputs.key }}
           enableCrossOsArchive: true
       - name: Fail when no release-dist-${{ needs.release.outputs.tool }} hand-off was restored (generated)
         id: nikatru-unrestored-2
@@ -2180,7 +2199,7 @@ jobs:
         shell: bash
         env:
           NIKATRU_HANDOFF_KEY: nikatru-handoff-release-dist-${{ needs.release.outputs.tool }}-${{ github.run_id }}-${{ github.run_attempt }}
-          NIKATRU_PROBED: ${{ steps.nikatru-probe-2.outputs.cache-matched-key }}
+          NIKATRU_PROBED: ${{ steps.nikatru-key-2.outputs.key }}
         run: if [ -n "$NIKATRU_PROBED" ]; then echo "::error title=hand-off::the hand-off $NIKATRU_PROBED is in the cache, but 3 downloads were refused (Egress is over the account limit); a failed-jobs re-run retries it"; else echo "::error title=hand-off::no save of $NIKATRU_HANDOFF_KEY (nor -r2, -r3) is in the cache"; fi; exit 1
       - name: Unseal the release-dist-${{ needs.release.outputs.tool }} hand-off (generated)
         id: nikatru-unseal-2
@@ -2223,7 +2242,7 @@ jobs:
   store-publish:
     name: Store publish — the owner's word, on the tag's released bytes
     needs: [nikatru-pin, release]
-    if: (github.event_name != 'repository_dispatch' || (github.event.client_payload.event == 'push' && startsWith(github.event.client_payload.ref, 'refs/tags/fullshot-v'))) && ((github.event.client_payload.event || github.event_name) == 'workflow_dispatch' && startsWith((github.event.client_payload.ref || 'refs/heads/main'), 'refs/tags/') && inputs.lane == 'release' && inputs.dry_run != true)
+    if: (github.event_name != 'repository_dispatch' || (github.event.client_payload.event == 'push' && startsWith(github.event.client_payload.ref, 'refs/tags/fullshot-v'))) && ((github.event.client_payload.event || github.event_name) == 'workflow_dispatch' && inputs.lane == 'release' && inputs.dry_run != true)
     runs-on: ubuntu-24.04
     timeout-minutes: 30
     concurrency:
@@ -2276,8 +2295,37 @@ jobs:
             echo "NIKATRU_PR_CREATED_AT=$NIKATRU_P_PR_CREATED_AT"
             echo "NIKATRU_DRAFT=$NIKATRU_P_DRAFT"
           } >> "$GITHUB_ENV"
-      - name: Refuse any ref but a release tag
-        run: node tooling/ci/assert-deploy-ref.mjs --allow trigger:.github/workflows/extensions.yml
+      - name: Refuse any ref but a release tag (the run's tag, or the tag main's dispatch door names)
+        id: ref
+        shell: bash
+        env:
+          DOOR_TAG: ${{ inputs.tag }}
+        run: |
+          set -euo pipefail
+          case "$NIKATRU_REF" in
+            refs/tags/*)
+              if [ -n "$DOOR_TAG" ] && [ "refs/tags/${DOOR_TAG}" != "$NIKATRU_REF" ]; then
+                echo "::error::NOT PUBLISHED: this run is on ${NIKATRU_REF} and the tag input names '${DOOR_TAG}'. One run publishes one tag's bytes; leave the tag input empty on a tag dispatch."
+                exit 1
+              fi
+              publish="$NIKATRU_REF" ;;
+            refs/heads/main)
+              if [ -z "$DOOR_TAG" ]; then
+                echo "::error::NOT PUBLISHED: a dispatch on main publishes only through the tag door, and the tag input is empty."
+                exit 1
+              fi
+              publish="refs/tags/${DOOR_TAG}" ;;
+            *)
+              echo "::error::NOT PUBLISHED: ${NIKATRU_REF} is neither a release tag nor main's tag door."
+              exit 1 ;;
+          esac
+          # why: bash's =~ anchors on the WHOLE value; `grep <<<` matches per line, so a tag input with a second line passed it.
+          if ! [[ "$publish" =~ ^refs/tags/[a-z0-9][a-z0-9-]*-v[0-9]+\.[0-9]+\.[0-9]+(\.[0-9]+)?$ ]]; then
+            echo "::error::NOT PUBLISHED: '${publish#refs/tags/}' is not a release tag, so there is no Release whose assets a store may receive."
+            exit 1
+          fi
+          NIKATRU_REF="$publish" node tooling/ci/assert-deploy-ref.mjs --allow trigger:.github/workflows/extensions.yml
+          echo "tag=${publish#refs/tags/}" >> "$GITHUB_OUTPUT"
       - name: Check out private main's composite actions (generated)
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
         with:
@@ -2295,13 +2343,15 @@ jobs:
       - name: The tag this run publishes (fullshot-v1.10.1 → id + version)
         id: tag
         shell: bash
+        env:
+          TAG: ${{ steps.ref.outputs.tag }}
         run: |
           set -euo pipefail
-          TAG="$NIKATRU_REF_NAME"
           if ! grep -qE '^[a-z0-9][a-z0-9-]*-v[0-9]+\.[0-9]+\.[0-9]+(\.[0-9]+)?$' <<<"$TAG"; then
             echo "::error::NOT PUBLISHED: '${TAG}' is not a release tag, so there is no Release whose assets a store may receive."
             exit 1
           fi
+          echo "tag=${TAG}"         >> "$GITHUB_OUTPUT"
           echo "id=${TAG%%-v*}"     >> "$GITHUB_OUTPUT"
           echo "version=${TAG#*-v}" >> "$GITHUB_OUTPUT"
       - name: The [10]D-6 cadence cap allows one more store submission this month
@@ -2314,10 +2364,11 @@ jobs:
         shell: bash
         env:
           GH_TOKEN: ${{ github.token }}
+          TAG: ${{ steps.tag.outputs.tag }}
         run: |
           set -euo pipefail
           rm -rf release-assets
-          gh release download "$NIKATRU_REF_NAME" --repo "$GITHUB_REPOSITORY" --dir release-assets --pattern '*.zip' --pattern 'SHA256SUMS.txt' --pattern 'SHA256SUMS'
+          gh release download "$TAG" --repo "$GITHUB_REPOSITORY" --dir release-assets --pattern '*.zip' --pattern 'SHA256SUMS.txt' --pattern 'SHA256SUMS'
       - name: The downloaded assets are the bytes the Release published
         shell: bash
         run: |
@@ -2328,9 +2379,10 @@ jobs:
         env:
           GH_TOKEN: ${{ github.token }}
           REPO: ${{ github.repository }}
+          TAG: ${{ steps.tag.outputs.tag }}
         run: >
           node tooling/ops/post-deploy-smoke.mjs --release-repo "$REPO"
-          --release-tag "$NIKATRU_REF_NAME" --release-manifest release-assets/SHA256SUMS
+          --release-tag "$TAG" --release-manifest release-assets/SHA256SUMS
       - name: Unpack the released Firefox package for the AMO signer
         shell: bash
         env:
@@ -2385,7 +2437,7 @@ jobs:
           fi
       - name: Submit to Firefox Add-ons (AMO)
         id: amo
-        if: (github.event.client_payload.event || github.event_name) == 'workflow_dispatch' && startsWith((github.event.client_payload.ref || 'refs/heads/main'), 'refs/tags/') && inputs.dry_run != true && inputs.confirm == 'SUBMIT-TO-FIREFOX-AMO'
+        if: (github.event.client_payload.event || github.event_name) == 'workflow_dispatch' && steps.ref.outputs.tag != '' && inputs.dry_run != true && inputs.confirm == 'SUBMIT-TO-FIREFOX-AMO'
         shell: bash
         env:
           AMO_JWT_ISSUER: ${{ secrets.AMO_JWT_ISSUER }}
@@ -2454,7 +2506,7 @@ jobs:
           fi
       - name: Submit to the Chrome Web Store
         id: cws
-        if: (github.event.client_payload.event || github.event_name) == 'workflow_dispatch' && startsWith((github.event.client_payload.ref || 'refs/heads/main'), 'refs/tags/') && inputs.dry_run != true && inputs.confirm == 'SUBMIT-TO-CHROME-WEB-STORE'
+        if: (github.event.client_payload.event || github.event_name) == 'workflow_dispatch' && steps.ref.outputs.tag != '' && inputs.dry_run != true && inputs.confirm == 'SUBMIT-TO-CHROME-WEB-STORE'
         shell: bash
         env:
           CWS_SERVICE_ACCOUNT_JSON: ${{ secrets.CWS_SERVICE_ACCOUNT_JSON }}
@@ -2514,7 +2566,7 @@ jobs:
           fi
       - name: Submit to Microsoft Edge Add-ons
         id: edge
-        if: (github.event.client_payload.event || github.event_name) == 'workflow_dispatch' && startsWith((github.event.client_payload.ref || 'refs/heads/main'), 'refs/tags/') && inputs.dry_run != true && inputs.confirm == 'SUBMIT-TO-EDGE-ADDONS'
+        if: (github.event.client_payload.event || github.event_name) == 'workflow_dispatch' && steps.ref.outputs.tag != '' && inputs.dry_run != true && inputs.confirm == 'SUBMIT-TO-EDGE-ADDONS'
         shell: bash
         env:
           EDGE_CLIENT_ID: ${{ secrets.EDGE_CLIENT_ID }}
@@ -2926,6 +2978,7 @@ jobs:
           DRY_RUN: ${{ inputs.dry_run }}
           EVENT: ${{ inputs.worker_slot != '' && 'schedule' || (github.event.client_payload.event || github.event_name) }}
           REF: ${{ (github.event.client_payload.ref || 'refs/heads/main') }}
+          DOOR_TAG: ${{ inputs.tag }}
           ACTION: ${{ github.event.action }}
           LABEL: ${{ '' }}
           LANE: ${{ inputs.lane }}
@@ -3005,10 +3058,14 @@ jobs:
           fi
 
           # The store-publish job is NOT a lane either: it runs only after a successful release
-          # job on a publishing dispatch (a workflow_dispatch on a tag, lane=release, dry_run
-          # unchecked). Any other event must leave it SKIPPED; that dispatch must see it run.
+          # job on a publishing dispatch (a workflow_dispatch on a tag or through main's tag door, lane=release,
+          # dry_run unchecked). Any other event must leave it SKIPPED; that dispatch must see it run.
           # (A failed release leaves it skipped too, and the release red already says so.)
-          if [ "$EVENT" = workflow_dispatch ] && [ "${REF#refs/tags/}" != "$REF" ] && [ "${LANE:-}" = release ] && [ "${DRY_RUN:-}" != true ] && [ "$RELEASE" = success ]; then
+          # ⏱ 2026-11-02 · O-EXT-STORE-PUBLISH-UNREACHABLE: main with the tag input set is the tag-dispatch door, a
+          # publishing dispatch exactly as one on the tag is.
+          door=no
+          if [ "${REF#refs/tags/}" != "$REF" ] || { [ "$REF" = refs/heads/main ] && [ -n "${DOOR_TAG:-}" ]; }; then door=yes; fi
+          if [ "$EVENT" = workflow_dispatch ] && [ "$door" = yes ] && [ "${LANE:-}" = release ] && [ "${DRY_RUN:-}" != true ] && [ "$RELEASE" = success ]; then
             case "$STORE" in
               success) ;;
               *) echo "::error::'store-publish' came out '$STORE' on a publishing dispatch whose release job succeeded. The owner's word was typed and no store job completed."; fail=1 ;;

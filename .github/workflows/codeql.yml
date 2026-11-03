@@ -600,7 +600,7 @@ jobs:
           languages: javascript-typescript
           queries: security-and-quality
           config-file: ./.github/codeql/codeql-config.yml
-          trap-caching: ${{ ((env.NIKATRU_REF || (github.event.client_payload.ref || 'refs/heads/main')) == 'refs/heads/main' && contains(fromJSON('["push","schedule","workflow_dispatch"]'), env.NIKATRU_EVENT_NAME || (github.event.client_payload.event || github.event_name)) && !env.NIKATRU_PR) }}
+          trap-caching: false
       - name: Analyze
         uses: github/codeql-action/analyze@24c54180a607b1449ed407dd24f251e4e9147c8d
         with:

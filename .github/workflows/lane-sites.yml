@@ -1189,6 +1189,7 @@ jobs:
           sparse-checkout: |
             tooling
             .github/workflows
+            services/gh-bridge
           ssh-key: ${{ secrets.PRIVATE_DEPLOY_KEY }}
           persist-credentials: false
       - id: node-pin

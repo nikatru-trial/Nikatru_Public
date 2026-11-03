@@ -894,6 +894,9 @@ jobs:
     timeout-minutes: 20
     permissions:
       contents: read
+      issues: read
+      security-events: read
+      actions: read
       id-token: write
     strategy:
       fail-fast: false
