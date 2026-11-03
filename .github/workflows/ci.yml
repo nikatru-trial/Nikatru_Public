@@ -755,6 +755,7 @@ jobs:
           PR_CREATED_AT: ${{ github.event.client_payload.pr_created_at }}
           BASE_REF: ${{ github.event.client_payload.base_ref }}
           BASE_SHA: ${{ (github.event.client_payload.event == 'pull_request' && github.event.client_payload.base_sha || '') }}
+          GATE_NEEDS: ${{ toJSON(needs) }}
           NIKATRU_PR_META_FILE: ${{ github.workspace }}/../.nikatru-shell/pr-meta.json
         run: |
           NIKATRU_QUIET="$(mktemp "${RUNNER_TEMP:-/tmp}/nikatru-step.XXXXXX")"
