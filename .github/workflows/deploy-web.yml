@@ -2,7 +2,7 @@
 # Do not edit: `node tooling/ci/gen-public-shell.mjs --check` re-generates it and fails on any difference.
 env:
   NIKATRU_PRIVATE_REPO: com-nikatru/Nikatru_Private
-  NIKATRU_SHELL_FINGERPRINT: b29e310c33643dd34b661a1419b083cb160837af42d59b401edc5ed0e5b405fb
+  NIKATRU_SHELL_FINGERPRINT: d033d2036c9ffde60016603a91762ffe77dc4b0801b944004ee1373b8c2d1ece
 
 name: Part of CI · Deploy web
 
@@ -882,8 +882,8 @@ jobs:
           SITE_ORIGIN: ${{ steps.target.outputs.origin }}
         run: |
           set -uo pipefail
-          node tooling/ops/status.mjs --json "$RUNNER_TEMP/readings.json" > "$RUNNER_TEMP/status.log" 2>&1
-          code=$?
+          code=0
+          node tooling/ops/status.mjs --json "$RUNNER_TEMP/readings.json" > "$RUNNER_TEMP/status.log" 2>&1 || code=$?
           echo "status.mjs exit: $code"
           curl -fsS --max-time 15 "$SITE_ORIGIN/status.json" -o "$RUNNER_TEMP/prev.json" || rm -f "$RUNNER_TEMP/prev.json"
           rm -rf build/status
