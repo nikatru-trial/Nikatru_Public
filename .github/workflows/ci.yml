@@ -548,6 +548,7 @@ jobs:
       NIKATRU_DETAIL_KEY: ${{ secrets.NIKATRU_DETAIL_KEY }}
       BRIDGE_READ_SECRET: ${{ (github.event.client_payload.event || github.event_name) != 'pull_request' && secrets.BRIDGE_READ_SECRET || '' }}
       BRIDGE_OPS_SECRET: ${{ (github.event.client_payload.event || github.event_name) != 'pull_request' && secrets.BRIDGE_OPS_SECRET || '' }}
+      BRIDGE_ARTIFACT_SECRET: ${{ (github.event.client_payload.event || github.event_name) != 'pull_request' && secrets.BRIDGE_ARTIFACT_SECRET || '' }}
     with:
       nikatru_sha: ${{ needs.nikatru-pin.outputs.sha || 'nikatru-pin-did-not-succeed..' }}
       nikatru_tier: ${{ needs.nikatru-pin.outputs.tier }}
@@ -1211,6 +1212,7 @@ jobs:
       nikatru_sha: ${{ needs.nikatru-pin.outputs.sha || 'nikatru-pin-did-not-succeed..' }}
     permissions:
       contents: read
+      id-token: write
     secrets:
       SUPABASE_URL: ${{ secrets.SUPABASE_URL }}
       SUPABASE_ANON_KEY: ${{ secrets.SUPABASE_ANON_KEY }}
@@ -1227,6 +1229,7 @@ jobs:
       RAZORPAY_TEST_WEBHOOK_SECRET: ${{ secrets.RAZORPAY_TEST_WEBHOOK_SECRET }}
       PRIVATE_DEPLOY_KEY: ${{ secrets.PRIVATE_DEPLOY_KEY }}
       NIKATRU_DETAIL_KEY: ${{ secrets.NIKATRU_DETAIL_KEY }}
+      BRIDGE_ARTIFACT_SECRET: ${{ (github.event.client_payload.event || github.event_name) != 'pull_request' && secrets.BRIDGE_ARTIFACT_SECRET || '' }}
 
   deploy-workers:
     name: deploy-workers
@@ -1596,8 +1599,8 @@ jobs:
 
   nikatru-collect-deploys:
     name: Collect the post-gate jobs' red detail, without the report secret (generated)
-    needs: [platform-db-migrate, deploy-web, money-sandbox, money-gate, deploy-workers]
-    if: always() && github.event_name == 'repository_dispatch' && !(needs.platform-db-migrate.result == 'skipped' && needs.deploy-web.result == 'skipped' && needs.money-sandbox.result == 'skipped' && needs.money-gate.result == 'skipped' && needs.deploy-workers.result == 'skipped') && (github.event_name != 'repository_dispatch' || (github.event.client_payload.event == 'push' && github.event.client_payload.ref == 'refs/heads/main') || github.event.client_payload.event == 'pull_request')
+    needs: [platform-db-migrate, deploy-web, pool-sync, money-plan, sandbox-slot, money-sandbox, money-gate, deploy-workers]
+    if: always() && github.event_name == 'repository_dispatch' && !(needs.platform-db-migrate.result == 'skipped' && needs.deploy-web.result == 'skipped' && needs.pool-sync.result == 'skipped' && needs.money-plan.result == 'skipped' && needs.sandbox-slot.result == 'skipped' && needs.money-sandbox.result == 'skipped' && needs.money-gate.result == 'skipped' && needs.deploy-workers.result == 'skipped') && (github.event_name != 'repository_dispatch' || (github.event.client_payload.event == 'push' && github.event.client_payload.ref == 'refs/heads/main') || github.event.client_payload.event == 'pull_request')
     runs-on: ubuntu-24.04
     defaults:
       run:
@@ -1869,8 +1872,8 @@ jobs:
 
   nikatru-report-deploys:
     name: Report to the private repository (generated)
-    needs: [platform-db-migrate, deploy-web, money-sandbox, money-gate, deploy-workers, nikatru-collect-deploys]
-    if: always() && github.event_name == 'repository_dispatch' && !(needs.platform-db-migrate.result == 'skipped' && needs.deploy-web.result == 'skipped' && needs.money-sandbox.result == 'skipped' && needs.money-gate.result == 'skipped' && needs.deploy-workers.result == 'skipped') && (github.event_name != 'repository_dispatch' || (github.event.client_payload.event == 'push' && github.event.client_payload.ref == 'refs/heads/main') || github.event.client_payload.event == 'pull_request')
+    needs: [platform-db-migrate, deploy-web, pool-sync, money-plan, sandbox-slot, money-sandbox, money-gate, deploy-workers, nikatru-collect-deploys]
+    if: always() && github.event_name == 'repository_dispatch' && !(needs.platform-db-migrate.result == 'skipped' && needs.deploy-web.result == 'skipped' && needs.pool-sync.result == 'skipped' && needs.money-plan.result == 'skipped' && needs.sandbox-slot.result == 'skipped' && needs.money-sandbox.result == 'skipped' && needs.money-gate.result == 'skipped' && needs.deploy-workers.result == 'skipped') && (github.event_name != 'repository_dispatch' || (github.event.client_payload.event == 'push' && github.event.client_payload.ref == 'refs/heads/main') || github.event.client_payload.event == 'pull_request')
     runs-on: ubuntu-24.04
     defaults:
       run:
@@ -1895,7 +1898,7 @@ jobs:
           NIKATRU_P_EVENT: ${{ github.event.client_payload.event }}
           NIKATRU_P_PR: ${{ github.event.client_payload.pr }}
           NIKATRU_P_REF: ${{ github.event.client_payload.ref }}
-          NIKATRU_RESULTS: '{"platform-db-migrate": "${{ needs.platform-db-migrate.result }}", "deploy-web": "${{ needs.deploy-web.result }}", "money-sandbox": "${{ needs.money-sandbox.result }}", "money-gate": "${{ needs.money-gate.result }}", "deploy-workers": "${{ needs.deploy-workers.result }}"}'
+          NIKATRU_RESULTS: '{"platform-db-migrate": "${{ needs.platform-db-migrate.result }}", "deploy-web": "${{ needs.deploy-web.result }}", "pool-sync": "${{ needs.pool-sync.result }}", "money-plan": "${{ needs.money-plan.result }}", "sandbox-slot": "${{ needs.sandbox-slot.result }}", "money-sandbox": "${{ needs.money-sandbox.result }}", "money-gate": "${{ needs.money-gate.result }}", "deploy-workers": "${{ needs.deploy-workers.result }}"}'
         run: /usr/bin/python3 -I .github/nikatru/report.py send .github/nikatru/ci-deploys.json
       - name: Report every lane and the gate without detail, as the step above did not run to its end (generated)
         if: always() && steps.send.outputs.reported != 'true'
@@ -1905,7 +1908,7 @@ jobs:
           NIKATRU_P_EVENT: ${{ github.event.client_payload.event }}
           NIKATRU_P_PR: ${{ github.event.client_payload.pr }}
           NIKATRU_P_REF: ${{ github.event.client_payload.ref }}
-          NIKATRU_RESULTS: '{"platform-db-migrate": "${{ needs.platform-db-migrate.result }}", "deploy-web": "${{ needs.deploy-web.result }}", "money-sandbox": "${{ needs.money-sandbox.result }}", "money-gate": "${{ needs.money-gate.result }}", "deploy-workers": "${{ needs.deploy-workers.result }}"}'
+          NIKATRU_RESULTS: '{"platform-db-migrate": "${{ needs.platform-db-migrate.result }}", "deploy-web": "${{ needs.deploy-web.result }}", "pool-sync": "${{ needs.pool-sync.result }}", "money-plan": "${{ needs.money-plan.result }}", "sandbox-slot": "${{ needs.sandbox-slot.result }}", "money-sandbox": "${{ needs.money-sandbox.result }}", "money-gate": "${{ needs.money-gate.result }}", "deploy-workers": "${{ needs.deploy-workers.result }}"}'
         run: /usr/bin/python3 -I .github/nikatru/report.py send .github/nikatru/ci-deploys.json
 
   nikatru-relay:
@@ -1927,18 +1930,33 @@ jobs:
           GH_TOKEN: ${{ github.token }}
           NIKATRU_RELAY_RUN: ${{ github.run_id }}
           NIKATRU_RELAY_ATTEMPT: ${{ github.run_attempt }}
-        run: gh api --method POST "repos/$GITHUB_REPOSITORY/actions/workflows/autopilot-watch.yml/dispatches" -f ref=main -f "inputs[nikatru_relay_run]=$NIKATRU_RELAY_RUN" -f "inputs[nikatru_relay_attempt]=$NIKATRU_RELAY_ATTEMPT" --silent || echo "::warning::could not start autopilot-watch.yml after run $NIKATRU_RELAY_RUN attempt $NIKATRU_RELAY_ATTEMPT"
+          NIKATRU_RELAY_NAME: CI
+          NIKATRU_RELAY_PATH: .github/workflows/ci.yml
+          NIKATRU_RELAY_CONCLUSION: ${{ contains(needs.*.result, 'cancelled') && 'cancelled' || contains(needs.*.result, 'failure') && 'failure' || 'success' }}
+          NIKATRU_RELAY_HEAD_SHA: ${{ needs.nikatru-pin.outputs.sha }}
+          NIKATRU_RELAY_EVENT: ${{ github.event.client_payload.event || github.event_name }}
+        run: gh api --method POST "repos/$GITHUB_REPOSITORY/actions/workflows/autopilot-watch.yml/dispatches" -f ref=main -f "inputs[nikatru_relay_run]=$NIKATRU_RELAY_RUN" -f "inputs[nikatru_relay_attempt]=$NIKATRU_RELAY_ATTEMPT" -f "inputs[nikatru_relay_name]=$NIKATRU_RELAY_NAME" -f "inputs[nikatru_relay_path]=$NIKATRU_RELAY_PATH" -f "inputs[nikatru_relay_conclusion]=$NIKATRU_RELAY_CONCLUSION" -f "inputs[nikatru_relay_head_sha]=$NIKATRU_RELAY_HEAD_SHA" -f "inputs[nikatru_relay_event]=$NIKATRU_RELAY_EVENT" --silent || echo "::warning::could not start autopilot-watch.yml after run $NIKATRU_RELAY_RUN attempt $NIKATRU_RELAY_ATTEMPT"
       - name: Start main-healthy.yml after this run (generated)
         if: always()
         env:
           GH_TOKEN: ${{ github.token }}
           NIKATRU_RELAY_RUN: ${{ github.run_id }}
           NIKATRU_RELAY_ATTEMPT: ${{ github.run_attempt }}
-        run: gh api --method POST "repos/$GITHUB_REPOSITORY/actions/workflows/main-healthy.yml/dispatches" -f ref=main -f "inputs[nikatru_relay_run]=$NIKATRU_RELAY_RUN" -f "inputs[nikatru_relay_attempt]=$NIKATRU_RELAY_ATTEMPT" --silent || echo "::warning::could not start main-healthy.yml after run $NIKATRU_RELAY_RUN attempt $NIKATRU_RELAY_ATTEMPT"
+          NIKATRU_RELAY_NAME: CI
+          NIKATRU_RELAY_PATH: .github/workflows/ci.yml
+          NIKATRU_RELAY_CONCLUSION: ${{ contains(needs.*.result, 'cancelled') && 'cancelled' || contains(needs.*.result, 'failure') && 'failure' || 'success' }}
+          NIKATRU_RELAY_HEAD_SHA: ${{ needs.nikatru-pin.outputs.sha }}
+          NIKATRU_RELAY_EVENT: ${{ github.event.client_payload.event || github.event_name }}
+        run: gh api --method POST "repos/$GITHUB_REPOSITORY/actions/workflows/main-healthy.yml/dispatches" -f ref=main -f "inputs[nikatru_relay_run]=$NIKATRU_RELAY_RUN" -f "inputs[nikatru_relay_attempt]=$NIKATRU_RELAY_ATTEMPT" -f "inputs[nikatru_relay_name]=$NIKATRU_RELAY_NAME" -f "inputs[nikatru_relay_path]=$NIKATRU_RELAY_PATH" -f "inputs[nikatru_relay_conclusion]=$NIKATRU_RELAY_CONCLUSION" -f "inputs[nikatru_relay_head_sha]=$NIKATRU_RELAY_HEAD_SHA" -f "inputs[nikatru_relay_event]=$NIKATRU_RELAY_EVENT" --silent || echo "::warning::could not start main-healthy.yml after run $NIKATRU_RELAY_RUN attempt $NIKATRU_RELAY_ATTEMPT"
       - name: Start redeploy-stranded.yml after this run (generated)
         if: always()
         env:
           GH_TOKEN: ${{ github.token }}
           NIKATRU_RELAY_RUN: ${{ github.run_id }}
           NIKATRU_RELAY_ATTEMPT: ${{ github.run_attempt }}
-        run: gh api --method POST "repos/$GITHUB_REPOSITORY/actions/workflows/redeploy-stranded.yml/dispatches" -f ref=main -f "inputs[nikatru_relay_run]=$NIKATRU_RELAY_RUN" -f "inputs[nikatru_relay_attempt]=$NIKATRU_RELAY_ATTEMPT" --silent || echo "::warning::could not start redeploy-stranded.yml after run $NIKATRU_RELAY_RUN attempt $NIKATRU_RELAY_ATTEMPT"
+          NIKATRU_RELAY_NAME: CI
+          NIKATRU_RELAY_PATH: .github/workflows/ci.yml
+          NIKATRU_RELAY_CONCLUSION: ${{ contains(needs.*.result, 'cancelled') && 'cancelled' || contains(needs.*.result, 'failure') && 'failure' || 'success' }}
+          NIKATRU_RELAY_HEAD_SHA: ${{ needs.nikatru-pin.outputs.sha }}
+          NIKATRU_RELAY_EVENT: ${{ github.event.client_payload.event || github.event_name }}
+        run: gh api --method POST "repos/$GITHUB_REPOSITORY/actions/workflows/redeploy-stranded.yml/dispatches" -f ref=main -f "inputs[nikatru_relay_run]=$NIKATRU_RELAY_RUN" -f "inputs[nikatru_relay_attempt]=$NIKATRU_RELAY_ATTEMPT" -f "inputs[nikatru_relay_name]=$NIKATRU_RELAY_NAME" -f "inputs[nikatru_relay_path]=$NIKATRU_RELAY_PATH" -f "inputs[nikatru_relay_conclusion]=$NIKATRU_RELAY_CONCLUSION" -f "inputs[nikatru_relay_head_sha]=$NIKATRU_RELAY_HEAD_SHA" -f "inputs[nikatru_relay_event]=$NIKATRU_RELAY_EVENT" --silent || echo "::warning::could not start redeploy-stranded.yml after run $NIKATRU_RELAY_RUN attempt $NIKATRU_RELAY_ATTEMPT"

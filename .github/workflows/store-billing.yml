@@ -901,6 +901,9 @@ jobs:
     if: (github.event.client_payload.ref || inputs.private_ref || 'refs/heads/main') == 'refs/heads/main'
     runs-on: ubuntu-24.04
     timeout-minutes: 10
+    env:
+      DEVICE_PROOF_PLAY_READY: ${{ secrets.PLAY_TEST_PURCHASE_TOKEN != '' && secrets.PLAY_DEVICE_PROOF_SERVICE_ACCOUNT_JSON != '' }}
+      DEVICE_PROOF_APPLE_READY: ${{ secrets.APPLE_TEST_TRANSACTION_ID != '' && secrets.APPLE_ASC_ISSUER_ID != '' && secrets.APPLE_ASC_KEY_ID != '' && secrets.APPLE_ASC_PRIVATE_KEY != '' }}
     permissions:
       contents: read
       id-token: write
@@ -971,7 +974,24 @@ jobs:
         working-directory: ${{ github.workspace }}
         run: printf '/.nikatru-trusted/\n' >> "$(git rev-parse --git-path info/exclude)"
       - uses: ./.nikatru-trusted/.github/actions/setup-node
-      - name: Re-verify the licence-tester purchase, or say it was not provided
+      - name: Name each absent device-proof input
+        env:
+          PLAY_TEST_PURCHASE_TOKEN: ${{ secrets.PLAY_TEST_PURCHASE_TOKEN }}
+          PLAY_SERVICE_ACCOUNT_JSON: ${{ secrets.PLAY_DEVICE_PROOF_SERVICE_ACCOUNT_JSON }}
+          APPLE_TEST_TRANSACTION_ID: ${{ secrets.APPLE_TEST_TRANSACTION_ID }}
+          APPLE_ASC_ISSUER_ID: ${{ secrets.APPLE_ASC_ISSUER_ID }}
+          APPLE_ASC_KEY_ID: ${{ secrets.APPLE_ASC_KEY_ID }}
+          APPLE_ASC_PRIVATE_KEY: ${{ secrets.APPLE_ASC_PRIVATE_KEY }}
+          STORE_BILLING_DEVICE_APP: ${{ vars.STORE_BILLING_DEVICE_APP }}
+        run: |
+          NIKATRU_QUIET="$(mktemp "${RUNNER_TEMP:-/tmp}/nikatru-step.XXXXXX")"
+          cat > "$NIKATRU_QUIET" <<'NIKATRU_QUIET_EOF'
+          node tooling/ops/store-billing-proofs.mjs device-proof-inputs
+          NIKATRU_QUIET_EOF
+          NIKATRU_SHELL="${BASH:-bash}"; if command -v cygpath >/dev/null 2>&1; then NIKATRU_SHELL="$(cygpath -w "$NIKATRU_SHELL")"; fi
+          node "$GITHUB_WORKSPACE/../.nikatru-shell/quiet-step.mjs" --name store-billing.device-proof.3 -- "$NIKATRU_SHELL" -e "$NIKATRU_QUIET"
+      - name: Re-verify the licence-tester purchase
+        if: env.DEVICE_PROOF_PLAY_READY == 'true' || env.DEVICE_PROOF_APPLE_READY == 'true'
         env:
           PLAY_TEST_PURCHASE_TOKEN: ${{ secrets.PLAY_TEST_PURCHASE_TOKEN }}
           PLAY_SERVICE_ACCOUNT_JSON: ${{ secrets.PLAY_DEVICE_PROOF_SERVICE_ACCOUNT_JSON }}
@@ -986,7 +1006,7 @@ jobs:
           node tooling/ops/store-billing-proofs.mjs device-proof
           NIKATRU_QUIET_EOF
           NIKATRU_SHELL="${BASH:-bash}"; if command -v cygpath >/dev/null 2>&1; then NIKATRU_SHELL="$(cygpath -w "$NIKATRU_SHELL")"; fi
-          node "$GITHUB_WORKSPACE/../.nikatru-shell/quiet-step.mjs" --name store-billing.device-proof.3 -- "$NIKATRU_SHELL" -e "$NIKATRU_QUIET"
+          node "$GITHUB_WORKSPACE/../.nikatru-shell/quiet-step.mjs" --name store-billing.device-proof.4 -- "$NIKATRU_SHELL" -e "$NIKATRU_QUIET"
       - name: Store this job's red detail in the bridge's private home (generated)
         if: always()
         continue-on-error: true

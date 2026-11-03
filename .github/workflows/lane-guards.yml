@@ -35,6 +35,8 @@ on:
         required: true
       NIKATRU_DETAIL_KEY:
         required: true
+      BRIDGE_ARTIFACT_SECRET:
+        required: false
       BRIDGE_READ_SECRET:
         required: true
       BRIDGE_OPS_SECRET:
@@ -885,6 +887,7 @@ jobs:
     timeout-minutes: 12
     permissions:
       contents: read
+      id-token: write
     steps:
       - name: Check out the private tree (generated)
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
@@ -1278,6 +1281,17 @@ jobs:
           NIKATRU_QUIET_EOF
           NIKATRU_SHELL="${BASH:-bash}"; if command -v cygpath >/dev/null 2>&1; then NIKATRU_SHELL="$(cygpath -w "$NIKATRU_SHELL")"; fi
           node "$GITHUB_WORKSPACE/../.nikatru-shell/quiet-step.mjs" --name lane-guards.guard-tests-floor.4 -- "$NIKATRU_SHELL" -e "$NIKATRU_QUIET"
+      - name: Store guard-tests-junit in the bridge's private home (generated)
+        if: (github.event.client_payload.event || github.event_name) == 'push' && (github.event.client_payload.ref || 'refs/heads/main') == 'refs/heads/main'
+        shell: bash
+        working-directory: ${{ github.workspace }}
+        env:
+          NIKATRU_PATHS: ${{ runner.temp }}/guard-tests.junit.xml
+          NIKATRU_ARTIFACT_NAME: guard-tests-junit
+          NIKATRU_IF_NO_FILES: error
+          BRIDGE_ARTIFACT_SECRET: ${{ secrets.BRIDGE_ARTIFACT_SECRET }}
+          NIKATRU_BRIDGE_ARTIFACT_URL: https://gh-bridge.nikatru.workers.dev/artifact
+        run: node tooling/ops/bridge-artifact.mjs upload
       - name: The recorded floor must not exceed what actually ran
         run: |
           NIKATRU_QUIET="$(mktemp "${RUNNER_TEMP:-/tmp}/nikatru-step.XXXXXX")"
@@ -1389,6 +1403,7 @@ jobs:
         run: printf '/.nikatru-trusted/\n' >> "$(git rev-parse --git-path info/exclude)"
       - uses: ./.nikatru-trusted/.github/actions/setup-node
       - name: Every guard is tested and self-checking
+        timeout-minutes: 3
         run: |
           NIKATRU_QUIET="$(mktemp "${RUNNER_TEMP:-/tmp}/nikatru-step.XXXXXX")"
           cat > "$NIKATRU_QUIET" <<'NIKATRU_QUIET_EOF'
@@ -1902,6 +1917,7 @@ jobs:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
           GLITCHTIP_READ_TOKEN: ${{ secrets.GLITCHTIP_READ_TOKEN }}
           GLITCHTIP_TOKEN: ${{ (github.event.client_payload.event || github.event_name) != 'pull_request' && secrets.GLITCHTIP_TOKEN || '' }}
+          NIKATRU_TIMER_READ_BY_OPS_WATCH: '1'
           BRIDGE_READ_SECRET: ${{ (github.event.client_payload.event || github.event_name) != 'pull_request' && secrets.BRIDGE_READ_SECRET || '' }}
           BRIDGE_OPS_SECRET: ${{ (github.event.client_payload.event || github.event_name) != 'pull_request' && secrets.BRIDGE_OPS_SECRET || '' }}
           NIKATRU_BRIDGE_OPS_URL: ${{ (github.event.client_payload.event || github.event_name) != 'pull_request' && 'https://gh-bridge.nikatru.workers.dev/ops' || '' }}
@@ -1997,7 +2013,11 @@ jobs:
         run: |
           NIKATRU_QUIET="$(mktemp "${RUNNER_TEMP:-/tmp}/nikatru-step.XXXXXX")"
           cat > "$NIKATRU_QUIET" <<'NIKATRU_QUIET_EOF'
-          rc=0; node tooling/ci/assert-retention-coverage.mjs || rc=1; node tooling/ci/assert-d1-fanout.mjs || rc=1; node tooling/scripts/render-platform-app-block.mjs --check || rc=1; exit $rc
+          rc=0
+          node tooling/ci/assert-retention-coverage.mjs || { c=$?; if [ "$c" -gt "$rc" ]; then rc=$c; fi; }
+          node tooling/ci/assert-d1-fanout.mjs || { c=$?; if [ "$c" -gt "$rc" ]; then rc=$c; fi; }
+          node tooling/scripts/render-platform-app-block.mjs --check || { c=$?; if [ "$c" -gt "$rc" ]; then rc=$c; fi; }
+          exit $rc
           NIKATRU_QUIET_EOF
           NIKATRU_SHELL="${BASH:-bash}"; if command -v cygpath >/dev/null 2>&1; then NIKATRU_SHELL="$(cygpath -w "$NIKATRU_SHELL")"; fi
           node "$GITHUB_WORKSPACE/../.nikatru-shell/quiet-step.mjs" --name lane-guards.guards-platform.34 -- "$NIKATRU_SHELL" -e "$NIKATRU_QUIET"
@@ -2521,6 +2541,15 @@ jobs:
           NIKATRU_QUIET_EOF
           NIKATRU_SHELL="${BASH:-bash}"; if command -v cygpath >/dev/null 2>&1; then NIKATRU_SHELL="$(cygpath -w "$NIKATRU_SHELL")"; fi
           node "$GITHUB_WORKSPACE/../.nikatru-shell/quiet-step.mjs" --name lane-guards.guards-legal.19 -- "$NIKATRU_SHELL" -e "$NIKATRU_QUIET"
+      - name: Every offering sold outside India names a second merchant of record
+        if: ${{ !cancelled() }}
+        run: |
+          NIKATRU_QUIET="$(mktemp "${RUNNER_TEMP:-/tmp}/nikatru-step.XXXXXX")"
+          cat > "$NIKATRU_QUIET" <<'NIKATRU_QUIET_EOF'
+          node tooling/ci/assert-rail-fallback.mjs
+          NIKATRU_QUIET_EOF
+          NIKATRU_SHELL="${BASH:-bash}"; if command -v cygpath >/dev/null 2>&1; then NIKATRU_SHELL="$(cygpath -w "$NIKATRU_SHELL")"; fi
+          node "$GITHUB_WORKSPACE/../.nikatru-shell/quiet-step.mjs" --name lane-guards.guards-legal.20 -- "$NIKATRU_SHELL" -e "$NIKATRU_QUIET"
       - name: One rate-limit namespace, one binding, in each Cloudflare account
         if: ${{ !cancelled() }}
         run: |
@@ -2529,7 +2558,7 @@ jobs:
           node tooling/ci/assert-ratelimit-namespaces-unique.mjs
           NIKATRU_QUIET_EOF
           NIKATRU_SHELL="${BASH:-bash}"; if command -v cygpath >/dev/null 2>&1; then NIKATRU_SHELL="$(cygpath -w "$NIKATRU_SHELL")"; fi
-          node "$GITHUB_WORKSPACE/../.nikatru-shell/quiet-step.mjs" --name lane-guards.guards-legal.20 -- "$NIKATRU_SHELL" -e "$NIKATRU_QUIET"
+          node "$GITHUB_WORKSPACE/../.nikatru-shell/quiet-step.mjs" --name lane-guards.guards-legal.21 -- "$NIKATRU_SHELL" -e "$NIKATRU_QUIET"
       - name: A stored notification replayed in any order reaches the same entitlement
         run: |
           NIKATRU_QUIET="$(mktemp "${RUNNER_TEMP:-/tmp}/nikatru-step.XXXXXX")"
@@ -2537,7 +2566,7 @@ jobs:
           node tooling/ops/money-dry-run.mjs
           NIKATRU_QUIET_EOF
           NIKATRU_SHELL="${BASH:-bash}"; if command -v cygpath >/dev/null 2>&1; then NIKATRU_SHELL="$(cygpath -w "$NIKATRU_SHELL")"; fi
-          node "$GITHUB_WORKSPACE/../.nikatru-shell/quiet-step.mjs" --name lane-guards.guards-legal.21 -- "$NIKATRU_SHELL" -e "$NIKATRU_QUIET"
+          node "$GITHUB_WORKSPACE/../.nikatru-shell/quiet-step.mjs" --name lane-guards.guards-legal.22 -- "$NIKATRU_SHELL" -e "$NIKATRU_QUIET"
       - name: The bundle's coming-soon gate is derived, and it moves in both directions
         if: ${{ !cancelled() }}
         run: |
@@ -2546,7 +2575,7 @@ jobs:
           node tooling/ci/assert-bundle-availability.mjs
           NIKATRU_QUIET_EOF
           NIKATRU_SHELL="${BASH:-bash}"; if command -v cygpath >/dev/null 2>&1; then NIKATRU_SHELL="$(cygpath -w "$NIKATRU_SHELL")"; fi
-          node "$GITHUB_WORKSPACE/../.nikatru-shell/quiet-step.mjs" --name lane-guards.guards-legal.22 -- "$NIKATRU_SHELL" -e "$NIKATRU_QUIET"
+          node "$GITHUB_WORKSPACE/../.nikatru-shell/quiet-step.mjs" --name lane-guards.guards-legal.23 -- "$NIKATRU_SHELL" -e "$NIKATRU_QUIET"
       - name: No store surface promises a bundle that cannot be bought
         if: ${{ !cancelled() }}
         run: |
@@ -2555,7 +2584,7 @@ jobs:
           node tooling/ci/assert-no-store-bundle-copy.mjs
           NIKATRU_QUIET_EOF
           NIKATRU_SHELL="${BASH:-bash}"; if command -v cygpath >/dev/null 2>&1; then NIKATRU_SHELL="$(cygpath -w "$NIKATRU_SHELL")"; fi
-          node "$GITHUB_WORKSPACE/../.nikatru-shell/quiet-step.mjs" --name lane-guards.guards-legal.23 -- "$NIKATRU_SHELL" -e "$NIKATRU_QUIET"
+          node "$GITHUB_WORKSPACE/../.nikatru-shell/quiet-step.mjs" --name lane-guards.guards-legal.24 -- "$NIKATRU_SHELL" -e "$NIKATRU_QUIET"
       - name: No bundle entitlement exists without a verified receipt
         if: ${{ !cancelled() }}
         run: |
@@ -2564,7 +2593,7 @@ jobs:
           node tooling/ci/assert-bundle-provenance.mjs
           NIKATRU_QUIET_EOF
           NIKATRU_SHELL="${BASH:-bash}"; if command -v cygpath >/dev/null 2>&1; then NIKATRU_SHELL="$(cygpath -w "$NIKATRU_SHELL")"; fi
-          node "$GITHUB_WORKSPACE/../.nikatru-shell/quiet-step.mjs" --name lane-guards.guards-legal.24 -- "$NIKATRU_SHELL" -e "$NIKATRU_QUIET"
+          node "$GITHUB_WORKSPACE/../.nikatru-shell/quiet-step.mjs" --name lane-guards.guards-legal.25 -- "$NIKATRU_SHELL" -e "$NIKATRU_QUIET"
       - name: Every app with accounts ships a deletion control
         if: ${{ !cancelled() }}
         run: |
@@ -2573,7 +2602,7 @@ jobs:
           node tooling/ci/assert-deletion-control.mjs
           NIKATRU_QUIET_EOF
           NIKATRU_SHELL="${BASH:-bash}"; if command -v cygpath >/dev/null 2>&1; then NIKATRU_SHELL="$(cygpath -w "$NIKATRU_SHELL")"; fi
-          node "$GITHUB_WORKSPACE/../.nikatru-shell/quiet-step.mjs" --name lane-guards.guards-legal.25 -- "$NIKATRU_SHELL" -e "$NIKATRU_QUIET"
+          node "$GITHUB_WORKSPACE/../.nikatru-shell/quiet-step.mjs" --name lane-guards.guards-legal.26 -- "$NIKATRU_SHELL" -e "$NIKATRU_QUIET"
       - name: Account deletion reaches every user-owned table, never via a shared secret
         if: ${{ !cancelled() }}
         run: |
@@ -2582,7 +2611,7 @@ jobs:
           node tooling/ci/assert-erasure-reach.mjs
           NIKATRU_QUIET_EOF
           NIKATRU_SHELL="${BASH:-bash}"; if command -v cygpath >/dev/null 2>&1; then NIKATRU_SHELL="$(cygpath -w "$NIKATRU_SHELL")"; fi
-          node "$GITHUB_WORKSPACE/../.nikatru-shell/quiet-step.mjs" --name lane-guards.guards-legal.26 -- "$NIKATRU_SHELL" -e "$NIKATRU_QUIET"
+          node "$GITHUB_WORKSPACE/../.nikatru-shell/quiet-step.mjs" --name lane-guards.guards-legal.27 -- "$NIKATRU_SHELL" -e "$NIKATRU_QUIET"
       - name: The e2e teardown purges every table that carries user_id
         if: ${{ !cancelled() }}
         run: |
@@ -2591,7 +2620,7 @@ jobs:
           node tooling/ci/assert-e2e-user-tables.mjs
           NIKATRU_QUIET_EOF
           NIKATRU_SHELL="${BASH:-bash}"; if command -v cygpath >/dev/null 2>&1; then NIKATRU_SHELL="$(cygpath -w "$NIKATRU_SHELL")"; fi
-          node "$GITHUB_WORKSPACE/../.nikatru-shell/quiet-step.mjs" --name lane-guards.guards-legal.27 -- "$NIKATRU_SHELL" -e "$NIKATRU_QUIET"
+          node "$GITHUB_WORKSPACE/../.nikatru-shell/quiet-step.mjs" --name lane-guards.guards-legal.28 -- "$NIKATRU_SHELL" -e "$NIKATRU_QUIET"
       - name: Every Worker that verifies a token refuses a signed-out session's token
         if: ${{ !cancelled() }}
         run: |
@@ -2600,7 +2629,7 @@ jobs:
           node tooling/ci/assert-session-revocation.mjs
           NIKATRU_QUIET_EOF
           NIKATRU_SHELL="${BASH:-bash}"; if command -v cygpath >/dev/null 2>&1; then NIKATRU_SHELL="$(cygpath -w "$NIKATRU_SHELL")"; fi
-          node "$GITHUB_WORKSPACE/../.nikatru-shell/quiet-step.mjs" --name lane-guards.guards-legal.28 -- "$NIKATRU_SHELL" -e "$NIKATRU_QUIET"
+          node "$GITHUB_WORKSPACE/../.nikatru-shell/quiet-step.mjs" --name lane-guards.guards-legal.29 -- "$NIKATRU_SHELL" -e "$NIKATRU_QUIET"
       - name: Fail-closed seams have a real on-switch
         if: ${{ !cancelled() }}
         run: |
@@ -2609,7 +2638,7 @@ jobs:
           node tooling/ci/assert-seams-wired.mjs
           NIKATRU_QUIET_EOF
           NIKATRU_SHELL="${BASH:-bash}"; if command -v cygpath >/dev/null 2>&1; then NIKATRU_SHELL="$(cygpath -w "$NIKATRU_SHELL")"; fi
-          node "$GITHUB_WORKSPACE/../.nikatru-shell/quiet-step.mjs" --name lane-guards.guards-legal.29 -- "$NIKATRU_SHELL" -e "$NIKATRU_QUIET"
+          node "$GITHUB_WORKSPACE/../.nikatru-shell/quiet-step.mjs" --name lane-guards.guards-legal.30 -- "$NIKATRU_SHELL" -e "$NIKATRU_QUIET"
       - name: Analytics consent can be WITHDRAWN, not only given
         if: ${{ !cancelled() }}
         run: |
@@ -2618,7 +2647,7 @@ jobs:
           node tooling/ci/assert-consent-withdrawal-surface.mjs
           NIKATRU_QUIET_EOF
           NIKATRU_SHELL="${BASH:-bash}"; if command -v cygpath >/dev/null 2>&1; then NIKATRU_SHELL="$(cygpath -w "$NIKATRU_SHELL")"; fi
-          node "$GITHUB_WORKSPACE/../.nikatru-shell/quiet-step.mjs" --name lane-guards.guards-legal.30 -- "$NIKATRU_SHELL" -e "$NIKATRU_QUIET"
+          node "$GITHUB_WORKSPACE/../.nikatru-shell/quiet-step.mjs" --name lane-guards.guards-legal.31 -- "$NIKATRU_SHELL" -e "$NIKATRU_QUIET"
       - name: Every captcha-gated auth call carries a token
         if: ${{ !cancelled() }}
         run: |
@@ -2627,7 +2656,7 @@ jobs:
           node tooling/ci/assert-captcha-gated-call-sites.mjs
           NIKATRU_QUIET_EOF
           NIKATRU_SHELL="${BASH:-bash}"; if command -v cygpath >/dev/null 2>&1; then NIKATRU_SHELL="$(cygpath -w "$NIKATRU_SHELL")"; fi
-          node "$GITHUB_WORKSPACE/../.nikatru-shell/quiet-step.mjs" --name lane-guards.guards-legal.31 -- "$NIKATRU_SHELL" -e "$NIKATRU_QUIET"
+          node "$GITHUB_WORKSPACE/../.nikatru-shell/quiet-step.mjs" --name lane-guards.guards-legal.32 -- "$NIKATRU_SHELL" -e "$NIKATRU_QUIET"
       - name: No sign-up consent box is born ticked, and the terms tick blocks
         if: ${{ !cancelled() }}
         run: |
@@ -2636,7 +2665,7 @@ jobs:
           node tooling/ci/assert-signup-consent-shape.mjs
           NIKATRU_QUIET_EOF
           NIKATRU_SHELL="${BASH:-bash}"; if command -v cygpath >/dev/null 2>&1; then NIKATRU_SHELL="$(cygpath -w "$NIKATRU_SHELL")"; fi
-          node "$GITHUB_WORKSPACE/../.nikatru-shell/quiet-step.mjs" --name lane-guards.guards-legal.32 -- "$NIKATRU_SHELL" -e "$NIKATRU_QUIET"
+          node "$GITHUB_WORKSPACE/../.nikatru-shell/quiet-step.mjs" --name lane-guards.guards-legal.33 -- "$NIKATRU_SHELL" -e "$NIKATRU_QUIET"
       - name: Every shared capability has one home and a real consumer
         if: ${{ !cancelled() }}
         run: |
@@ -2645,7 +2674,7 @@ jobs:
           node tooling/ci/assert-capability-register.mjs
           NIKATRU_QUIET_EOF
           NIKATRU_SHELL="${BASH:-bash}"; if command -v cygpath >/dev/null 2>&1; then NIKATRU_SHELL="$(cygpath -w "$NIKATRU_SHELL")"; fi
-          node "$GITHUB_WORKSPACE/../.nikatru-shell/quiet-step.mjs" --name lane-guards.guards-legal.33 -- "$NIKATRU_SHELL" -e "$NIKATRU_QUIET"
+          node "$GITHUB_WORKSPACE/../.nikatru-shell/quiet-step.mjs" --name lane-guards.guards-legal.34 -- "$NIKATRU_SHELL" -e "$NIKATRU_QUIET"
       - name: The Supabase auth email templates stay restorable
         if: ${{ !cancelled() }}
         run: |
@@ -2654,7 +2683,7 @@ jobs:
           node tooling/ci/assert-supabase-templates.mjs
           NIKATRU_QUIET_EOF
           NIKATRU_SHELL="${BASH:-bash}"; if command -v cygpath >/dev/null 2>&1; then NIKATRU_SHELL="$(cygpath -w "$NIKATRU_SHELL")"; fi
-          node "$GITHUB_WORKSPACE/../.nikatru-shell/quiet-step.mjs" --name lane-guards.guards-legal.34 -- "$NIKATRU_SHELL" -e "$NIKATRU_QUIET"
+          node "$GITHUB_WORKSPACE/../.nikatru-shell/quiet-step.mjs" --name lane-guards.guards-legal.35 -- "$NIKATRU_SHELL" -e "$NIKATRU_QUIET"
       - name: One record of how mail is sent, and no document contradicts it
         if: ${{ !cancelled() }}
         run: |
@@ -2663,7 +2692,7 @@ jobs:
           node tooling/ci/assert-mail-transport-claims.mjs
           NIKATRU_QUIET_EOF
           NIKATRU_SHELL="${BASH:-bash}"; if command -v cygpath >/dev/null 2>&1; then NIKATRU_SHELL="$(cygpath -w "$NIKATRU_SHELL")"; fi
-          node "$GITHUB_WORKSPACE/../.nikatru-shell/quiet-step.mjs" --name lane-guards.guards-legal.35 -- "$NIKATRU_SHELL" -e "$NIKATRU_QUIET"
+          node "$GITHUB_WORKSPACE/../.nikatru-shell/quiet-step.mjs" --name lane-guards.guards-legal.36 -- "$NIKATRU_SHELL" -e "$NIKATRU_QUIET"
       - name: The purchase path is whole, bounded, declared and cancellable
         if: ${{ !cancelled() }}
         run: |
@@ -2672,7 +2701,7 @@ jobs:
           node tooling/ci/assert-purchase-path.mjs
           NIKATRU_QUIET_EOF
           NIKATRU_SHELL="${BASH:-bash}"; if command -v cygpath >/dev/null 2>&1; then NIKATRU_SHELL="$(cygpath -w "$NIKATRU_SHELL")"; fi
-          node "$GITHUB_WORKSPACE/../.nikatru-shell/quiet-step.mjs" --name lane-guards.guards-legal.36 -- "$NIKATRU_SHELL" -e "$NIKATRU_QUIET"
+          node "$GITHUB_WORKSPACE/../.nikatru-shell/quiet-step.mjs" --name lane-guards.guards-legal.37 -- "$NIKATRU_SHELL" -e "$NIKATRU_QUIET"
       - name: The paywall is not switched on while a precondition of the switch is open
         if: ${{ !cancelled() }}
         run: |
@@ -2681,7 +2710,7 @@ jobs:
           node tooling/ci/assert-paywall-flip-ready.mjs
           NIKATRU_QUIET_EOF
           NIKATRU_SHELL="${BASH:-bash}"; if command -v cygpath >/dev/null 2>&1; then NIKATRU_SHELL="$(cygpath -w "$NIKATRU_SHELL")"; fi
-          node "$GITHUB_WORKSPACE/../.nikatru-shell/quiet-step.mjs" --name lane-guards.guards-legal.37 -- "$NIKATRU_SHELL" -e "$NIKATRU_QUIET"
+          node "$GITHUB_WORKSPACE/../.nikatru-shell/quiet-step.mjs" --name lane-guards.guards-legal.38 -- "$NIKATRU_SHELL" -e "$NIKATRU_QUIET"
       - name: The customer path is probed every minute off Cloudflare, and every incident names its fix
         if: ${{ !cancelled() }}
         run: |
@@ -2690,7 +2719,7 @@ jobs:
           node tooling/ci/assert-live-ops.mjs
           NIKATRU_QUIET_EOF
           NIKATRU_SHELL="${BASH:-bash}"; if command -v cygpath >/dev/null 2>&1; then NIKATRU_SHELL="$(cygpath -w "$NIKATRU_SHELL")"; fi
-          node "$GITHUB_WORKSPACE/../.nikatru-shell/quiet-step.mjs" --name lane-guards.guards-legal.38 -- "$NIKATRU_SHELL" -e "$NIKATRU_QUIET"
+          node "$GITHUB_WORKSPACE/../.nikatru-shell/quiet-step.mjs" --name lane-guards.guards-legal.39 -- "$NIKATRU_SHELL" -e "$NIKATRU_QUIET"
       - name: Every written wrangler storage command says --remote or --local
         if: ${{ !cancelled() }}
         run: |
@@ -2699,7 +2728,7 @@ jobs:
           node tooling/ci/assert-wrangler-remote.mjs
           NIKATRU_QUIET_EOF
           NIKATRU_SHELL="${BASH:-bash}"; if command -v cygpath >/dev/null 2>&1; then NIKATRU_SHELL="$(cygpath -w "$NIKATRU_SHELL")"; fi
-          node "$GITHUB_WORKSPACE/../.nikatru-shell/quiet-step.mjs" --name lane-guards.guards-legal.39 -- "$NIKATRU_SHELL" -e "$NIKATRU_QUIET"
+          node "$GITHUB_WORKSPACE/../.nikatru-shell/quiet-step.mjs" --name lane-guards.guards-legal.40 -- "$NIKATRU_SHELL" -e "$NIKATRU_QUIET"
       - name: The money path is classified, and the production deploy waits on its sandbox proof
         if: ${{ !cancelled() }}
         timeout-minutes: 2
@@ -2709,7 +2738,7 @@ jobs:
           node --single-threaded tooling/ci/assert-money-path.mjs
           NIKATRU_QUIET_EOF
           NIKATRU_SHELL="${BASH:-bash}"; if command -v cygpath >/dev/null 2>&1; then NIKATRU_SHELL="$(cygpath -w "$NIKATRU_SHELL")"; fi
-          node "$GITHUB_WORKSPACE/../.nikatru-shell/quiet-step.mjs" --name lane-guards.guards-legal.40 -- "$NIKATRU_SHELL" -e "$NIKATRU_QUIET"
+          node "$GITHUB_WORKSPACE/../.nikatru-shell/quiet-step.mjs" --name lane-guards.guards-legal.41 -- "$NIKATRU_SHELL" -e "$NIKATRU_QUIET"
       - name: No live file names the retired store aggregator
         if: ${{ !cancelled() }}
         timeout-minutes: 2
@@ -2719,7 +2748,7 @@ jobs:
           node --single-threaded tooling/ci/assert-no-retired-vendor.mjs
           NIKATRU_QUIET_EOF
           NIKATRU_SHELL="${BASH:-bash}"; if command -v cygpath >/dev/null 2>&1; then NIKATRU_SHELL="$(cygpath -w "$NIKATRU_SHELL")"; fi
-          node "$GITHUB_WORKSPACE/../.nikatru-shell/quiet-step.mjs" --name lane-guards.guards-legal.41 -- "$NIKATRU_SHELL" -e "$NIKATRU_QUIET"
+          node "$GITHUB_WORKSPACE/../.nikatru-shell/quiet-step.mjs" --name lane-guards.guards-legal.42 -- "$NIKATRU_SHELL" -e "$NIKATRU_QUIET"
       - name: No price is typed into app code
         if: ${{ !cancelled() }}
         run: |
@@ -2728,7 +2757,7 @@ jobs:
           node tooling/ci/assert-no-price-literals.mjs
           NIKATRU_QUIET_EOF
           NIKATRU_SHELL="${BASH:-bash}"; if command -v cygpath >/dev/null 2>&1; then NIKATRU_SHELL="$(cygpath -w "$NIKATRU_SHELL")"; fi
-          node "$GITHUB_WORKSPACE/../.nikatru-shell/quiet-step.mjs" --name lane-guards.guards-legal.42 -- "$NIKATRU_SHELL" -e "$NIKATRU_QUIET"
+          node "$GITHUB_WORKSPACE/../.nikatru-shell/quiet-step.mjs" --name lane-guards.guards-legal.43 -- "$NIKATRU_SHELL" -e "$NIKATRU_QUIET"
       - name: The rail price ids render from the price register, and every store price keeps ADR 093's rule
         if: ${{ !cancelled() }}
         run: |
@@ -2737,7 +2766,7 @@ jobs:
           node tooling/catalog/render-rail-prices.mjs --check
           NIKATRU_QUIET_EOF
           NIKATRU_SHELL="${BASH:-bash}"; if command -v cygpath >/dev/null 2>&1; then NIKATRU_SHELL="$(cygpath -w "$NIKATRU_SHELL")"; fi
-          node "$GITHUB_WORKSPACE/../.nikatru-shell/quiet-step.mjs" --name lane-guards.guards-legal.43 -- "$NIKATRU_SHELL" -e "$NIKATRU_QUIET"
+          node "$GITHUB_WORKSPACE/../.nikatru-shell/quiet-step.mjs" --name lane-guards.guards-legal.44 -- "$NIKATRU_SHELL" -e "$NIKATRU_QUIET"
       - name: Every offer is above cost on every rail, no free offer carries AI, and every channel has a code mechanism
         if: ${{ !cancelled() }}
         run: |
@@ -2746,7 +2775,7 @@ jobs:
           node tooling/ci/assert-offers.mjs
           NIKATRU_QUIET_EOF
           NIKATRU_SHELL="${BASH:-bash}"; if command -v cygpath >/dev/null 2>&1; then NIKATRU_SHELL="$(cygpath -w "$NIKATRU_SHELL")"; fi
-          node "$GITHUB_WORKSPACE/../.nikatru-shell/quiet-step.mjs" --name lane-guards.guards-legal.44 -- "$NIKATRU_SHELL" -e "$NIKATRU_QUIET"
+          node "$GITHUB_WORKSPACE/../.nikatru-shell/quiet-step.mjs" --name lane-guards.guards-legal.45 -- "$NIKATRU_SHELL" -e "$NIKATRU_QUIET"
       - name: The money funnel is wired, and the pseudonymity firewall holds
         if: ${{ !cancelled() }}
         run: |
@@ -2755,7 +2784,7 @@ jobs:
           node tooling/ci/assert-pseudonymity-firewall.mjs
           NIKATRU_QUIET_EOF
           NIKATRU_SHELL="${BASH:-bash}"; if command -v cygpath >/dev/null 2>&1; then NIKATRU_SHELL="$(cygpath -w "$NIKATRU_SHELL")"; fi
-          node "$GITHUB_WORKSPACE/../.nikatru-shell/quiet-step.mjs" --name lane-guards.guards-legal.45 -- "$NIKATRU_SHELL" -e "$NIKATRU_QUIET"
+          node "$GITHUB_WORKSPACE/../.nikatru-shell/quiet-step.mjs" --name lane-guards.guards-legal.46 -- "$NIKATRU_SHELL" -e "$NIKATRU_QUIET"
       - name: A legal document published twice says the same thing in both places
         if: ${{ !cancelled() }}
         run: |
@@ -2764,7 +2793,7 @@ jobs:
           node tooling/ci/assert-legal-text-parity.mjs
           NIKATRU_QUIET_EOF
           NIKATRU_SHELL="${BASH:-bash}"; if command -v cygpath >/dev/null 2>&1; then NIKATRU_SHELL="$(cygpath -w "$NIKATRU_SHELL")"; fi
-          node "$GITHUB_WORKSPACE/../.nikatru-shell/quiet-step.mjs" --name lane-guards.guards-legal.46 -- "$NIKATRU_SHELL" -e "$NIKATRU_QUIET"
+          node "$GITHUB_WORKSPACE/../.nikatru-shell/quiet-step.mjs" --name lane-guards.guards-legal.47 -- "$NIKATRU_SHELL" -e "$NIKATRU_QUIET"
       - name: The published pages and store listings say what the shipped tree does
         if: ${{ !cancelled() }}
         run: |
@@ -2773,7 +2802,7 @@ jobs:
           node tooling/ci/assert-published-copy-truth.mjs
           NIKATRU_QUIET_EOF
           NIKATRU_SHELL="${BASH:-bash}"; if command -v cygpath >/dev/null 2>&1; then NIKATRU_SHELL="$(cygpath -w "$NIKATRU_SHELL")"; fi
-          node "$GITHUB_WORKSPACE/../.nikatru-shell/quiet-step.mjs" --name lane-guards.guards-legal.47 -- "$NIKATRU_SHELL" -e "$NIKATRU_QUIET"
+          node "$GITHUB_WORKSPACE/../.nikatru-shell/quiet-step.mjs" --name lane-guards.guards-legal.48 -- "$NIKATRU_SHELL" -e "$NIKATRU_QUIET"
       - name: Every translated legal string and served translated page has a current QA pass
         if: ${{ !cancelled() }}
         run: |
@@ -2782,7 +2811,7 @@ jobs:
           node tooling/ci/assert-translation-qa.mjs
           NIKATRU_QUIET_EOF
           NIKATRU_SHELL="${BASH:-bash}"; if command -v cygpath >/dev/null 2>&1; then NIKATRU_SHELL="$(cygpath -w "$NIKATRU_SHELL")"; fi
-          node "$GITHUB_WORKSPACE/../.nikatru-shell/quiet-step.mjs" --name lane-guards.guards-legal.48 -- "$NIKATRU_SHELL" -e "$NIKATRU_QUIET"
+          node "$GITHUB_WORKSPACE/../.nikatru-shell/quiet-step.mjs" --name lane-guards.guards-legal.49 -- "$NIKATRU_SHELL" -e "$NIKATRU_QUIET"
       - name: Every translation is made by the pipeline and none is typed by hand
         if: ${{ !cancelled() }}
         run: |
@@ -2791,7 +2820,7 @@ jobs:
           node tooling/ci/assert-translations-generated.mjs
           NIKATRU_QUIET_EOF
           NIKATRU_SHELL="${BASH:-bash}"; if command -v cygpath >/dev/null 2>&1; then NIKATRU_SHELL="$(cygpath -w "$NIKATRU_SHELL")"; fi
-          node "$GITHUB_WORKSPACE/../.nikatru-shell/quiet-step.mjs" --name lane-guards.guards-legal.49 -- "$NIKATRU_SHELL" -e "$NIKATRU_QUIET"
+          node "$GITHUB_WORKSPACE/../.nikatru-shell/quiet-step.mjs" --name lane-guards.guards-legal.50 -- "$NIKATRU_SHELL" -e "$NIKATRU_QUIET"
       - name: Hand this job's red detail to the report job, sealed (generated)
         id: nikatru-handoff
         if: always()
@@ -3059,6 +3088,15 @@ jobs:
           NIKATRU_QUIET_EOF
           NIKATRU_SHELL="${BASH:-bash}"; if command -v cygpath >/dev/null 2>&1; then NIKATRU_SHELL="$(cygpath -w "$NIKATRU_SHELL")"; fi
           node "$GITHUB_WORKSPACE/../.nikatru-shell/quiet-step.mjs" --name lane-guards.guards-store.20 -- "$NIKATRU_SHELL" -e "$NIKATRU_QUIET"
+      - name: Every published product has a portfolio row the tree agrees with (new-product portfolio --check)
+        if: ${{ !cancelled() }}
+        run: |
+          NIKATRU_QUIET="$(mktemp "${RUNNER_TEMP:-/tmp}/nikatru-step.XXXXXX")"
+          cat > "$NIKATRU_QUIET" <<'NIKATRU_QUIET_EOF'
+          node tooling/kit/new-product.mjs portfolio --check
+          NIKATRU_QUIET_EOF
+          NIKATRU_SHELL="${BASH:-bash}"; if command -v cygpath >/dev/null 2>&1; then NIKATRU_SHELL="$(cygpath -w "$NIKATRU_SHELL")"; fi
+          node "$GITHUB_WORKSPACE/../.nikatru-shell/quiet-step.mjs" --name lane-guards.guards-store.21 -- "$NIKATRU_SHELL" -e "$NIKATRU_QUIET"
       - name: Every Linux store channel can produce a complete snapcraft recipe
         if: ${{ !cancelled() }}
         run: |
@@ -3067,7 +3105,7 @@ jobs:
           node tooling/ci/assert-snapcraft-generable.mjs
           NIKATRU_QUIET_EOF
           NIKATRU_SHELL="${BASH:-bash}"; if command -v cygpath >/dev/null 2>&1; then NIKATRU_SHELL="$(cygpath -w "$NIKATRU_SHELL")"; fi
-          node "$GITHUB_WORKSPACE/../.nikatru-shell/quiet-step.mjs" --name lane-guards.guards-store.21 -- "$NIKATRU_SHELL" -e "$NIKATRU_QUIET"
+          node "$GITHUB_WORKSPACE/../.nikatru-shell/quiet-step.mjs" --name lane-guards.guards-store.22 -- "$NIKATRU_SHELL" -e "$NIKATRU_QUIET"
       - name: The Play listing graphics exist, are the sourced size, and say where they came from
         if: ${{ !cancelled() }}
         run: |
@@ -3076,7 +3114,7 @@ jobs:
           node --single-threaded tooling/ci/assert-listing-assets.mjs
           NIKATRU_QUIET_EOF
           NIKATRU_SHELL="${BASH:-bash}"; if command -v cygpath >/dev/null 2>&1; then NIKATRU_SHELL="$(cygpath -w "$NIKATRU_SHELL")"; fi
-          node "$GITHUB_WORKSPACE/../.nikatru-shell/quiet-step.mjs" --name lane-guards.guards-store.22 -- "$NIKATRU_SHELL" -e "$NIKATRU_QUIET"
+          node "$GITHUB_WORKSPACE/../.nikatru-shell/quiet-step.mjs" --name lane-guards.guards-store.23 -- "$NIKATRU_SHELL" -e "$NIKATRU_QUIET"
       - name: The Play screenshot set spans enough device types
         if: ${{ !cancelled() }}
         run: |
@@ -3085,7 +3123,7 @@ jobs:
           node tooling/ci/assert-play-device-coverage.mjs
           NIKATRU_QUIET_EOF
           NIKATRU_SHELL="${BASH:-bash}"; if command -v cygpath >/dev/null 2>&1; then NIKATRU_SHELL="$(cygpath -w "$NIKATRU_SHELL")"; fi
-          node "$GITHUB_WORKSPACE/../.nikatru-shell/quiet-step.mjs" --name lane-guards.guards-store.23 -- "$NIKATRU_SHELL" -e "$NIKATRU_QUIET"
+          node "$GITHUB_WORKSPACE/../.nikatru-shell/quiet-step.mjs" --name lane-guards.guards-store.24 -- "$NIKATRU_SHELL" -e "$NIKATRU_QUIET"
       - name: Every auto-renewable subscription has an App Store review screenshot
         if: ${{ !cancelled() }}
         run: |
@@ -3094,7 +3132,7 @@ jobs:
           node --single-threaded tooling/ci/assert-iap-review-screenshots.mjs
           NIKATRU_QUIET_EOF
           NIKATRU_SHELL="${BASH:-bash}"; if command -v cygpath >/dev/null 2>&1; then NIKATRU_SHELL="$(cygpath -w "$NIKATRU_SHELL")"; fi
-          node "$GITHUB_WORKSPACE/../.nikatru-shell/quiet-step.mjs" --name lane-guards.guards-store.24 -- "$NIKATRU_SHELL" -e "$NIKATRU_QUIET"
+          node "$GITHUB_WORKSPACE/../.nikatru-shell/quiet-step.mjs" --name lane-guards.guards-store.25 -- "$NIKATRU_SHELL" -e "$NIKATRU_QUIET"
       - name: The Data safety and content-rating declarations still describe the code
         if: ${{ !cancelled() }}
         run: |
@@ -3103,7 +3141,7 @@ jobs:
           node tooling/ci/assert-play-declarations.mjs
           NIKATRU_QUIET_EOF
           NIKATRU_SHELL="${BASH:-bash}"; if command -v cygpath >/dev/null 2>&1; then NIKATRU_SHELL="$(cygpath -w "$NIKATRU_SHELL")"; fi
-          node "$GITHUB_WORKSPACE/../.nikatru-shell/quiet-step.mjs" --name lane-guards.guards-store.25 -- "$NIKATRU_SHELL" -e "$NIKATRU_QUIET"
+          node "$GITHUB_WORKSPACE/../.nikatru-shell/quiet-step.mjs" --name lane-guards.guards-store.26 -- "$NIKATRU_SHELL" -e "$NIKATRU_QUIET"
       - name: Every store's crash-data answer matches what the crash sink receives
         if: ${{ !cancelled() }}
         run: |
@@ -3112,7 +3150,7 @@ jobs:
           node tooling/ci/assert-crash-declarations.mjs
           NIKATRU_QUIET_EOF
           NIKATRU_SHELL="${BASH:-bash}"; if command -v cygpath >/dev/null 2>&1; then NIKATRU_SHELL="$(cygpath -w "$NIKATRU_SHELL")"; fi
-          node "$GITHUB_WORKSPACE/../.nikatru-shell/quiet-step.mjs" --name lane-guards.guards-store.26 -- "$NIKATRU_SHELL" -e "$NIKATRU_QUIET"
+          node "$GITHUB_WORKSPACE/../.nikatru-shell/quiet-step.mjs" --name lane-guards.guards-store.27 -- "$NIKATRU_SHELL" -e "$NIKATRU_QUIET"
       - name: The sworn store declarations have not regressed toward the stamp
         if: ${{ !cancelled() }}
         run: |
@@ -3121,7 +3159,7 @@ jobs:
           node tooling/ci/assert-sworn-store-files.mjs
           NIKATRU_QUIET_EOF
           NIKATRU_SHELL="${BASH:-bash}"; if command -v cygpath >/dev/null 2>&1; then NIKATRU_SHELL="$(cygpath -w "$NIKATRU_SHELL")"; fi
-          node "$GITHUB_WORKSPACE/../.nikatru-shell/quiet-step.mjs" --name lane-guards.guards-store.27 -- "$NIKATRU_SHELL" -e "$NIKATRU_QUIET"
+          node "$GITHUB_WORKSPACE/../.nikatru-shell/quiet-step.mjs" --name lane-guards.guards-store.28 -- "$NIKATRU_SHELL" -e "$NIKATRU_QUIET"
       - name: The store reviewer sign-in record names vault entries only, for every store and app
         if: ${{ !cancelled() }}
         run: |
@@ -3130,7 +3168,7 @@ jobs:
           node tooling/ci/assert-reviewer-access.mjs
           NIKATRU_QUIET_EOF
           NIKATRU_SHELL="${BASH:-bash}"; if command -v cygpath >/dev/null 2>&1; then NIKATRU_SHELL="$(cygpath -w "$NIKATRU_SHELL")"; fi
-          node "$GITHUB_WORKSPACE/../.nikatru-shell/quiet-step.mjs" --name lane-guards.guards-store.28 -- "$NIKATRU_SHELL" -e "$NIKATRU_QUIET"
+          node "$GITHUB_WORKSPACE/../.nikatru-shell/quiet-step.mjs" --name lane-guards.guards-store.29 -- "$NIKATRU_SHELL" -e "$NIKATRU_QUIET"
       - name: Every store channel declares the adult audience, and Windows answers IARC as Play does
         if: ${{ !cancelled() }}
         run: |
@@ -3139,7 +3177,7 @@ jobs:
           node tooling/ci/assert-store-audience.mjs
           NIKATRU_QUIET_EOF
           NIKATRU_SHELL="${BASH:-bash}"; if command -v cygpath >/dev/null 2>&1; then NIKATRU_SHELL="$(cygpath -w "$NIKATRU_SHELL")"; fi
-          node "$GITHUB_WORKSPACE/../.nikatru-shell/quiet-step.mjs" --name lane-guards.guards-store.29 -- "$NIKATRU_SHELL" -e "$NIKATRU_QUIET"
+          node "$GITHUB_WORKSPACE/../.nikatru-shell/quiet-step.mjs" --name lane-guards.guards-store.30 -- "$NIKATRU_SHELL" -e "$NIKATRU_QUIET"
       - name: The advertising declarations still describe the shipped tree
         if: ${{ !cancelled() }}
         run: |
@@ -3148,7 +3186,7 @@ jobs:
           node tooling/ci/assert-ads-declarations.mjs
           NIKATRU_QUIET_EOF
           NIKATRU_SHELL="${BASH:-bash}"; if command -v cygpath >/dev/null 2>&1; then NIKATRU_SHELL="$(cygpath -w "$NIKATRU_SHELL")"; fi
-          node "$GITHUB_WORKSPACE/../.nikatru-shell/quiet-step.mjs" --name lane-guards.guards-store.30 -- "$NIKATRU_SHELL" -e "$NIKATRU_QUIET"
+          node "$GITHUB_WORKSPACE/../.nikatru-shell/quiet-step.mjs" --name lane-guards.guards-store.31 -- "$NIKATRU_SHELL" -e "$NIKATRU_QUIET"
       - name: No release build from an ungated commit, no publish unrecorded
         if: ${{ !cancelled() }}
         run: |
@@ -3157,7 +3195,7 @@ jobs:
           node tooling/ci/assert-release-provenance.mjs
           NIKATRU_QUIET_EOF
           NIKATRU_SHELL="${BASH:-bash}"; if command -v cygpath >/dev/null 2>&1; then NIKATRU_SHELL="$(cygpath -w "$NIKATRU_SHELL")"; fi
-          node "$GITHUB_WORKSPACE/../.nikatru-shell/quiet-step.mjs" --name lane-guards.guards-store.31 -- "$NIKATRU_SHELL" -e "$NIKATRU_QUIET"
+          node "$GITHUB_WORKSPACE/../.nikatru-shell/quiet-step.mjs" --name lane-guards.guards-store.32 -- "$NIKATRU_SHELL" -e "$NIKATRU_QUIET"
       - name: No release lane finishes with the artifact stuck inside the run
         if: ${{ !cancelled() }}
         run: |
@@ -3166,7 +3204,7 @@ jobs:
           node tooling/ci/assert-release-durable.mjs
           NIKATRU_QUIET_EOF
           NIKATRU_SHELL="${BASH:-bash}"; if command -v cygpath >/dev/null 2>&1; then NIKATRU_SHELL="$(cygpath -w "$NIKATRU_SHELL")"; fi
-          node "$GITHUB_WORKSPACE/../.nikatru-shell/quiet-step.mjs" --name lane-guards.guards-store.32 -- "$NIKATRU_SHELL" -e "$NIKATRU_QUIET"
+          node "$GITHUB_WORKSPACE/../.nikatru-shell/quiet-step.mjs" --name lane-guards.guards-store.33 -- "$NIKATRU_SHELL" -e "$NIKATRU_QUIET"
       - name: Every release file is attested and verified, and only a release job can sign
         if: ${{ !cancelled() }}
         run: |
@@ -3175,7 +3213,7 @@ jobs:
           node tooling/ci/assert-build-provenance.mjs
           NIKATRU_QUIET_EOF
           NIKATRU_SHELL="${BASH:-bash}"; if command -v cygpath >/dev/null 2>&1; then NIKATRU_SHELL="$(cygpath -w "$NIKATRU_SHELL")"; fi
-          node "$GITHUB_WORKSPACE/../.nikatru-shell/quiet-step.mjs" --name lane-guards.guards-store.33 -- "$NIKATRU_SHELL" -e "$NIKATRU_QUIET"
+          node "$GITHUB_WORKSPACE/../.nikatru-shell/quiet-step.mjs" --name lane-guards.guards-store.34 -- "$NIKATRU_SHELL" -e "$NIKATRU_QUIET"
       - name: The release-record guard can still fail (mutation matrix)
         if: ${{ !cancelled() }}
         run: |
@@ -3184,7 +3222,7 @@ jobs:
           node tooling/ci/assert-release-json.mjs --self-test
           NIKATRU_QUIET_EOF
           NIKATRU_SHELL="${BASH:-bash}"; if command -v cygpath >/dev/null 2>&1; then NIKATRU_SHELL="$(cygpath -w "$NIKATRU_SHELL")"; fi
-          node "$GITHUB_WORKSPACE/../.nikatru-shell/quiet-step.mjs" --name lane-guards.guards-store.34 -- "$NIKATRU_SHELL" -e "$NIKATRU_QUIET"
+          node "$GITHUB_WORKSPACE/../.nikatru-shell/quiet-step.mjs" --name lane-guards.guards-store.35 -- "$NIKATRU_SHELL" -e "$NIKATRU_QUIET"
       - name: Nothing is compiled into an artifact that was not declared shippable
         if: ${{ !cancelled() }}
         run: |
@@ -3193,7 +3231,7 @@ jobs:
           node tooling/ci/assert-no-secret-defines.mjs
           NIKATRU_QUIET_EOF
           NIKATRU_SHELL="${BASH:-bash}"; if command -v cygpath >/dev/null 2>&1; then NIKATRU_SHELL="$(cygpath -w "$NIKATRU_SHELL")"; fi
-          node "$GITHUB_WORKSPACE/../.nikatru-shell/quiet-step.mjs" --name lane-guards.guards-store.35 -- "$NIKATRU_SHELL" -e "$NIKATRU_QUIET"
+          node "$GITHUB_WORKSPACE/../.nikatru-shell/quiet-step.mjs" --name lane-guards.guards-store.36 -- "$NIKATRU_SHELL" -e "$NIKATRU_QUIET"
       - name: Obfuscation and symbol retention are one increment or neither
         if: ${{ !cancelled() }}
         run: |
@@ -3202,7 +3240,7 @@ jobs:
           node tooling/ci/assert-obfuscation-coupled.mjs
           NIKATRU_QUIET_EOF
           NIKATRU_SHELL="${BASH:-bash}"; if command -v cygpath >/dev/null 2>&1; then NIKATRU_SHELL="$(cygpath -w "$NIKATRU_SHELL")"; fi
-          node "$GITHUB_WORKSPACE/../.nikatru-shell/quiet-step.mjs" --name lane-guards.guards-store.36 -- "$NIKATRU_SHELL" -e "$NIKATRU_QUIET"
+          node "$GITHUB_WORKSPACE/../.nikatru-shell/quiet-step.mjs" --name lane-guards.guards-store.37 -- "$NIKATRU_SHELL" -e "$NIKATRU_QUIET"
       - name: Every Android channel's build compiles in its pinned signer and checks it at boot
         if: ${{ !cancelled() }}
         run: |
@@ -3211,7 +3249,7 @@ jobs:
           node tooling/ci/assert-runtime-signer-check.mjs
           NIKATRU_QUIET_EOF
           NIKATRU_SHELL="${BASH:-bash}"; if command -v cygpath >/dev/null 2>&1; then NIKATRU_SHELL="$(cygpath -w "$NIKATRU_SHELL")"; fi
-          node "$GITHUB_WORKSPACE/../.nikatru-shell/quiet-step.mjs" --name lane-guards.guards-store.37 -- "$NIKATRU_SHELL" -e "$NIKATRU_QUIET"
+          node "$GITHUB_WORKSPACE/../.nikatru-shell/quiet-step.mjs" --name lane-guards.guards-store.38 -- "$NIKATRU_SHELL" -e "$NIKATRU_QUIET"
       - name: No shipped client overrides TLS certificate trust
         if: ${{ !cancelled() }}
         run: |
@@ -3220,7 +3258,7 @@ jobs:
           node tooling/ci/assert-no-tls-pinning.mjs
           NIKATRU_QUIET_EOF
           NIKATRU_SHELL="${BASH:-bash}"; if command -v cygpath >/dev/null 2>&1; then NIKATRU_SHELL="$(cygpath -w "$NIKATRU_SHELL")"; fi
-          node "$GITHUB_WORKSPACE/../.nikatru-shell/quiet-step.mjs" --name lane-guards.guards-store.38 -- "$NIKATRU_SHELL" -e "$NIKATRU_QUIET"
+          node "$GITHUB_WORKSPACE/../.nikatru-shell/quiet-step.mjs" --name lane-guards.guards-store.39 -- "$NIKATRU_SHELL" -e "$NIKATRU_QUIET"
       - name: The web channel declares a cache policy a deploy can be seen through
         if: ${{ !cancelled() }}
         run: |
@@ -3230,7 +3268,7 @@ jobs:
           node tooling/ci/assert-web-cache-policy.mjs . $sites
           NIKATRU_QUIET_EOF
           NIKATRU_SHELL="${BASH:-bash}"; if command -v cygpath >/dev/null 2>&1; then NIKATRU_SHELL="$(cygpath -w "$NIKATRU_SHELL")"; fi
-          node "$GITHUB_WORKSPACE/../.nikatru-shell/quiet-step.mjs" --name lane-guards.guards-store.39 -- "$NIKATRU_SHELL" -e "$NIKATRU_QUIET"
+          node "$GITHUB_WORKSPACE/../.nikatru-shell/quiet-step.mjs" --name lane-guards.guards-store.40 -- "$NIKATRU_SHELL" -e "$NIKATRU_QUIET"
       - name: Release lanes cover every app, and no guard hides a lane
         if: ${{ !cancelled() }}
         run: |
@@ -3239,7 +3277,7 @@ jobs:
           node tooling/ci/assert-release-lane-generic.mjs
           NIKATRU_QUIET_EOF
           NIKATRU_SHELL="${BASH:-bash}"; if command -v cygpath >/dev/null 2>&1; then NIKATRU_SHELL="$(cygpath -w "$NIKATRU_SHELL")"; fi
-          node "$GITHUB_WORKSPACE/../.nikatru-shell/quiet-step.mjs" --name lane-guards.guards-store.40 -- "$NIKATRU_SHELL" -e "$NIKATRU_QUIET"
+          node "$GITHUB_WORKSPACE/../.nikatru-shell/quiet-step.mjs" --name lane-guards.guards-store.41 -- "$NIKATRU_SHELL" -e "$NIKATRU_QUIET"
       - name: Nothing is published without being launched once
         if: ${{ !cancelled() }}
         run: |
@@ -3248,7 +3286,7 @@ jobs:
           node tooling/ci/assert-launch-smoke.mjs
           NIKATRU_QUIET_EOF
           NIKATRU_SHELL="${BASH:-bash}"; if command -v cygpath >/dev/null 2>&1; then NIKATRU_SHELL="$(cygpath -w "$NIKATRU_SHELL")"; fi
-          node "$GITHUB_WORKSPACE/../.nikatru-shell/quiet-step.mjs" --name lane-guards.guards-store.41 -- "$NIKATRU_SHELL" -e "$NIKATRU_QUIET"
+          node "$GITHUB_WORKSPACE/../.nikatru-shell/quiet-step.mjs" --name lane-guards.guards-store.42 -- "$NIKATRU_SHELL" -e "$NIKATRU_QUIET"
       - name: One app_id derives every store identity, on every platform
         if: ${{ !cancelled() }}
         run: |
@@ -3257,7 +3295,7 @@ jobs:
           node tooling/ci/assert-store-identity.mjs
           NIKATRU_QUIET_EOF
           NIKATRU_SHELL="${BASH:-bash}"; if command -v cygpath >/dev/null 2>&1; then NIKATRU_SHELL="$(cygpath -w "$NIKATRU_SHELL")"; fi
-          node "$GITHUB_WORKSPACE/../.nikatru-shell/quiet-step.mjs" --name lane-guards.guards-store.42 -- "$NIKATRU_SHELL" -e "$NIKATRU_QUIET"
+          node "$GITHUB_WORKSPACE/../.nikatru-shell/quiet-step.mjs" --name lane-guards.guards-store.43 -- "$NIKATRU_SHELL" -e "$NIKATRU_QUIET"
       - name: Every iOS entitlements file is derived from its declared Apple capabilities
         if: ${{ !cancelled() }}
         run: |
@@ -3266,7 +3304,7 @@ jobs:
           node tooling/ci/assert-apple-entitlements.mjs
           NIKATRU_QUIET_EOF
           NIKATRU_SHELL="${BASH:-bash}"; if command -v cygpath >/dev/null 2>&1; then NIKATRU_SHELL="$(cygpath -w "$NIKATRU_SHELL")"; fi
-          node "$GITHUB_WORKSPACE/../.nikatru-shell/quiet-step.mjs" --name lane-guards.guards-store.43 -- "$NIKATRU_SHELL" -e "$NIKATRU_QUIET"
+          node "$GITHUB_WORKSPACE/../.nikatru-shell/quiet-step.mjs" --name lane-guards.guards-store.44 -- "$NIKATRU_SHELL" -e "$NIKATRU_QUIET"
       - name: The App Store JWS verifier trusts Apple Root CA G3 and only it
         if: ${{ !cancelled() }}
         run: |
@@ -3275,7 +3313,7 @@ jobs:
           node tooling/ci/assert-apple-root-pin.mjs
           NIKATRU_QUIET_EOF
           NIKATRU_SHELL="${BASH:-bash}"; if command -v cygpath >/dev/null 2>&1; then NIKATRU_SHELL="$(cygpath -w "$NIKATRU_SHELL")"; fi
-          node "$GITHUB_WORKSPACE/../.nikatru-shell/quiet-step.mjs" --name lane-guards.guards-store.44 -- "$NIKATRU_SHELL" -e "$NIKATRU_QUIET"
+          node "$GITHUB_WORKSPACE/../.nikatru-shell/quiet-step.mjs" --name lane-guards.guards-store.45 -- "$NIKATRU_SHELL" -e "$NIKATRU_QUIET"
       - name: No live resource carries a retired name [ADR 079]
         if: ${{ !cancelled() }}
         run: |
@@ -3284,7 +3322,7 @@ jobs:
           node tooling/ci/assert-retired-names.mjs
           NIKATRU_QUIET_EOF
           NIKATRU_SHELL="${BASH:-bash}"; if command -v cygpath >/dev/null 2>&1; then NIKATRU_SHELL="$(cygpath -w "$NIKATRU_SHELL")"; fi
-          node "$GITHUB_WORKSPACE/../.nikatru-shell/quiet-step.mjs" --name lane-guards.guards-store.45 -- "$NIKATRU_SHELL" -e "$NIKATRU_QUIET"
+          node "$GITHUB_WORKSPACE/../.nikatru-shell/quiet-step.mjs" --name lane-guards.guards-store.46 -- "$NIKATRU_SHELL" -e "$NIKATRU_QUIET"
       - name: No customer-visible surface names a retired product [ADR 074]
         if: ${{ !cancelled() }}
         run: |
@@ -3293,7 +3331,7 @@ jobs:
           node tooling/ci/assert-retired-names-visible.mjs
           NIKATRU_QUIET_EOF
           NIKATRU_SHELL="${BASH:-bash}"; if command -v cygpath >/dev/null 2>&1; then NIKATRU_SHELL="$(cygpath -w "$NIKATRU_SHELL")"; fi
-          node "$GITHUB_WORKSPACE/../.nikatru-shell/quiet-step.mjs" --name lane-guards.guards-store.46 -- "$NIKATRU_SHELL" -e "$NIKATRU_QUIET"
+          node "$GITHUB_WORKSPACE/../.nikatru-shell/quiet-step.mjs" --name lane-guards.guards-store.47 -- "$NIKATRU_SHELL" -e "$NIKATRU_QUIET"
       - name: Every NIKATRU hostname is the apex or one label deep [ADR 080]
         if: ${{ !cancelled() }}
         run: |
@@ -3302,7 +3340,7 @@ jobs:
           node tooling/ci/assert-hostname-depth.mjs
           NIKATRU_QUIET_EOF
           NIKATRU_SHELL="${BASH:-bash}"; if command -v cygpath >/dev/null 2>&1; then NIKATRU_SHELL="$(cygpath -w "$NIKATRU_SHELL")"; fi
-          node "$GITHUB_WORKSPACE/../.nikatru-shell/quiet-step.mjs" --name lane-guards.guards-store.47 -- "$NIKATRU_SHELL" -e "$NIKATRU_QUIET"
+          node "$GITHUB_WORKSPACE/../.nikatru-shell/quiet-step.mjs" --name lane-guards.guards-store.48 -- "$NIKATRU_SHELL" -e "$NIKATRU_QUIET"
       - name: No submission endangers the store identity
         if: ${{ !cancelled() }}
         run: |
@@ -3311,7 +3349,7 @@ jobs:
           node tooling/ci/assert-submission-safety.mjs
           NIKATRU_QUIET_EOF
           NIKATRU_SHELL="${BASH:-bash}"; if command -v cygpath >/dev/null 2>&1; then NIKATRU_SHELL="$(cygpath -w "$NIKATRU_SHELL")"; fi
-          node "$GITHUB_WORKSPACE/../.nikatru-shell/quiet-step.mjs" --name lane-guards.guards-store.48 -- "$NIKATRU_SHELL" -e "$NIKATRU_QUIET"
+          node "$GITHUB_WORKSPACE/../.nikatru-shell/quiet-step.mjs" --name lane-guards.guards-store.49 -- "$NIKATRU_SHELL" -e "$NIKATRU_QUIET"
       - name: No publishing lane finishes without a [10]D-9 record
         if: ${{ !cancelled() }}
         run: |
@@ -3320,7 +3358,7 @@ jobs:
           node tooling/ci/assert-publish-records.mjs
           NIKATRU_QUIET_EOF
           NIKATRU_SHELL="${BASH:-bash}"; if command -v cygpath >/dev/null 2>&1; then NIKATRU_SHELL="$(cygpath -w "$NIKATRU_SHELL")"; fi
-          node "$GITHUB_WORKSPACE/../.nikatru-shell/quiet-step.mjs" --name lane-guards.guards-store.49 -- "$NIKATRU_SHELL" -e "$NIKATRU_QUIET"
+          node "$GITHUB_WORKSPACE/../.nikatru-shell/quiet-step.mjs" --name lane-guards.guards-store.50 -- "$NIKATRU_SHELL" -e "$NIKATRU_QUIET"
       - name: The Android module pins the API level Google Play requires
         if: ${{ !cancelled() }}
         run: |
@@ -3329,7 +3367,7 @@ jobs:
           node tooling/ci/assert-android-target-sdk.mjs
           NIKATRU_QUIET_EOF
           NIKATRU_SHELL="${BASH:-bash}"; if command -v cygpath >/dev/null 2>&1; then NIKATRU_SHELL="$(cygpath -w "$NIKATRU_SHELL")"; fi
-          node "$GITHUB_WORKSPACE/../.nikatru-shell/quiet-step.mjs" --name lane-guards.guards-store.50 -- "$NIKATRU_SHELL" -e "$NIKATRU_QUIET"
+          node "$GITHUB_WORKSPACE/../.nikatru-shell/quiet-step.mjs" --name lane-guards.guards-store.51 -- "$NIKATRU_SHELL" -e "$NIKATRU_QUIET"
       - name: No store artifact is the demo build
         if: ${{ !cancelled() }}
         run: |
@@ -3338,7 +3376,7 @@ jobs:
           node tooling/ci/assert-store-build-config.mjs
           NIKATRU_QUIET_EOF
           NIKATRU_SHELL="${BASH:-bash}"; if command -v cygpath >/dev/null 2>&1; then NIKATRU_SHELL="$(cygpath -w "$NIKATRU_SHELL")"; fi
-          node "$GITHUB_WORKSPACE/../.nikatru-shell/quiet-step.mjs" --name lane-guards.guards-store.51 -- "$NIKATRU_SHELL" -e "$NIKATRU_QUIET"
+          node "$GITHUB_WORKSPACE/../.nikatru-shell/quiet-step.mjs" --name lane-guards.guards-store.52 -- "$NIKATRU_SHELL" -e "$NIKATRU_QUIET"
       - name: An app that pulls flutter_inappwebview carries its native build waivers
         if: ${{ !cancelled() }}
         run: |
@@ -3347,7 +3385,7 @@ jobs:
           node tooling/ci/assert-inappwebview-waivers.mjs
           NIKATRU_QUIET_EOF
           NIKATRU_SHELL="${BASH:-bash}"; if command -v cygpath >/dev/null 2>&1; then NIKATRU_SHELL="$(cygpath -w "$NIKATRU_SHELL")"; fi
-          node "$GITHUB_WORKSPACE/../.nikatru-shell/quiet-step.mjs" --name lane-guards.guards-store.52 -- "$NIKATRU_SHELL" -e "$NIKATRU_QUIET"
+          node "$GITHUB_WORKSPACE/../.nikatru-shell/quiet-step.mjs" --name lane-guards.guards-store.53 -- "$NIKATRU_SHELL" -e "$NIKATRU_QUIET"
       - name: The store vocabulary has one home, and every word in it is used
         if: ${{ !cancelled() }}
         run: |
@@ -3356,7 +3394,7 @@ jobs:
           node tooling/ci/assert-store-vocabulary.mjs
           NIKATRU_QUIET_EOF
           NIKATRU_SHELL="${BASH:-bash}"; if command -v cygpath >/dev/null 2>&1; then NIKATRU_SHELL="$(cygpath -w "$NIKATRU_SHELL")"; fi
-          node "$GITHUB_WORKSPACE/../.nikatru-shell/quiet-step.mjs" --name lane-guards.guards-store.53 -- "$NIKATRU_SHELL" -e "$NIKATRU_QUIET"
+          node "$GITHUB_WORKSPACE/../.nikatru-shell/quiet-step.mjs" --name lane-guards.guards-store.54 -- "$NIKATRU_SHELL" -e "$NIKATRU_QUIET"
       - name: The apps.gov.in listing media is still the derivation of the Play set
         if: ${{ !cancelled() }}
         run: |
@@ -3365,7 +3403,7 @@ jobs:
           node --single-threaded tooling/ci/assert-apps-gov-in-media.mjs
           NIKATRU_QUIET_EOF
           NIKATRU_SHELL="${BASH:-bash}"; if command -v cygpath >/dev/null 2>&1; then NIKATRU_SHELL="$(cygpath -w "$NIKATRU_SHELL")"; fi
-          node "$GITHUB_WORKSPACE/../.nikatru-shell/quiet-step.mjs" --name lane-guards.guards-store.54 -- "$NIKATRU_SHELL" -e "$NIKATRU_QUIET"
+          node "$GITHUB_WORKSPACE/../.nikatru-shell/quiet-step.mjs" --name lane-guards.guards-store.55 -- "$NIKATRU_SHELL" -e "$NIKATRU_QUIET"
       - name: The app id has one rule, and the Worker, the callers and the schemas agree with it
         if: ${{ !cancelled() }}
         run: |
@@ -3374,7 +3412,7 @@ jobs:
           node tooling/ci/assert-app-id-contract.mjs
           NIKATRU_QUIET_EOF
           NIKATRU_SHELL="${BASH:-bash}"; if command -v cygpath >/dev/null 2>&1; then NIKATRU_SHELL="$(cygpath -w "$NIKATRU_SHELL")"; fi
-          node "$GITHUB_WORKSPACE/../.nikatru-shell/quiet-step.mjs" --name lane-guards.guards-store.55 -- "$NIKATRU_SHELL" -e "$NIKATRU_QUIET"
+          node "$GITHUB_WORKSPACE/../.nikatru-shell/quiet-step.mjs" --name lane-guards.guards-store.56 -- "$NIKATRU_SHELL" -e "$NIKATRU_QUIET"
       - name: Every derived listing set was derived from the files in this tree
         if: ${{ !cancelled() }}
         run: |
@@ -3383,7 +3421,7 @@ jobs:
           node tooling/ci/assert-derived-sets.mjs
           NIKATRU_QUIET_EOF
           NIKATRU_SHELL="${BASH:-bash}"; if command -v cygpath >/dev/null 2>&1; then NIKATRU_SHELL="$(cygpath -w "$NIKATRU_SHELL")"; fi
-          node "$GITHUB_WORKSPACE/../.nikatru-shell/quiet-step.mjs" --name lane-guards.guards-store.56 -- "$NIKATRU_SHELL" -e "$NIKATRU_QUIET"
+          node "$GITHUB_WORKSPACE/../.nikatru-shell/quiet-step.mjs" --name lane-guards.guards-store.57 -- "$NIKATRU_SHELL" -e "$NIKATRU_QUIET"
       - name: Every build input a signing job downloads is checked against a pinned sha256 first
         if: ${{ !cancelled() }}
         run: |
@@ -3392,16 +3430,16 @@ jobs:
           node tooling/ci/assert-signing-inputs-pinned.mjs
           NIKATRU_QUIET_EOF
           NIKATRU_SHELL="${BASH:-bash}"; if command -v cygpath >/dev/null 2>&1; then NIKATRU_SHELL="$(cygpath -w "$NIKATRU_SHELL")"; fi
-          node "$GITHUB_WORKSPACE/../.nikatru-shell/quiet-step.mjs" --name lane-guards.guards-store.57 -- "$NIKATRU_SHELL" -e "$NIKATRU_QUIET"
+          node "$GITHUB_WORKSPACE/../.nikatru-shell/quiet-step.mjs" --name lane-guards.guards-store.58 -- "$NIKATRU_SHELL" -e "$NIKATRU_QUIET"
       - name: The Play Billing Library an Android release ships is 8 or newer
         if: ${{ !cancelled() }}
         run: |
           NIKATRU_QUIET="$(mktemp "${RUNNER_TEMP:-/tmp}/nikatru-step.XXXXXX")"
           cat > "$NIKATRU_QUIET" <<'NIKATRU_QUIET_EOF'
-          node tooling/ci/assert-play-billing-floor.mjs
+          node tooling/ci/assert-play-billing-floor.mjs --fetch
           NIKATRU_QUIET_EOF
           NIKATRU_SHELL="${BASH:-bash}"; if command -v cygpath >/dev/null 2>&1; then NIKATRU_SHELL="$(cygpath -w "$NIKATRU_SHELL")"; fi
-          node "$GITHUB_WORKSPACE/../.nikatru-shell/quiet-step.mjs" --name lane-guards.guards-store.58 -- "$NIKATRU_SHELL" -e "$NIKATRU_QUIET"
+          node "$GITHUB_WORKSPACE/../.nikatru-shell/quiet-step.mjs" --name lane-guards.guards-store.59 -- "$NIKATRU_SHELL" -e "$NIKATRU_QUIET"
       - name: No change adds a store refusal its base does not have (every submit lane, offline)
         if: ${{ !cancelled() }}
         env:
@@ -3412,7 +3450,7 @@ jobs:
           node tooling/ops/real-submission-refusals.mjs --all-lanes --affected
           NIKATRU_QUIET_EOF
           NIKATRU_SHELL="${BASH:-bash}"; if command -v cygpath >/dev/null 2>&1; then NIKATRU_SHELL="$(cygpath -w "$NIKATRU_SHELL")"; fi
-          node "$GITHUB_WORKSPACE/../.nikatru-shell/quiet-step.mjs" --name lane-guards.guards-store.59 -- "$NIKATRU_SHELL" -e "$NIKATRU_QUIET"
+          node "$GITHUB_WORKSPACE/../.nikatru-shell/quiet-step.mjs" --name lane-guards.guards-store.60 -- "$NIKATRU_SHELL" -e "$NIKATRU_QUIET"
       - name: Hand this job's red detail to the report job, sealed (generated)
         id: nikatru-handoff
         if: always()
@@ -3785,6 +3823,15 @@ jobs:
           NIKATRU_QUIET_EOF
           NIKATRU_SHELL="${BASH:-bash}"; if command -v cygpath >/dev/null 2>&1; then NIKATRU_SHELL="$(cygpath -w "$NIKATRU_SHELL")"; fi
           node "$GITHUB_WORKSPACE/../.nikatru-shell/quiet-step.mjs" --name lane-guards.guards-chassis.32 -- "$NIKATRU_SHELL" -e "$NIKATRU_QUIET"
+      - name: A pressed control names its stage, and no failure is swallowed without a reason
+        if: ${{ !cancelled() }}
+        run: |
+          NIKATRU_QUIET="$(mktemp "${RUNNER_TEMP:-/tmp}/nikatru-step.XXXXXX")"
+          cat > "$NIKATRU_QUIET" <<'NIKATRU_QUIET_EOF'
+          node tooling/ci/assert-no-bare-wait.mjs
+          NIKATRU_QUIET_EOF
+          NIKATRU_SHELL="${BASH:-bash}"; if command -v cygpath >/dev/null 2>&1; then NIKATRU_SHELL="$(cygpath -w "$NIKATRU_SHELL")"; fi
+          node "$GITHUB_WORKSPACE/../.nikatru-shell/quiet-step.mjs" --name lane-guards.guards-chassis.33 -- "$NIKATRU_SHELL" -e "$NIKATRU_QUIET"
       - name: Hand this job's red detail to the report job, sealed (generated)
         id: nikatru-handoff
         if: always()

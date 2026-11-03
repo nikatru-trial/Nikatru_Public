@@ -22,6 +22,27 @@
       ]
     },
     {
+      "job": "pool-sync",
+      "context": "ci/pool-sync",
+      "members": [
+        "ci.pool-sync."
+      ]
+    },
+    {
+      "job": "money-plan",
+      "context": "ci/money-plan",
+      "members": [
+        "ci.money-plan."
+      ]
+    },
+    {
+      "job": "sandbox-slot",
+      "context": "ci/sandbox-slot",
+      "members": [
+        "ci.sandbox-slot."
+      ]
+    },
+    {
       "job": "money-sandbox",
       "context": "ci/money-sandbox",
       "members": [

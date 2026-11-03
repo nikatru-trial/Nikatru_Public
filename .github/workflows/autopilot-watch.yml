@@ -5,7 +5,7 @@ env:
 
 name: Autopilot watch
 
-run-name: "Autopilot watch${{ inputs.worker_slot && format(' [worker slot {0}]', inputs.worker_slot) || '' }}"
+run-name: "Autopilot watch ${{ inputs.nikatru_relay_run != '' && format('after {0} {1} on {2}', inputs.nikatru_relay_name, inputs.nikatru_relay_conclusion, inputs.nikatru_relay_head_sha) || (github.event.client_payload.event || github.event_name) }}${{ inputs.worker_slot && format(' [worker slot {0}]', inputs.worker_slot) || '' }}"
 
 on:
   workflow_dispatch:
@@ -22,6 +22,31 @@ on:
         type: string
       nikatru_relay_attempt:
         description: That run's attempt (generated; empty is its newest).
+        required: false
+        default: ''
+        type: string
+      nikatru_relay_name:
+        description: That run's name, for this run's title (generated; display only).
+        required: false
+        default: ''
+        type: string
+      nikatru_relay_path:
+        description: That run's path, for this run's title (generated; display only).
+        required: false
+        default: ''
+        type: string
+      nikatru_relay_conclusion:
+        description: That run's conclusion, for this run's title (generated; display only).
+        required: false
+        default: ''
+        type: string
+      nikatru_relay_head_sha:
+        description: That run's head_sha, for this run's title (generated; display only).
+        required: false
+        default: ''
+        type: string
+      nikatru_relay_event:
+        description: That run's event, for this run's title (generated; display only).
         required: false
         default: ''
         type: string

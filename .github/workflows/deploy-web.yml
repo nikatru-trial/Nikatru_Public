@@ -2,7 +2,7 @@
 # Do not edit: `node tooling/ci/gen-public-shell.mjs --check` re-generates it and fails on any difference.
 env:
   NIKATRU_PRIVATE_REPO: com-nikatru/Nikatru_Private
-  NIKATRU_SHELL_FINGERPRINT: 1af23e55a238ec5bb7991ef992bfd9a28adb5882daf17c71fb8352bdd884fdcb
+  NIKATRU_SHELL_FINGERPRINT: b29e310c33643dd34b661a1419b083cb160837af42d59b401edc5ed0e5b405fb
 
 name: Part of CI · Deploy web
 
@@ -426,6 +426,14 @@ jobs:
           --field build_number
           --expect ${{ github.run_number }}
           --bundle-dir apps/${{ matrix.app }}/build/web
+      - name: The bytes the CDN serves are within the wire budget
+        id: wire
+        if: steps.plan.outputs.deploy == 'true'
+        working-directory: .
+        env:
+          SITE_URL: ${{ steps.target.outputs.site_url }}
+          APP: ${{ matrix.app }}
+        run: node tooling/web/perf-budget.mjs --probe-live "$SITE_URL/" --app "$APP"
       - name: Record the deployed SHA
         if: always() && steps.deploy.outcome == 'success'
         working-directory: .
@@ -545,7 +553,7 @@ jobs:
         env:
           CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
           CLOUDFLARE_ACCOUNT_ID: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
-          PROJECT: nikatru-apex
+          PROJECT: ${{ steps.target.outputs.project }}
         run: |
           set -uo pipefail
           node "$GITHUB_WORKSPACE/tooling/ops/npm-ci-retry.mjs" -- npm ci --ignore-scripts --prefix tooling/wrangler || { echo "::error title=Pages project::the tooling/wrangler island did not install from its lockfile."; exit 1; }
@@ -556,30 +564,44 @@ jobs:
           CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
           CLOUDFLARE_ACCOUNT_ID: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
           SUBSCRIBE_RATE_LIMIT_SALT: ${{ secrets.SUBSCRIBE_RATE_LIMIT_SALT }}
+          PROJECT: ${{ steps.target.outputs.project }}
         run: |
           set -euo pipefail
           if [ -z "$SUBSCRIBE_RATE_LIMIT_SALT" ]; then echo "::error title=salt::the SUBSCRIBE_RATE_LIMIT_SALT secret reached this job empty."; exit 1; fi
-          printf '%s' "$SUBSCRIBE_RATE_LIMIT_SALT" | tooling/wrangler/node_modules/.bin/wrangler pages secret put SUBSCRIBE_RATE_LIMIT_SALT --project-name nikatru-apex
+          printf '%s' "$SUBSCRIBE_RATE_LIMIT_SALT" | tooling/wrangler/node_modules/.bin/wrangler pages secret put SUBSCRIBE_RATE_LIMIT_SALT --project-name "$PROJECT"
       - name: Put the launch-list mail key on the project
         if: steps.plan.outputs.deploy == 'true'
         env:
           CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
           CLOUDFLARE_ACCOUNT_ID: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
           LAUNCH_MAIL_RESEND_KEY: ${{ secrets.LAUNCH_MAIL_RESEND_KEY }}
+          PROJECT: ${{ steps.target.outputs.project }}
         run: |
           set -euo pipefail
           if [ -z "$LAUNCH_MAIL_RESEND_KEY" ]; then echo "::error title=launch mail::the LAUNCH_MAIL_RESEND_KEY secret reached this job empty."; exit 1; fi
-          printf '%s' "$LAUNCH_MAIL_RESEND_KEY" | tooling/wrangler/node_modules/.bin/wrangler pages secret put LAUNCH_MAIL_RESEND_KEY --project-name nikatru-apex
+          printf '%s' "$LAUNCH_MAIL_RESEND_KEY" | tooling/wrangler/node_modules/.bin/wrangler pages secret put LAUNCH_MAIL_RESEND_KEY --project-name "$PROJECT"
       - name: Put the feedback forward key on the project
         if: steps.plan.outputs.deploy == 'true'
         env:
           CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
           CLOUDFLARE_ACCOUNT_ID: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
           FEEDBACK_FORWARD_KEY: ${{ secrets.FEEDBACK_FORWARD_KEY }}
+          PROJECT: ${{ steps.target.outputs.project }}
         run: |
           set -euo pipefail
           if [ -z "$FEEDBACK_FORWARD_KEY" ]; then echo "::error title=feedback forward key::the FEEDBACK_FORWARD_KEY secret reached this job empty."; exit 1; fi
-          printf '%s' "$FEEDBACK_FORWARD_KEY" | tooling/wrangler/node_modules/.bin/wrangler pages secret put FEEDBACK_FORWARD_KEY --project-name nikatru-apex
+          printf '%s' "$FEEDBACK_FORWARD_KEY" | tooling/wrangler/node_modules/.bin/wrangler pages secret put FEEDBACK_FORWARD_KEY --project-name "$PROJECT"
+      - name: Put the GlitchTip DSN on the project
+        if: steps.plan.outputs.deploy == 'true'
+        env:
+          CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
+          CLOUDFLARE_ACCOUNT_ID: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
+          GLITCHTIP_DSN: ${{ secrets.GLITCHTIP_DSN }}
+          PROJECT: ${{ steps.target.outputs.project }}
+        run: |
+          set -euo pipefail
+          if [ -z "$GLITCHTIP_DSN" ]; then echo "::error title=glitchtip dsn::the GLITCHTIP_DSN secret reached this job empty."; exit 1; fi
+          printf '%s' "$GLITCHTIP_DSN" | tooling/wrangler/node_modules/.bin/wrangler pages secret put GLITCHTIP_DSN --project-name "$PROJECT"
       - name: Deploy the apex site to nikatru-apex
         if: steps.plan.outputs.deploy == 'true'
         id: deploy

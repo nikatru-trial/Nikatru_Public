@@ -2,7 +2,7 @@
 # Do not edit: `node tooling/ci/gen-public-shell.mjs --check` re-generates it and fails on any difference.
 env:
   NIKATRU_PRIVATE_REPO: com-nikatru/Nikatru_Private
-  NIKATRU_SHELL_FINGERPRINT: 230eb0717304b4e21e7d9dbdd20422d3f1f11adcc397b578c201033ed77dbbc4
+  NIKATRU_SHELL_FINGERPRINT: cf4a366d7d802c647f155e4fc520ba5b484d6a59fc6e16d716a55169212a95fc
 
 name: Part of CI · Migrate PLATFORM_DB
 
@@ -27,6 +27,9 @@ on:
       restore_bookmark:
         description: The PLATFORM_DB Time Travel bookmark read before this apply.
         value: ${{ jobs.migrate.outputs.restore_bookmark }}
+      pre_migration_export:
+        description: The nightly off-vendor export (date@exportedAt) this apply sits on.
+        value: ${{ jobs.migrate.outputs.pre_migration_export }}
 
 concurrency:
   group: platform-db-migrate
@@ -46,6 +49,7 @@ jobs:
       deployments: read
     outputs:
       restore_bookmark: ${{ steps.restore_point.outputs.bookmark }}
+      pre_migration_export: ${{ steps.pre_export.outputs.export }}
     steps:
       - name: Check out the private tree (generated)
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
@@ -132,6 +136,26 @@ jobs:
         env:
           D1_TIME_TRAVEL_OUTPUT: ${{ steps.time_travel.outputs.command-output }}
         run: node tooling/ops/d1-restore-bookmark.mjs --database PLATFORM_DB
+      - name: Name the export bucket (services/platform/wrangler.jsonc BACKUPS_R2)
+        id: export_bucket
+        if: steps.plan.outputs.deploy == 'true'
+        run: node tooling/ops/pre-migration-export.mjs --bucket
+      - name: Read the newest export's manifest (the off-vendor copy before the apply)
+        id: export_manifest
+        if: steps.plan.outputs.deploy == 'true'
+        uses: cloudflare/wrangler-action@953926a2e2182532811c01a25e53647d93bf07c0
+        with:
+          apiToken: ${{ secrets.CLOUDFLARE_API_TOKEN }}
+          wranglerVersion: '4.149.0'
+          accountId: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
+          workingDirectory: services/platform
+          command: r2 object get ${{ steps.export_bucket.outputs.bucket }}/manifests/latest.json --remote --pipe
+      - name: Refuse the apply without a complete, fresh export
+        id: pre_export
+        if: steps.plan.outputs.deploy == 'true'
+        env:
+          PRE_MIGRATION_MANIFEST: ${{ steps.export_manifest.outputs.command-output }}
+        run: node tooling/ops/pre-migration-export.mjs
       - name: Apply PLATFORM_DB migrations (before every deploy that reads it)
         if: steps.plan.outputs.deploy == 'true'
         uses: cloudflare/wrangler-action@953926a2e2182532811c01a25e53647d93bf07c0

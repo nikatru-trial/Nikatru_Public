@@ -121,6 +121,94 @@ jobs:
           echo "pinned $NIKATRU_PINNED"
           echo "sha=$NIKATRU_PINNED" >> "$GITHUB_OUTPUT"
 
+  apps:
+    needs: [nikatru-pin]
+    name: Derive the app set from the pub workspace
+    runs-on: ubuntu-24.04
+    timeout-minutes: 5
+    permissions:
+      contents: read
+      id-token: write
+    outputs:
+      apps: ${{ steps.workspace.outputs.apps }}
+    steps:
+      - name: Check out the private tree (generated)
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
+        with:
+          repository: ${{ env.NIKATRU_PRIVATE_REPO }}
+          ref: ${{ needs.nikatru-pin.outputs.sha || 'nikatru-pin-did-not-succeed..' }}
+          ssh-key: ${{ secrets.PRIVATE_DEPLOY_KEY }}
+          persist-credentials: false
+      - name: Name the private commit (generated)
+        shell: bash
+        working-directory: ${{ github.workspace }}
+        env:
+          NIKATRU_P_EVENT: ${{ github.event.client_payload.event || github.event_name }}
+          NIKATRU_P_REF: ${{ github.event.client_payload.ref || 'refs/heads/main' }}
+          NIKATRU_P_BASE_SHA: ${{ github.event.client_payload.base_sha }}
+          NIKATRU_P_BASE_REF: ${{ github.event.client_payload.base_ref }}
+          NIKATRU_P_PR: ${{ github.event.client_payload.pr }}
+          NIKATRU_P_PR_CREATED_AT: ${{ github.event.client_payload.pr_created_at }}
+          NIKATRU_P_DRAFT: ${{ github.event.client_payload.draft }}
+          NIKATRU_P_SHA: ${{ github.event.client_payload.sha }}
+        run: |
+          if [ "$NIKATRU_P_EVENT" = pull_request ]; then
+            set -- $(git cat-file -p HEAD | sed -n '1,/^$/s/^parent //p')
+            if [ "${2:-}" != "$NIKATRU_P_SHA" ]; then
+              echo "::error::the checked-out merge of PR #$NIKATRU_P_PR is not the merge of the dispatched head $NIKATRU_P_SHA (its second parent is ${2:-none}); the nikatru-pin job pins it — re-run the whole workflow, not this job"
+              exit 1
+            fi
+          fi
+          {
+            echo "NIKATRU_SHA=$(git rev-parse HEAD)"
+            echo "NIKATRU_HEAD_SHA=${NIKATRU_P_SHA:-$(git rev-parse HEAD)}"
+            echo "NIKATRU_EVENT_NAME=$NIKATRU_P_EVENT"
+            echo "NIKATRU_REF=$NIKATRU_P_REF"
+            echo "NIKATRU_REF_NAME=${NIKATRU_P_REF#refs/*/}"
+            echo "NIKATRU_BASE_SHA=$NIKATRU_P_BASE_SHA"
+            echo "NIKATRU_BASE_REF=$NIKATRU_P_BASE_REF"
+            echo "NIKATRU_PR=$NIKATRU_P_PR"
+            echo "NIKATRU_PR_CREATED_AT=$NIKATRU_P_PR_CREATED_AT"
+            echo "NIKATRU_DRAFT=$NIKATRU_P_DRAFT"
+          } >> "$GITHUB_ENV"
+      - name: Check out this shell repository's own step wrapper and reporter (generated)
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
+        with:
+          path: .nikatru-shell
+          sparse-checkout: .github/nikatru
+          persist-credentials: false
+      - name: Stage the shell's own copies outside the private checkout (generated)
+        shell: bash
+        working-directory: ${{ github.workspace }}
+        run: |
+          rm -rf ../.nikatru-shell
+          mv .nikatru-shell/.github/nikatru ../.nikatru-shell
+          rm -rf .nikatru-shell
+      - name: The matrix comes from the workspace, never from this file
+        id: workspace
+        run: |
+          NIKATRU_QUIET="$(mktemp "${RUNNER_TEMP:-/tmp}/nikatru-step.XXXXXX")"
+          cat > "$NIKATRU_QUIET" <<'NIKATRU_QUIET_EOF'
+          set -euo pipefail
+          apps="$(node tooling/ci/assert-release-lane-generic.mjs --emit-apps)"
+          echo "apps=${apps}" >> "$GITHUB_OUTPUT"
+          echo "Journeys: ${apps}" >> "$GITHUB_STEP_SUMMARY"
+          NIKATRU_QUIET_EOF
+          NIKATRU_SHELL="${BASH:-bash}"; if command -v cygpath >/dev/null 2>&1; then NIKATRU_SHELL="$(cygpath -w "$NIKATRU_SHELL")"; fi
+          node "$GITHUB_WORKSPACE/../.nikatru-shell/quiet-step.mjs" --name new-user-e2e.apps.2 -- "$NIKATRU_SHELL" -e "$NIKATRU_QUIET"
+      - name: Store this job's red detail in the bridge's private home (generated)
+        if: always()
+        continue-on-error: true
+        shell: bash
+        working-directory: ${{ github.workspace }}
+        env:
+          NIKATRU_PATHS: ${{ runner.temp }}/report-detail.md
+          NIKATRU_ARTIFACT_NAME: report-detail-new-user-e2e.apps.${{ strategy.job-index }}
+          NIKATRU_IF_NO_FILES: ignore
+          BRIDGE_ARTIFACT_SECRET: ${{ secrets.BRIDGE_ARTIFACT_SECRET }}
+          NIKATRU_BRIDGE_ARTIFACT_URL: https://gh-bridge.nikatru.workers.dev/artifact
+        run: node tooling/ops/bridge-artifact.mjs upload
+
   prepare:
     needs: [nikatru-pin]
     name: Preflight, the inbox, the orphan sweep and the plan
@@ -135,9 +223,7 @@ jobs:
     env:
       SUPABASE_URL: ${{ secrets.SUPABASE_URL }}
       SUPABASE_ANON_KEY: ${{ secrets.SUPABASE_ANON_KEY }}
-      SUPABASE_SERVICE_ROLE_KEY: ${{ secrets.SUPABASE_SERVICE_ROLE_KEY }}
       TEST_INBOX_READ_TOKEN: ${{ secrets.TEST_INBOX_READ_TOKEN }}
-      MONEY_OPS_SECRET: ${{ secrets.MONEY_OPS_SECRET }}
       TURNSTILE_SITE_KEY: ${{ vars.TURNSTILE_SITE_KEY }}
       NUJ_MAIL_READER: test-inbox
     steps:
@@ -208,6 +294,9 @@ jobs:
         run: printf '/.nikatru-trusted/\n' >> "$(git rev-parse --git-path info/exclude)"
       - uses: ./.nikatru-trusted/.github/actions/setup-node
       - name: Preflight — every secret this journey needs is present
+        env:
+          SUPABASE_SERVICE_ROLE_KEY: ${{ secrets.SUPABASE_SERVICE_ROLE_KEY }}
+          MONEY_OPS_SECRET: ${{ secrets.MONEY_OPS_SECRET }}
         run: |
           NIKATRU_QUIET="$(mktemp "${RUNNER_TEMP:-/tmp}/nikatru-step.XXXXXX")"
           cat > "$NIKATRU_QUIET" <<'NIKATRU_QUIET_EOF'
@@ -249,6 +338,9 @@ jobs:
           NIKATRU_SHELL="${BASH:-bash}"; if command -v cygpath >/dev/null 2>&1; then NIKATRU_SHELL="$(cygpath -w "$NIKATRU_SHELL")"; fi
           node "$GITHUB_WORKSPACE/../.nikatru-shell/quiet-step.mjs" --name new-user-e2e.prepare.6 -- "$NIKATRU_SHELL" -e "$NIKATRU_QUIET"
       - name: Orphan sweep — no signup-* identity an earlier run left unlisted
+        env:
+          SUPABASE_SERVICE_ROLE_KEY: ${{ secrets.SUPABASE_SERVICE_ROLE_KEY }}
+          MONEY_OPS_SECRET: ${{ secrets.MONEY_OPS_SECRET }}
         run: |
           NIKATRU_QUIET="$(mktemp "${RUNNER_TEMP:-/tmp}/nikatru-step.XXXXXX")"
           cat > "$NIKATRU_QUIET" <<'NIKATRU_QUIET_EOF'
@@ -300,8 +392,8 @@ jobs:
         run: node tooling/ops/bridge-artifact.mjs upload
 
   account:
-    name: A new customer, end to end (production, n=${{ matrix.n }})
-    needs: [nikatru-pin, prepare]
+    name: A new customer, end to end (production, ${{ matrix.app }}, n=${{ matrix.n }})
+    needs: [nikatru-pin, apps, prepare]
     runs-on: ubuntu-24.04
     timeout-minutes: 45
     permissions:
@@ -310,6 +402,8 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
+        app: ${{ fromJSON(needs.apps.outputs.apps) }}
+        n: [1, 2]
         include:
           - n: 1
             onboarding: full
@@ -318,9 +412,7 @@ jobs:
     env:
       SUPABASE_URL: ${{ secrets.SUPABASE_URL }}
       SUPABASE_ANON_KEY: ${{ secrets.SUPABASE_ANON_KEY }}
-      SUPABASE_SERVICE_ROLE_KEY: ${{ secrets.SUPABASE_SERVICE_ROLE_KEY }}
       TEST_INBOX_READ_TOKEN: ${{ secrets.TEST_INBOX_READ_TOKEN }}
-      MONEY_OPS_SECRET: ${{ secrets.MONEY_OPS_SECRET }}
       TURNSTILE_SITE_KEY: ${{ vars.TURNSTILE_SITE_KEY }}
       NUJ_MAIL_READER: test-inbox
       E2E_NUJ_DATE: ${{ needs.prepare.outputs.date }}
@@ -422,7 +514,7 @@ jobs:
         uses: nanasess/setup-chromedriver@e913548694400f275b4070efcd90f47dbbc8914c
       - name: flutter pub get
         if: env.WALK == 'true'
-        working-directory: apps/subscriptiontracker
+        working-directory: apps/${{ matrix.app }}
         run: |
           NIKATRU_QUIET="$(mktemp "${RUNNER_TEMP:-/tmp}/nikatru-step.XXXXXX")"
           cat > "$NIKATRU_QUIET" <<'NIKATRU_QUIET_EOF'
@@ -435,7 +527,7 @@ jobs:
         run: |
           NIKATRU_QUIET="$(mktemp "${RUNNER_TEMP:-/tmp}/nikatru-step.XXXXXX")"
           cat > "$NIKATRU_QUIET" <<'NIKATRU_QUIET_EOF'
-          node tooling/store/capture-fallback-fonts.mjs --stage apps/subscriptiontracker
+          node tooling/store/capture-fallback-fonts.mjs --stage apps/${{ matrix.app }}
           NIKATRU_QUIET_EOF
           NIKATRU_SHELL="${BASH:-bash}"; if command -v cygpath >/dev/null 2>&1; then NIKATRU_SHELL="$(cygpath -w "$NIKATRU_SHELL")"; fi
           node "$GITHUB_WORKSPACE/../.nikatru-shell/quiet-step.mjs" --name new-user-e2e.account.7 -- "$NIKATRU_SHELL" -e "$NIKATRU_QUIET"
@@ -444,7 +536,7 @@ jobs:
         run: |
           NIKATRU_QUIET="$(mktemp "${RUNNER_TEMP:-/tmp}/nikatru-step.XXXXXX")"
           cat > "$NIKATRU_QUIET" <<'NIKATRU_QUIET_EOF'
-          node tooling/ci/flutter-release-build.mjs --emit-env API_BASE_URL subscriptiontracker >> "$GITHUB_ENV"
+          node tooling/ci/flutter-release-build.mjs --emit-env API_BASE_URL ${{ matrix.app }} >> "$GITHUB_ENV"
           NIKATRU_QUIET_EOF
           NIKATRU_SHELL="${BASH:-bash}"; if command -v cygpath >/dev/null 2>&1; then NIKATRU_SHELL="$(cygpath -w "$NIKATRU_SHELL")"; fi
           node "$GITHUB_WORKSPACE/../.nikatru-shell/quiet-step.mjs" --name new-user-e2e.account.8 -- "$NIKATRU_SHELL" -e "$NIKATRU_QUIET"
@@ -454,7 +546,7 @@ jobs:
         run: |
           NIKATRU_QUIET="$(mktemp "${RUNNER_TEMP:-/tmp}/nikatru-step.XXXXXX")"
           cat > "$NIKATRU_QUIET" <<'NIKATRU_QUIET_EOF'
-          node tooling/e2e/backend.mjs --app subscriptiontracker --emit-output
+          node tooling/e2e/backend.mjs --app ${{ matrix.app }} --emit-output
           NIKATRU_QUIET_EOF
           NIKATRU_SHELL="${BASH:-bash}"; if command -v cygpath >/dev/null 2>&1; then NIKATRU_SHELL="$(cygpath -w "$NIKATRU_SHELL")"; fi
           node "$GITHUB_WORKSPACE/../.nikatru-shell/quiet-step.mjs" --name new-user-e2e.account.9 -- "$NIKATRU_SHELL" -e "$NIKATRU_QUIET"
@@ -462,10 +554,12 @@ jobs:
         id: drive
         if: env.WALK == 'true'
         timeout-minutes: 25
-        working-directory: apps/subscriptiontracker
+        working-directory: apps/${{ matrix.app }}
         env:
           NUJ_N: ${{ matrix.n }}
           NUJ_ONBOARDING: ${{ matrix.onboarding }}
+          SUPABASE_SERVICE_ROLE_KEY: ${{ secrets.SUPABASE_SERVICE_ROLE_KEY }}
+          MONEY_OPS_SECRET: ${{ secrets.MONEY_OPS_SECRET }}
         run: |
           NIKATRU_QUIET="$(mktemp "${RUNNER_TEMP:-/tmp}/nikatru-step.XXXXXX")"
           cat > "$NIKATRU_QUIET" <<'NIKATRU_QUIET_EOF'
@@ -516,6 +610,9 @@ jobs:
       - name: Hand a stranded account to the purge, through the guard
         id: stranded
         if: always() && steps.drive.outcome != 'skipped'
+        env:
+          SUPABASE_SERVICE_ROLE_KEY: ${{ secrets.SUPABASE_SERVICE_ROLE_KEY }}
+          MONEY_OPS_SECRET: ${{ secrets.MONEY_OPS_SECRET }}
         run: |
           NIKATRU_QUIET="$(mktemp "${RUNNER_TEMP:-/tmp}/nikatru-step.XXXXXX")"
           cat > "$NIKATRU_QUIET" <<'NIKATRU_QUIET_EOF'
@@ -527,8 +624,9 @@ jobs:
         if: always() && steps.drive.outcome != 'skipped'
         env:
           E2E_USER_ID: ${{ steps.stranded.outputs.user_id }}
-          E2E_APP_ID: subscriptiontracker
+          E2E_APP_ID: ${{ matrix.app }}
           E2E_DRIVE_LOG: ${{ runner.temp }}/drive.log
+          SUPABASE_SERVICE_ROLE_KEY: ${{ secrets.SUPABASE_SERVICE_ROLE_KEY }}
           CLOUDFLARE_ACCOUNT_ID: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
           CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_D1_TOKEN }}
           PLATFORM_D1_DATABASE_ID: ${{ steps.backend.outputs.platform_db }}
@@ -553,19 +651,21 @@ jobs:
         run: node tooling/ops/bridge-artifact.mjs upload
 
   reminder-digest:
-    needs: [nikatru-pin]
-    name: The renewal reminder digest (production, read yesterday's, seed today's)
+    name: The renewal reminder digest (production, ${{ matrix.app }}, read yesterday's, seed today's)
+    needs: [nikatru-pin, apps]
     runs-on: ubuntu-24.04
     timeout-minutes: 10
     permissions:
       contents: read
       id-token: write
+    strategy:
+      fail-fast: false
+      matrix:
+        app: ${{ fromJSON(needs.apps.outputs.apps) }}
     env:
       SUPABASE_URL: ${{ secrets.SUPABASE_URL }}
       SUPABASE_ANON_KEY: ${{ secrets.SUPABASE_ANON_KEY }}
-      SUPABASE_SERVICE_ROLE_KEY: ${{ secrets.SUPABASE_SERVICE_ROLE_KEY }}
       TEST_INBOX_READ_TOKEN: ${{ secrets.TEST_INBOX_READ_TOKEN }}
-      MONEY_OPS_SECRET: ${{ secrets.MONEY_OPS_SECRET }}
     steps:
       - name: Check out the private tree (generated)
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
@@ -644,6 +744,9 @@ jobs:
           node "$GITHUB_WORKSPACE/../.nikatru-shell/quiet-step.mjs" --name new-user-e2e.reminder-digest.3 -- "$NIKATRU_SHELL" -e "$NIKATRU_QUIET"
       - name: Preflight — every secret the digest leg needs is present
         if: ((github.event.client_payload.event || github.event_name) == 'schedule' || inputs.worker_slot != '')
+        env:
+          SUPABASE_SERVICE_ROLE_KEY: ${{ secrets.SUPABASE_SERVICE_ROLE_KEY }}
+          MONEY_OPS_SECRET: ${{ secrets.MONEY_OPS_SECRET }}
         run: |
           NIKATRU_QUIET="$(mktemp "${RUNNER_TEMP:-/tmp}/nikatru-step.XXXXXX")"
           cat > "$NIKATRU_QUIET" <<'NIKATRU_QUIET_EOF'
@@ -662,10 +765,13 @@ jobs:
       - name: Read and grade the digest an earlier run's probe was mailed
         id: read
         if: ((github.event.client_payload.event || github.event_name) == 'schedule' || inputs.worker_slot != '')
+        env:
+          SUPABASE_SERVICE_ROLE_KEY: ${{ secrets.SUPABASE_SERVICE_ROLE_KEY }}
+          MONEY_OPS_SECRET: ${{ secrets.MONEY_OPS_SECRET }}
         run: |
           NIKATRU_QUIET="$(mktemp "${RUNNER_TEMP:-/tmp}/nikatru-step.XXXXXX")"
           cat > "$NIKATRU_QUIET" <<'NIKATRU_QUIET_EOF'
-          node tooling/e2e/reminder-digest/digest.mjs read --app subscriptiontracker
+          node tooling/e2e/reminder-digest/digest.mjs read --app ${{ matrix.app }}
           NIKATRU_QUIET_EOF
           NIKATRU_SHELL="${BASH:-bash}"; if command -v cygpath >/dev/null 2>&1; then NIKATRU_SHELL="$(cygpath -w "$NIKATRU_SHELL")"; fi
           node "$GITHUB_WORKSPACE/../.nikatru-shell/quiet-step.mjs" --name new-user-e2e.reminder-digest.5 -- "$NIKATRU_SHELL" -e "$NIKATRU_QUIET"
@@ -673,7 +779,9 @@ jobs:
         if: always() && steps.read.outputs.user_ids != ''
         env:
           PROBE_USER_IDS: ${{ steps.read.outputs.user_ids }}
-          E2E_APP_ID: subscriptiontracker
+          SUPABASE_SERVICE_ROLE_KEY: ${{ secrets.SUPABASE_SERVICE_ROLE_KEY }}
+          MONEY_OPS_SECRET: ${{ secrets.MONEY_OPS_SECRET }}
+          E2E_APP_ID: ${{ matrix.app }}
           CLOUDFLARE_ACCOUNT_ID: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
           CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_D1_TOKEN }}
         run: |
@@ -694,16 +802,19 @@ jobs:
         run: |
           NIKATRU_QUIET="$(mktemp "${RUNNER_TEMP:-/tmp}/nikatru-step.XXXXXX")"
           cat > "$NIKATRU_QUIET" <<'NIKATRU_QUIET_EOF'
-          node tooling/ci/flutter-release-build.mjs --emit-env API_BASE_URL subscriptiontracker >> "$GITHUB_ENV"
+          node tooling/ci/flutter-release-build.mjs --emit-env API_BASE_URL ${{ matrix.app }} >> "$GITHUB_ENV"
           NIKATRU_QUIET_EOF
           NIKATRU_SHELL="${BASH:-bash}"; if command -v cygpath >/dev/null 2>&1; then NIKATRU_SHELL="$(cygpath -w "$NIKATRU_SHELL")"; fi
           node "$GITHUB_WORKSPACE/../.nikatru-shell/quiet-step.mjs" --name new-user-e2e.reminder-digest.7 -- "$NIKATRU_SHELL" -e "$NIKATRU_QUIET"
       - name: Seed today's digest probe (the 06:10 digest cron mails it)
         if: ${{ !cancelled() && ((github.event.client_payload.event || github.event_name) == 'schedule' || inputs.worker_slot != '') }}
+        env:
+          SUPABASE_SERVICE_ROLE_KEY: ${{ secrets.SUPABASE_SERVICE_ROLE_KEY }}
+          MONEY_OPS_SECRET: ${{ secrets.MONEY_OPS_SECRET }}
         run: |
           NIKATRU_QUIET="$(mktemp "${RUNNER_TEMP:-/tmp}/nikatru-step.XXXXXX")"
           cat > "$NIKATRU_QUIET" <<'NIKATRU_QUIET_EOF'
-          node tooling/e2e/reminder-digest/digest.mjs seed --app subscriptiontracker
+          node tooling/e2e/reminder-digest/digest.mjs seed --app ${{ matrix.app }}
           NIKATRU_QUIET_EOF
           NIKATRU_SHELL="${BASH:-bash}"; if command -v cygpath >/dev/null 2>&1; then NIKATRU_SHELL="$(cygpath -w "$NIKATRU_SHELL")"; fi
           node "$GITHUB_WORKSPACE/../.nikatru-shell/quiet-step.mjs" --name new-user-e2e.reminder-digest.8 -- "$NIKATRU_SHELL" -e "$NIKATRU_QUIET"
@@ -721,13 +832,17 @@ jobs:
         run: node tooling/ops/bridge-artifact.mjs upload
 
   first-sign-in:
-    needs: [nikatru-pin]
-    name: Brand-new Google/Apple first sign-in (ephemeral identity)
+    name: Brand-new Google/Apple first sign-in (ephemeral identity, ${{ matrix.app }})
+    needs: [nikatru-pin, apps]
     runs-on: ubuntu-24.04
     timeout-minutes: 45
     permissions:
       contents: read
       id-token: write
+    strategy:
+      fail-fast: false
+      matrix:
+        app: ${{ fromJSON(needs.apps.outputs.apps) }}
     env:
       WRANGLER_SEND_METRICS: 'false'
       GOTRUE_URL: http://127.0.0.1:9999
@@ -889,7 +1004,7 @@ jobs:
         run: printf '/.nikatru-trusted/\n' >> "$(git rev-parse --git-path info/exclude)"
       - uses: ./.nikatru-trusted/.github/actions/setup-flutter
       - name: flutter pub get
-        working-directory: apps/subscriptiontracker
+        working-directory: apps/${{ matrix.app }}
         run: |
           NIKATRU_QUIET="$(mktemp "${RUNNER_TEMP:-/tmp}/nikatru-step.XXXXXX")"
           cat > "$NIKATRU_QUIET" <<'NIKATRU_QUIET_EOF'
@@ -901,7 +1016,7 @@ jobs:
         run: |
           NIKATRU_QUIET="$(mktemp "${RUNNER_TEMP:-/tmp}/nikatru-step.XXXXXX")"
           cat > "$NIKATRU_QUIET" <<'NIKATRU_QUIET_EOF'
-          node tooling/store/capture-fallback-fonts.mjs --stage apps/subscriptiontracker
+          node tooling/store/capture-fallback-fonts.mjs --stage apps/${{ matrix.app }}
           NIKATRU_QUIET_EOF
           NIKATRU_SHELL="${BASH:-bash}"; if command -v cygpath >/dev/null 2>&1; then NIKATRU_SHELL="$(cygpath -w "$NIKATRU_SHELL")"; fi
           node "$GITHUB_WORKSPACE/../.nikatru-shell/quiet-step.mjs" --name new-user-e2e.first-sign-in.11 -- "$NIKATRU_SHELL" -e "$NIKATRU_QUIET"
@@ -990,8 +1105,8 @@ jobs:
         run: node tooling/ops/bridge-artifact.mjs upload
 
   email-sign-up:
-    needs: [nikatru-pin]
-    name: A new e-mail customer, end to end (ephemeral identity, n=${{ matrix.n }}, captcha ${{ matrix.captcha }})
+    name: A new e-mail customer, end to end (ephemeral identity, ${{ matrix.app }}, n=${{ matrix.n }}, captcha ${{ matrix.captcha }})
+    needs: [nikatru-pin, apps]
     runs-on: ubuntu-24.04
     timeout-minutes: 50
     permissions:
@@ -1000,6 +1115,8 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
+        app: ${{ fromJSON(needs.apps.outputs.apps) }}
+        n: [1, 2]
         include:
           - n: 1
             onboarding: full
@@ -1094,7 +1211,7 @@ jobs:
         with:
           cache-dependency-path: |
             services/platform/package-lock.json
-            services/subscriptiontracker-api/package-lock.json
+            services/${{ matrix.app }}-api/package-lock.json
       - name: This run's build identity (APP_VERSION)
         run: |
           NIKATRU_QUIET="$(mktemp "${RUNNER_TEMP:-/tmp}/nikatru-step.XXXXXX")"
@@ -1121,7 +1238,7 @@ jobs:
           NIKATRU_SHELL="${BASH:-bash}"; if command -v cygpath >/dev/null 2>&1; then NIKATRU_SHELL="$(cygpath -w "$NIKATRU_SHELL")"; fi
           node "$GITHUB_WORKSPACE/../.nikatru-shell/quiet-step.mjs" --name new-user-e2e.email-sign-up.6 -- "$NIKATRU_SHELL" -e "$NIKATRU_QUIET"
       - name: Install the app Worker
-        working-directory: services/subscriptiontracker-api
+        working-directory: services/${{ matrix.app }}-api
         run: |
           NIKATRU_QUIET="$(mktemp "${RUNNER_TEMP:-/tmp}/nikatru-step.XXXXXX")"
           cat > "$NIKATRU_QUIET" <<'NIKATRU_QUIET_EOF'
@@ -1145,7 +1262,7 @@ jobs:
           NIKATRU_QUIET="$(mktemp "${RUNNER_TEMP:-/tmp}/nikatru-step.XXXXXX")"
           cat > "$NIKATRU_QUIET" <<'NIKATRU_QUIET_EOF'
           set -euo pipefail
-          (cd services/subscriptiontracker-api && npx wrangler d1 migrations apply APP_DB --local --env sandbox --persist-to "$RUNNER_TEMP/wrangler-state")
+          (cd services/${{ matrix.app }}-api && npx wrangler d1 migrations apply APP_DB --local --env sandbox --persist-to "$RUNNER_TEMP/wrangler-state")
           (cd services/platform && npx wrangler d1 migrations apply PLATFORM_DB --local --env sandbox --persist-to "$RUNNER_TEMP/wrangler-state")
           NIKATRU_QUIET_EOF
           NIKATRU_SHELL="${BASH:-bash}"; if command -v cygpath >/dev/null 2>&1; then NIKATRU_SHELL="$(cygpath -w "$NIKATRU_SHELL")"; fi
@@ -1159,7 +1276,7 @@ jobs:
           certs="${NUJ_STACK_DIR}/certs"
           appenv="$(node "$stack" worker-env app)"
           platenv="$(node "$stack" worker-env platform)"
-          (cd services/subscriptiontracker-api && nohup npx wrangler dev --env sandbox --local --ip 127.0.0.1 --port 8788 --inspector-port 9230 \
+          (cd services/${{ matrix.app }}-api && nohup npx wrangler dev --env sandbox --local --ip 127.0.0.1 --port 8788 --inspector-port 9230 \
             --local-protocol https --https-key-path "$certs/local.key" --https-cert-path "$certs/local.pem" \
             --persist-to "$RUNNER_TEMP/wrangler-state" --env-file "$appenv" > "$RUNNER_TEMP/wrangler-app.log" 2>&1 &)
           (cd services/platform && NODE_EXTRA_CA_CERTS="$certs/ca.pem" nohup npx wrangler dev --env sandbox --local --ip 127.0.0.1 --port 8787 --inspector-port 9229 \
@@ -1210,7 +1327,7 @@ jobs:
       - name: Set up ChromeDriver
         uses: nanasess/setup-chromedriver@e913548694400f275b4070efcd90f47dbbc8914c
       - name: flutter pub get
-        working-directory: apps/subscriptiontracker
+        working-directory: apps/${{ matrix.app }}
         run: |
           NIKATRU_QUIET="$(mktemp "${RUNNER_TEMP:-/tmp}/nikatru-step.XXXXXX")"
           cat > "$NIKATRU_QUIET" <<'NIKATRU_QUIET_EOF'
@@ -1222,14 +1339,14 @@ jobs:
         run: |
           NIKATRU_QUIET="$(mktemp "${RUNNER_TEMP:-/tmp}/nikatru-step.XXXXXX")"
           cat > "$NIKATRU_QUIET" <<'NIKATRU_QUIET_EOF'
-          node tooling/store/capture-fallback-fonts.mjs --stage apps/subscriptiontracker
+          node tooling/store/capture-fallback-fonts.mjs --stage apps/${{ matrix.app }}
           NIKATRU_QUIET_EOF
           NIKATRU_SHELL="${BASH:-bash}"; if command -v cygpath >/dev/null 2>&1; then NIKATRU_SHELL="$(cygpath -w "$NIKATRU_SHELL")"; fi
           node "$GITHUB_WORKSPACE/../.nikatru-shell/quiet-step.mjs" --name new-user-e2e.email-sign-up.16 -- "$NIKATRU_SHELL" -e "$NIKATRU_QUIET"
       - name: The new customer — the sign-up form to delete-account (ephemeral)
         id: drive
         timeout-minutes: 25
-        working-directory: apps/subscriptiontracker
+        working-directory: apps/${{ matrix.app }}
         env:
           NUJ_N: ${{ matrix.n }}
           NUJ_ONBOARDING: ${{ matrix.onboarding }}
@@ -1322,7 +1439,7 @@ jobs:
 
   nikatru-ran:
     name: Fail this run if it ran nothing (generated)
-    needs: [prepare, account, reminder-digest, first-sign-in, email-sign-up]
+    needs: [apps, prepare, account, reminder-digest, first-sign-in, email-sign-up]
     if: "!cancelled()"
     runs-on: ubuntu-24.04
     defaults:
@@ -1342,7 +1459,7 @@ jobs:
       - name: Fail when every job of this run was skipped (generated)
         shell: bash
         env:
-          NIKATRU_RESULTS: prepare=${{ needs.prepare.result }} account=${{ needs.account.result }} reminder-digest=${{ needs.reminder-digest.result }} first-sign-in=${{ needs.first-sign-in.result }} email-sign-up=${{ needs.email-sign-up.result }}
+          NIKATRU_RESULTS: apps=${{ needs.apps.result }} prepare=${{ needs.prepare.result }} account=${{ needs.account.result }} reminder-digest=${{ needs.reminder-digest.result }} first-sign-in=${{ needs.first-sign-in.result }} email-sign-up=${{ needs.email-sign-up.result }}
         run: |
           for r in $NIKATRU_RESULTS; do
             if [ "${r#*=}" != skipped ]; then echo "ran: $NIKATRU_RESULTS"; exit 0; fi

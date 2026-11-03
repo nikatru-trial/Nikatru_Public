@@ -476,57 +476,10 @@ jobs:
           NIKATRU_QUIET="$(mktemp "${RUNNER_TEMP:-/tmp}/nikatru-step.XXXXXX")"
           cat > "$NIKATRU_QUIET" <<'NIKATRU_QUIET_EOF'
           set -euo pipefail
-          sdk="${ANDROID_HOME:-$ANDROID_SDK_ROOT}"
-          export ANDROID_AVD_HOME="${RUNNER_TEMP}/avd"
-          mkdir -p "$ANDROID_AVD_HOME"
-          emu_log="${RUNNER_TEMP}/emulator.log"
-          image="system-images;android-${API_LEVEL};google_apis;x86_64"
-          why() {
-            echo "::error title=Emulator::$1"
-            echo "── emulator.log (tail) ──"
-            tail -n 60 "$emu_log" 2>/dev/null || echo "(no emulator.log)"
-            echo "── AVDs the emulator can see ──"
-            "$sdk/emulator/emulator" -list-avds 2>&1 || true
-            exit 1
-          }
-          yes | "$sdk/cmdline-tools/latest/bin/sdkmanager" --licenses > /dev/null || true
-          timeout 600 "$sdk/cmdline-tools/latest/bin/sdkmanager" --install emulator platform-tools "$image" > /dev/null
-          echo no | "$sdk/cmdline-tools/latest/bin/avdmanager" create avd --force -n probe -k "$image" --device pixel_6
-          if ! "$sdk/emulator/emulator" -list-avds | awk '$0 == "probe" { hit = 1 } END { exit !hit }'; then
-            ls -la "$ANDROID_AVD_HOME" "$HOME/.android/avd" "${XDG_CONFIG_HOME:-$HOME/.config}/.android/avd" 2>&1 || true
-            why "avdmanager created no AVD the emulator can see in ANDROID_AVD_HOME=${ANDROID_AVD_HOME}"
-          fi
-          nohup "$sdk/emulator/emulator" -avd probe -no-window -no-audio -no-boot-anim -no-snapshot \
-            -gpu swiftshader_indirect -accel on > "$emu_log" 2>&1 &
-          emu_pid=$!
-          adb="$sdk/platform-tools/adb"
-          "$adb" start-server
-          # One loop for both phases (device visible, then boot_completed), 420 s in
-          # all, polling every 5 s, a progress line every 30 s, and the emulator's
-          # PID checked on every pass so a dead emulator is named at once.
-          deadline=$((SECONDS + 420))
-          next_note=$((SECONDS + 30))
-          phase="waiting for the device to appear"
-          while :; do
-            if ! kill -0 "$emu_pid" 2>/dev/null; then
-              why "the emulator process exited during: ${phase}"
-            fi
-            state="$("$adb" get-state 2>/dev/null | tr -d '\r' || true)"
-            if [ "$state" = "device" ]; then
-              phase="waiting for sys.boot_completed"
-              booted="$("$adb" shell getprop sys.boot_completed 2>/dev/null | tr -d '\r' || true)"
-              [ "$booted" = "1" ] && break
-            fi
-            if [ "$SECONDS" -gt "$deadline" ]; then
-              why "not booted within 420 s (last phase: ${phase}; adb state: ${state:-none})"
-            fi
-            if [ "$SECONDS" -ge "$next_note" ]; then
-              echo "… ${SECONDS}s: ${phase} (adb state: ${state:-none})"
-              next_note=$((SECONDS + 30))
-            fi
-            sleep 5
-          done
-          echo "emulator booted at ${SECONDS}s"
+          bash tooling/ci/boot-emulator.sh --avd probe --api "$API_LEVEL"
+          # The pinned adb the script installed (it reaches $GITHUB_PATH only from the next step on).
+          adb="$(sed -n 's/^BOOT_EMULATOR_ADB=//p' "$GITHUB_ENV" | tail -n 1)"
+          [ -x "$adb" ] || { echo "::error title=Emulator::boot-emulator.sh exported no BOOT_EMULATOR_ADB"; exit 1; }
           pkg="com.nikatru.${APP}"
           # Each sub-phase is ASSERTED, in order, and a failure prints the logcat
           # slice that says why (run 35458257697 reached SENT and nothing before

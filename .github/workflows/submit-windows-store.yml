@@ -1107,8 +1107,9 @@ jobs:
           MS_STORE_TENANT_ID: ${{ secrets.MS_STORE_TENANT_ID }}
           MS_STORE_CLIENT_ID: ${{ secrets.MS_STORE_CLIENT_ID }}
           MS_STORE_SELLER_ID: ${{ secrets.MS_STORE_SELLER_ID }}
+          ROLLOUT_PERCENTAGE: ${{ inputs.rollout_percentage }}
         shell: node ../.nikatru-shell/quiet-step.mjs --name submit-windows-store.dry-run.16 --default-shell {0}
-        run: node tooling/release/submit-windows-store.mjs --dry-run --app "${env:APP}"
+        run: node tooling/release/submit-windows-store.mjs --dry-run --app "${env:APP}" --rollout-percentage "$env:ROLLOUT_PERCENTAGE"
       - name: Rehearse the rollout move (prints the call, sends nothing)
         if: (github.event.client_payload.event || github.event_name) == 'workflow_dispatch' && inputs.promote != 'none'
         shell: bash
@@ -1585,16 +1586,14 @@ jobs:
           GITHUB_REPOSITORY: ${{ github.repository }}
           MSIX: apps/${{ needs.gate.outputs.app }}/build/windows/msix/${{ needs.gate.outputs.app }}.msixbundle
         run: node tooling/ci/assert-artifact-size.mjs --app "$APP" --channel windows-store "$MSIX"
-      - name: Install the Microsoft Store Developer CLI (exact pin from tooling/versions.json)
+      - name: Install the Microsoft Store Developer CLI (pinned by version AND by digest)
         shell: pwsh
         run: |
           $ErrorActionPreference = 'Stop'
-          $ver = node -p "require('./tooling/versions.json').msstore_cli"
-          if (-not ($ver -match '^\d+\.\d+\.\d+$')) {
-            Write-Error "tooling/versions.json key msstore_cli is '$ver'; an exact three-part version is required. A range resolves at run time, so the rehearsal and the submission could speak to different tools."
-          }
-          Write-Host "msstore-cli pin $ver (tooling/versions.json)"
-          winget install --exact --id Microsoft.MSStoreCLI --version $ver --accept-source-agreements --accept-package-agreements --disable-interactivity
+          $dir = Join-Path $env:RUNNER_TEMP 'msstore-cli'
+          node tooling/ci/install-pinned-tool.mjs msstore-cli --out "$dir"
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+          Add-Content -Path $env:GITHUB_PATH -Value $dir
       - name: Submit to the Microsoft Store
         id: submit
         env:
@@ -1711,16 +1710,14 @@ jobs:
             https://*) echo "⬜ [10]D-9 the rollout move will be recorded against ${LISTING_URL}" ;;
             *) echo "FAIL the listing_url dispatch input is '${LISTING_URL}', not an https URL; a rollout move is recorded against it. Re-dispatch with listing_url set." >&2; exit 1 ;;
           esac
-      - name: Install the Microsoft Store Developer CLI (exact pin from tooling/versions.json)
+      - name: Install the Microsoft Store Developer CLI (pinned by version AND by digest)
         shell: pwsh
         run: |
           $ErrorActionPreference = 'Stop'
-          $ver = node -p "require('./tooling/versions.json').msstore_cli"
-          if (-not ($ver -match '^\d+\.\d+\.\d+$')) {
-            Write-Error "tooling/versions.json key msstore_cli is '$ver'; an exact three-part version is required."
-          }
-          Write-Host "msstore-cli pin $ver (tooling/versions.json)"
-          winget install --exact --id Microsoft.MSStoreCLI --version $ver --accept-source-agreements --accept-package-agreements --disable-interactivity
+          $dir = Join-Path $env:RUNNER_TEMP 'msstore-cli'
+          node tooling/ci/install-pinned-tool.mjs msstore-cli --out "$dir"
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+          Add-Content -Path $env:GITHUB_PATH -Value $dir
       - name: Move the Microsoft Store package rollout
         id: promote
         env:
@@ -1742,7 +1739,8 @@ jobs:
           GH_TOKEN: ${{ github.token }}
           GITHUB_REPOSITORY: ${{ github.repository }}
           LISTING_URL: ${{ inputs.listing_url }}
-        run: node tooling/ci/record-deployment.mjs "${APP}-windows-store" --state rollout_moved --listing-url "$LISTING_URL" --mode production
+          PROMOTE: ${{ inputs.promote }}
+        run: node tooling/ci/record-deployment.mjs "${APP}-windows-store" --state rollout_moved --listing-url "$LISTING_URL" --mode production --rollout-move "$PROMOTE"
 
   nikatru-ran:
     name: Fail this run if it ran nothing (generated)

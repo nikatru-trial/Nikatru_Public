@@ -316,6 +316,7 @@ jobs:
           node tooling/release-notes/render.mjs
           node tooling/sites/generate-ask.mjs
           node tooling/sites/generate-checkout-strings.mjs
+          node tooling/sites/locale-landings.mjs --write
           node tooling/sites/generate-discovery.mjs
           node tooling/sites/generate-well-known.mjs
           node tooling/sites/generate-personal-site.mjs
@@ -984,7 +985,7 @@ jobs:
     strategy:
       fail-fast: true
       matrix:
-        part: [analyze, packages, apps]
+        part: [analyze, packages, apps-1, apps-2, apps-3]
     steps:
       - name: Check out the private tree (generated)
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
@@ -1201,15 +1202,21 @@ jobs:
         env:
           PART: ${{ matrix.part }}
           MEMBERS_GLOB: 'nikatru_*'
+          APPS_SHARDS: '3'
         run: |
           NIKATRU_QUIET="$(mktemp "${RUNNER_TEMP:-/tmp}/nikatru-step.XXXXXX")"
           cat > "$NIKATRU_QUIET" <<'NIKATRU_QUIET_EOF'
           set -euo pipefail
           export PATH="$PATH:$HOME/.pub-cache/bin"
+          shard=""
           case "$PART" in
             analyze)  melos exec --fail-fast --dir-exists=test --no-flutter -- dart test; exit 0 ;;
             packages) filter="--scope=$MEMBERS_GLOB" ;;
-            apps)     filter="--ignore=$MEMBERS_GLOB" ;;
+            apps-[1-9])
+              n="${PART#apps-}"
+              if [ "$n" -gt "$APPS_SHARDS" ]; then echo "::error::leg '$PART' is past APPS_SHARDS=$APPS_SHARDS, so its shard index names no files"; exit 1; fi
+              filter="--ignore=$MEMBERS_GLOB"
+              shard="--total-shards=$APPS_SHARDS --shard-index=$((n - 1))" ;;
             *) echo "::error::unknown workspace-gate leg '$PART'"; exit 1 ;;
           esac
           members="$(melos list --parsable --flutter --dir-exists=test "$filter")"
@@ -1217,7 +1224,7 @@ jobs:
           if [ -z "$members" ]; then echo "::error::leg '$PART' ($filter) matched no Flutter member with tests, so it would test nothing"; exit 1; fi
           export NIKATRU_TEST_RESULTS="${NIKATRU_TEST_RESULTS:-$RUNNER_TEMP/test-results}"
           mkdir -p "$NIKATRU_TEST_RESULTS"
-          melos exec --fail-fast --dir-exists=test --flutter "$filter" -- flutter test '--file-reporter=json:$NIKATRU_TEST_RESULTS/$MELOS_PACKAGE_NAME.json'
+          melos exec --fail-fast --dir-exists=test --flutter "$filter" -- flutter test $shard '--file-reporter=json:$NIKATRU_TEST_RESULTS/$MELOS_PACKAGE_NAME.json'
           NIKATRU_QUIET_EOF
           NIKATRU_SHELL="${BASH:-bash}"; if command -v cygpath >/dev/null 2>&1; then NIKATRU_SHELL="$(cygpath -w "$NIKATRU_SHELL")"; fi
           node "$GITHUB_WORKSPACE/../.nikatru-shell/quiet-step.mjs" --name lane-apps.workspace-gate.14 -- "$NIKATRU_SHELL" -e "$NIKATRU_QUIET"

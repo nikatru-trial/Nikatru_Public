@@ -2,7 +2,7 @@
 # Do not edit: `node tooling/ci/gen-public-shell.mjs --check` re-generates it and fails on any difference.
 env:
   NIKATRU_PRIVATE_REPO: com-nikatru/Nikatru_Private
-  NIKATRU_SHELL_FINGERPRINT: 47a72a62e37d1f16d4ce1ed2885e131d66b4164518fa207f54c6febfa374376d
+  NIKATRU_SHELL_FINGERPRINT: 613bd7b3932ee79840a5aee66ab3fcd0ba2da3fca2adaac3582b0b2218da76f3
 
 name: Part of CI · Deploy workers
 
@@ -234,6 +234,23 @@ jobs:
         working-directory: ${{ matrix.worker.dir }}
       - run: node "$GITHUB_WORKSPACE/tooling/ops/npm-ci-retry.mjs" -- npm ci --ignore-scripts --no-audit --no-fund --prefix services/_shared
         if: steps.plan.outputs.deploy == 'true'
+      - name: Read the Worker's D1 Time Travel bookmark (the restore point before the apply)
+        id: time_travel
+        if: steps.plan.outputs.deploy == 'true' && matrix.worker.migrations
+        uses: cloudflare/wrangler-action@953926a2e2182532811c01a25e53647d93bf07c0
+        with:
+          apiToken: ${{ secrets.CLOUDFLARE_API_TOKEN }}
+          wranglerVersion: '4.149.0'
+          accountId: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
+          workingDirectory: ${{ matrix.worker.dir }}
+          command: d1 time-travel info ${{ matrix.worker.migrations }} --json
+      - name: Record the restore bookmark (refuse the apply without one)
+        id: restore_point
+        if: steps.plan.outputs.deploy == 'true' && matrix.worker.migrations
+        env:
+          D1_TIME_TRAVEL_OUTPUT: ${{ steps.time_travel.outputs.command-output }}
+          D1_DATABASE: ${{ matrix.worker.migrations }}
+        run: node tooling/ops/d1-restore-bookmark.mjs --database "$D1_DATABASE"
       - name: Apply the Worker's D1 migrations (before deploy)
         if: steps.plan.outputs.deploy == 'true' && matrix.worker.migrations
         uses: cloudflare/wrangler-action@953926a2e2182532811c01a25e53647d93bf07c0
@@ -279,7 +296,7 @@ jobs:
       cancel-in-progress: false
     needs: [workers, app-worker]
     runs-on: ubuntu-24.04
-    timeout-minutes: 15
+    timeout-minutes: 30
     environment: production
     permissions:
       contents: read
@@ -380,15 +397,21 @@ jobs:
             const body = JSON.stringify(Object.fromEntries(names.map((n) => [n, process.env[n]])));
             require("node:fs").writeFileSync(process.argv[1], body, { mode: 0o600, flag: "wx" });
           ' "$RUNNER_TEMP/platform-secrets.json"
-      - uses: cloudflare/wrangler-action@953926a2e2182532811c01a25e53647d93bf07c0
+      - name: Deploy platform gradually — 10 %, then 100 %, rolled back on a red probe
         if: steps.plan.outputs.deploy == 'true'
         id: deploy
-        with:
-          apiToken: ${{ secrets.CLOUDFLARE_API_TOKEN }}
-          wranglerVersion: '4.149.0'
-          accountId: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
-          workingDirectory: services/platform
-          command: deploy --var GLITCHTIP_DSN:${{ secrets.GLITCHTIP_DSN }} --var RELEASE:${{ env.NIKATRU_SHA }} --secrets-file ${{ runner.temp }}/platform-secrets.json
+        env:
+          CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
+          CLOUDFLARE_ACCOUNT_ID: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
+          GLITCHTIP_DSN: ${{ secrets.GLITCHTIP_DSN }}
+          UNIT_ORIGIN: ${{ steps.target.outputs.origin }}
+        run: >
+          node tooling/ops/gradual-deploy.mjs
+          --worker platform --cwd services/platform
+          --origin "$UNIT_ORIGIN" --expect ${{ env.NIKATRU_SHA }}
+          --steps 10,100 --window-seconds 120
+          --var GLITCHTIP_DSN:"$GLITCHTIP_DSN" --var RELEASE:${{ env.NIKATRU_SHA }}
+          --secrets-file "$RUNNER_TEMP/platform-secrets.json"
       - name: Delete this version's secrets file
         if: always()
         run: rm -f "$RUNNER_TEMP/platform-secrets.json"

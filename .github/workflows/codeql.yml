@@ -535,6 +535,7 @@ jobs:
         working-directory: ${{ github.workspace }}
         env:
           NIKATRU_DETAIL_KEY: ${{ secrets.NIKATRU_DETAIL_KEY }}
+          NIKATRU_BASELINE_KEY_FILE: ${{ github.workspace }}/../.nikatru-shell/baseline.key
           NIKATRU_DETAIL_KEY_FILE: ${{ github.workspace }}/../.nikatru-shell/detail.key
         run: |
           rm -rf ../.nikatru-shell
@@ -542,20 +543,6 @@ jobs:
           rm -rf .nikatru-shell
           py=python3; python3 -c '' >/dev/null 2>&1 || py=python
           "$py" -I "$GITHUB_WORKSPACE/../.nikatru-shell/report.py" derive
-      - name: Initialise CodeQL
-        uses: github/codeql-action/init@24c54180a607b1449ed407dd24f251e4e9147c8d
-        with:
-          languages: javascript-typescript
-          queries: security-and-quality
-          config-file: ./.github/codeql/codeql-config.yml
-          trap-caching: ${{ ((env.NIKATRU_REF || (github.event.client_payload.ref || 'refs/heads/main')) == 'refs/heads/main' && contains(fromJSON('["push","schedule","workflow_dispatch"]'), env.NIKATRU_EVENT_NAME || (github.event.client_payload.event || github.event_name)) && !env.NIKATRU_PR) }}
-      - name: Analyze
-        uses: github/codeql-action/analyze@24c54180a607b1449ed407dd24f251e4e9147c8d
-        with:
-          category: /language:javascript-typescript
-          output: ${{ runner.temp }}/codeql-sarif
-          upload: never
-          upload-database: false
       - name: Check out private main's composite actions (generated)
         if: ${{ (github.event.client_payload.event || github.event_name) != 'pull_request' || env.NIKATRU_PRIVATE_REPO != '' }}
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
@@ -573,16 +560,14 @@ jobs:
         run: printf '/.nikatru-trusted/\n' >> "$(git rev-parse --git-path info/exclude)"
       - uses: ./.nikatru-trusted/.github/actions/setup-node
         if: ${{ (github.event.client_payload.event || github.event_name) != 'pull_request' || env.NIKATRU_PRIVATE_REPO != '' }}
-      - name: Name main's commits a CodeQL baseline may be restored from
-        if: ${{ (github.event.client_payload.event || github.event_name) == 'pull_request' && env.NIKATRU_PRIVATE_REPO != '' }}
+      - name: List main's commits a baseline may come from (generated)
         id: baseline-keys
+        if: ${{ (github.event.client_payload.event || github.event_name) == 'pull_request' && env.NIKATRU_PRIVATE_REPO != '' }}
+        shell: bash
+        working-directory: ${{ github.workspace }}
         run: |
-          NIKATRU_QUIET="$(mktemp "${RUNNER_TEMP:-/tmp}/nikatru-step.XXXXXX")"
-          cat > "$NIKATRU_QUIET" <<'NIKATRU_QUIET_EOF'
-          node tooling/ci/codeql-sarif-report.mjs --emit-baseline-keys
-          NIKATRU_QUIET_EOF
-          NIKATRU_SHELL="${BASH:-bash}"; if command -v cygpath >/dev/null 2>&1; then NIKATRU_SHELL="$(cygpath -w "$NIKATRU_SHELL")"; fi
-          node "$GITHUB_WORKSPACE/../.nikatru-shell/quiet-step.mjs" --name codeql.analyze.5 -- "$NIKATRU_SHELL" -e "$NIKATRU_QUIET"
+          py=python3; python3 -c '' >/dev/null 2>&1 || py=python
+          "$py" -I "$GITHUB_WORKSPACE/../.nikatru-shell/report.py" baseline-keys
       - name: Restore main's CodeQL baseline
         if: ${{ (github.event.client_payload.event || github.event_name) == 'pull_request' && env.NIKATRU_PRIVATE_REPO != '' }}
         id: baseline
@@ -591,6 +576,38 @@ jobs:
           path: ${{ runner.temp }}/codeql-baseline
           key: codeql-main-baseline-${{ (github.event.client_payload.event == 'pull_request' && github.event.client_payload.base_sha || '') }}
           restore-keys: ${{ steps.baseline-keys.outputs.keys }}
+      - name: Verify main's CodeQL baseline (generated)
+        if: ${{ (github.event.client_payload.event || github.event_name) == 'pull_request' && env.NIKATRU_PRIVATE_REPO != '' }}
+        shell: bash
+        working-directory: ${{ github.workspace }}
+        env:
+          NIKATRU_BASELINE_KEY_FILE: ${{ github.workspace }}/../.nikatru-shell/baseline.key
+          NIKATRU_BASELINE_MATCHED_KEY: ${{ steps.baseline.outputs.cache-matched-key }}
+          NIKATRU_BASELINE_DIR: ${{ runner.temp }}/codeql-baseline
+        run: |
+          py=python3; python3 -c '' >/dev/null 2>&1 || py=python
+          "$py" -I "$GITHUB_WORKSPACE/../.nikatru-shell/report.py" baseline-verify "$NIKATRU_BASELINE_DIR"
+      - name: Forget the baseline key once the restore is verified (generated)
+        if: ${{ always() && !((github.event.client_payload.event || github.event_name) != 'pull_request' && (github.event.client_payload.ref || 'refs/heads/main') == 'refs/heads/main') }}
+        shell: bash
+        working-directory: ${{ github.workspace }}
+        env:
+          NIKATRU_BASELINE_KEY_FILE: ${{ github.workspace }}/../.nikatru-shell/baseline.key
+        run: rm -f "$NIKATRU_BASELINE_KEY_FILE"
+      - name: Initialise CodeQL
+        uses: github/codeql-action/init@24c54180a607b1449ed407dd24f251e4e9147c8d
+        with:
+          languages: javascript-typescript
+          queries: security-and-quality
+          config-file: ./.github/codeql/codeql-config.yml
+          trap-caching: ${{ ((env.NIKATRU_REF || (github.event.client_payload.ref || 'refs/heads/main')) == 'refs/heads/main' && contains(fromJSON('["push","schedule","workflow_dispatch"]'), env.NIKATRU_EVENT_NAME || (github.event.client_payload.event || github.event_name)) && !env.NIKATRU_PR) }}
+      - name: Analyze
+        uses: github/codeql-action/analyze@24c54180a607b1449ed407dd24f251e4e9147c8d
+        with:
+          category: /language:javascript-typescript
+          output: ${{ runner.temp }}/codeql-sarif
+          upload: never
+          upload-database: false
       - name: CodeQL counts, the alerts to the private pull request
         if: ${{ env.NIKATRU_PRIVATE_REPO != '' }}
         id: sarif-report
@@ -599,30 +616,34 @@ jobs:
         run: |
           NIKATRU_QUIET="$(mktemp "${RUNNER_TEMP:-/tmp}/nikatru-step.XXXXXX")"
           cat > "$NIKATRU_QUIET" <<'NIKATRU_QUIET_EOF'
-          node tooling/ci/codeql-sarif-report.mjs "$RUNNER_TEMP/codeql-sarif" --baseline "$RUNNER_TEMP/codeql-baseline/baseline.json" --baseline-key "$BASELINE_KEY" --write-baseline "$RUNNER_TEMP/codeql-baseline/baseline.json"
+          node tooling/ci/codeql-sarif-report.mjs "$RUNNER_TEMP/codeql-sarif" --baseline "$RUNNER_TEMP/codeql-baseline/baseline.json" --baseline-verified "$RUNNER_TEMP/codeql-baseline/baseline.verified" --baseline-key "$BASELINE_KEY" --write-baseline "$RUNNER_TEMP/codeql-baseline/baseline.json"
           NIKATRU_QUIET_EOF
           NIKATRU_SHELL="${BASH:-bash}"; if command -v cygpath >/dev/null 2>&1; then NIKATRU_SHELL="$(cygpath -w "$NIKATRU_SHELL")"; fi
           node "$GITHUB_WORKSPACE/../.nikatru-shell/quiet-step.mjs" --name codeql.analyze.7 --public -- "$NIKATRU_SHELL" -e "$NIKATRU_QUIET"
+      - name: Seal this main analysis's baseline (generated)
+        if: ${{ always() && (github.event.client_payload.event || github.event_name) != 'pull_request' && env.NIKATRU_PRIVATE_REPO != '' && steps.sarif-report.outcome != 'skipped' && (github.event.client_payload.event || github.event_name) != 'pull_request' && (github.event.client_payload.ref || 'refs/heads/main') == 'refs/heads/main' }}
+        shell: bash
+        working-directory: ${{ github.workspace }}
+        env:
+          NIKATRU_BASELINE_KEY_FILE: ${{ github.workspace }}/../.nikatru-shell/baseline.key
+          NIKATRU_BASELINE_CACHE_KEY: codeql-main-baseline-${{ env.NIKATRU_SHA }}
+          NIKATRU_BASELINE_DIR: ${{ runner.temp }}/codeql-baseline
+        run: |
+          py=python3; python3 -c '' >/dev/null 2>&1 || py=python
+          if [ -f "$NIKATRU_BASELINE_DIR/baseline.json" ]; then "$py" -I "$GITHUB_WORKSPACE/../.nikatru-shell/report.py" baseline-seal "$NIKATRU_BASELINE_DIR"; else echo "baseline: none written, nothing to seal"; fi
       - name: Save this main analysis's CodeQL baseline
         if: ${{ always() && (github.event.client_payload.event || github.event_name) != 'pull_request' && env.NIKATRU_PRIVATE_REPO != '' && steps.sarif-report.outcome != 'skipped' }}
         uses: actions/cache/save@55cc8345863c7cc4c66a329aec7e433d2d1c52a9
         with:
           path: ${{ runner.temp }}/codeql-baseline
           key: codeql-main-baseline-${{ env.NIKATRU_SHA }}
-      - name: Every open CodeQL alert on main is fixed in code or carries a disposition
-        if: ${{ (github.event.client_payload.event || github.event_name) != 'pull_request' && env.NIKATRU_PRIVATE_REPO == '' }}
-        timeout-minutes: 4
+      - name: Forget the baseline key once the baseline is sealed (generated)
+        if: always()
+        shell: bash
+        working-directory: ${{ github.workspace }}
         env:
-          GITHUB_TOKEN: ${{ github.token }}
-        run: |
-          NIKATRU_QUIET="$(mktemp "${RUNNER_TEMP:-/tmp}/nikatru-step.XXXXXX")"
-          cat > "$NIKATRU_QUIET" <<'NIKATRU_QUIET_EOF'
-          set -euo pipefail
-          git fetch --quiet --unshallow origin
-          node --single-threaded tooling/ci/assert-alert-disposition.mjs --limb C --analysis-of "$NIKATRU_SHA"
-          NIKATRU_QUIET_EOF
-          NIKATRU_SHELL="${BASH:-bash}"; if command -v cygpath >/dev/null 2>&1; then NIKATRU_SHELL="$(cygpath -w "$NIKATRU_SHELL")"; fi
-          node "$GITHUB_WORKSPACE/../.nikatru-shell/quiet-step.mjs" --name codeql.analyze.9 -- "$NIKATRU_SHELL" -e "$NIKATRU_QUIET"
+          NIKATRU_BASELINE_KEY_FILE: ${{ github.workspace }}/../.nikatru-shell/baseline.key
+        run: rm -f "$NIKATRU_BASELINE_KEY_FILE"
       - name: Hand this job's red detail to the report job, sealed (generated)
         id: nikatru-handoff
         if: always()

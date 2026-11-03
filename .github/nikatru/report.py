@@ -32,7 +32,10 @@
 #   PUBLIC repo's Actions cache). Its generated steps run the shell's STAGED copy of this file:
 #   report.py derive        (the staging step, before any private code) this run attempt's
 #                           key, HMAC of `<run_id>-<attempt>` under NIKATRU_DETAIL_KEY, to
-#                           NIKATRU_DETAIL_KEY_FILE (A7-05)
+#                           NIKATRU_DETAIL_KEY_FILE (A7-05); with NIKATRU_BASELINE_KEY_FILE
+#                           set, also the CodeQL baseline key (HKDF of the master, info
+#                           'nikatru-codeql-baseline'), so the baseline's verify and seal
+#                           steps never hold the master
 #   report.py handoff       $RUNNER_TEMP/report-detail.md within the cap (fit_bytes: each
 #                           red section's failing tests kept, its tail cut first), sealed with
 #                           that run key and bound to its own cache key
@@ -103,7 +106,7 @@
 #
 # The bridge's contract (services/gh-bridge/src/report.ts parseReport):
 #   POST <bridgeUrl>   x-bridge-signature: sha256=<HMAC-SHA256 of the raw body>
-#   {run_id, run_attempt, sha, context, state, summary, detail?}
+#   {run_id, run_attempt, sha, context, state, summary, detail?, ts}   (ts: the attempt's epoch seconds, post())
 # `sha` is the private HEAD the bridge dispatched (NIKATRU_HEAD_SHA = the payload's
 # sha), never the merge commit a pull-request job checks out.
 #
@@ -530,6 +533,172 @@ def run_handoff_key(master, run_id):
     return hmac.new(master.encode('utf-8'), b'nikatru-handoff/run\0' + run_id.encode('utf-8'), hashlib.sha256).hexdigest()
 
 
+# ⏱ 2026-10-31 · O-CODEQL-BASELINE-SEALED (ci-gates-02, built by cross-g2). Every shell run shares main's cache scope, so
+# a pull request's code could SAVE an entry under `codeql-main-baseline-<sha>` that a later pull request restores as
+# main's debt. The baseline is SEALED on a main run (`baseline-seal <dir>`) and VERIFIED after a restore
+# (`baseline-verify <dir>`), under a key only the shell holds: HKDF-SHA256 (RFC 5869) of the master NIKATRU_DETAIL_KEY
+# with info 'nikatru-codeql-baseline', and tag = HMAC-SHA256(key, <cache key> NUL <baseline.json bytes>). A baseline
+# that fails is DELETED, so the grade is strict (fail-closed), and one that passes is marked: baseline.verified holds
+# the sha256 of the bytes verified, which codeql-sarif-report.mjs --baseline-verified requires.
+BASELINE_INFO = b'nikatru-codeql-baseline'
+BASELINE_SEAL_VERSION = 1
+# ⏱ 2026-11-02 · PR #1229 lead runner review RS1. The verify step runs right AFTER the restore of a cache a pull
+# request's run can save, and actions/cache extracts with `tar -P`: an archive saved under main's key can overwrite this
+# staged file before the verify runs it. So the verify (and the seal) never hold the master: the staging step, before
+# any restore, derives the baseline key alone (`derive` with NIKATRU_BASELINE_KEY_FILE) and these two verbs read only
+# that file. A leak of it can forge a baseline (the grade then believes a debt list it should not), never a hand-off key,
+# a deploy key or the master; the generated step right after the verify deletes the file.
+BASELINE_KEY_FILE_VAR = 'NIKATRU_BASELINE_KEY_FILE'
+
+
+def hkdf_key(master, info):
+    """HKDF-SHA256 (RFC 5869, zero salt, one block) of the master under `info`, as bytes."""
+    if not master:
+        raise Lost('no master key: no derived key can be made')
+    prk = hmac.new(b'\0' * 32, master.encode('utf-8'), hashlib.sha256).digest()
+    return hmac.new(prk, info + b'\x01', hashlib.sha256).digest()
+
+
+def baseline_key(master):
+    """HKDF-SHA256 (RFC 5869, zero salt, one block) of the master under BASELINE_INFO, as bytes."""
+    if not master:
+        raise Lost('no master key: the baseline key cannot be derived')
+    return hkdf_key(master, BASELINE_INFO)
+
+
+# ⏱ 2026-11-02 · independent review at a60129f9, F2 (MAJOR). ops-watch.yml's store-vitals state rides a cache any pull
+# request's run can save under `store-vitals-*`, and an all-red planted state silenced the monitor (a real red never
+# reads as worsened). The store-vitals job seals state.json and the job's intake verifies it
+# (tooling/ops/vitals/state-intake.mjs), under HKDF(master, VITALS_INFO), which the staging step writes to
+# NIKATRU_VITALS_KEY_FILE — the master itself is never in a step that reads the handed-over state.
+VITALS_INFO = b'nikatru-store-vitals-state'
+VITALS_KEY_FILE_VAR = 'NIKATRU_VITALS_KEY_FILE'
+
+
+def derived_baseline_key(env):
+    """The baseline key the staging step wrote to NIKATRU_BASELINE_KEY_FILE (64 hex), as bytes. Never the master: a
+    verify or seal step that is handed NIKATRU_DETAIL_KEY is refused, so a generator that regressed to binding the
+    master after the restore fails loudly instead of working."""
+    if env.get('NIKATRU_DETAIL_KEY', ''):
+        raise Lost('NIKATRU_DETAIL_KEY is bound to a baseline step: it runs after a restore a pull request can write, and holds the derived baseline key only')
+    path = env.get(BASELINE_KEY_FILE_VAR, '')
+    if not path:
+        raise Lost(f'no baseline key ({BASELINE_KEY_FILE_VAR} is not set)')
+    try:
+        with open(path, encoding='ascii') as f:
+            raw = f.read().strip()
+    except OSError:
+        raise Lost(f'no baseline key (the staging step wrote none to {BASELINE_KEY_FILE_VAR})') from None
+    if not re.match(r'^[0-9a-f]{64}$', raw):
+        raise Lost(f'no baseline key ({BASELINE_KEY_FILE_VAR} does not hold 64 hex)')
+    return bytes.fromhex(raw)
+
+
+def baseline_tag(key, cache_key, data):
+    if not re.match(r'^codeql-main-baseline-[0-9a-f]{40}$', cache_key or ''):
+        raise Lost(f'{cache_key!r} is not a codeql-main-baseline-<40-hex> cache key')
+    return hmac.new(key, cache_key.encode('utf-8') + b'\0' + data, hashlib.sha256).hexdigest()
+
+
+def baseline_seal(env, d):
+    """A main run: seal <d>/baseline.json under its cache key (NIKATRU_BASELINE_CACHE_KEY) into <d>/baseline.seal."""
+    with open(os.path.join(d, 'baseline.json'), 'rb') as f:
+        data = f.read()
+    cache_key = env.get('NIKATRU_BASELINE_CACHE_KEY', '')
+    tag = baseline_tag(derived_baseline_key(env), cache_key, data)
+    with open(os.path.join(d, 'baseline.seal'), 'w', encoding='ascii') as f:
+        json.dump({'version': BASELINE_SEAL_VERSION, 'key': cache_key, 'tag': tag}, f)
+    print(f'ok baseline sealed under {cache_key}')
+    return 0
+
+
+def baseline_verify(env, d):
+    """After a restore: keep <d>/baseline.json only when its seal verifies for the restore's matched key
+    (NIKATRU_BASELINE_MATCHED_KEY), and mark it (<d>/baseline.verified = sha256 of the bytes). Anything else — no seal,
+    a seal for another key, a tag that does not match, no baseline key (or the master bound here) — DELETES it: the grade is then strict. Exit 0 either
+    way (a missing baseline is a strict grade, not a red step); 2 only when the reporter itself cannot run."""
+    path = os.path.join(d, 'baseline.json')
+    for stale in ('baseline.verified',):
+        try:
+            os.remove(os.path.join(d, stale))
+        except FileNotFoundError:
+            pass
+    if not os.path.exists(path):
+        print('baseline: none restored (the grade is strict)')
+        return 0
+    why = None
+    try:
+        with open(path, 'rb') as f:
+            data = f.read()
+        with open(os.path.join(d, 'baseline.seal'), encoding='ascii') as f:
+            seal = json.load(f)
+        matched = env.get('NIKATRU_BASELINE_MATCHED_KEY', '')
+        if not isinstance(seal, dict) or seal.get('version') != BASELINE_SEAL_VERSION:
+            why = 'the seal is not a version-1 baseline seal'
+        elif seal.get('key') != matched:
+            why = f"the seal names {seal.get('key')!r}, the restore matched {matched!r}"
+        elif not hmac.compare_digest(str(seal.get('tag', '')), baseline_tag(derived_baseline_key(env), matched, data)):
+            why = 'the tag does not match: these bytes were not sealed by a main run'
+    except FileNotFoundError:
+        why = 'it carries no seal'
+    except (ValueError, Lost) as e:
+        why = f'it cannot be verified ({e})'
+    if why:
+        for name in ('baseline.json', 'baseline.seal'):
+            try:
+                os.remove(os.path.join(d, name))
+            except FileNotFoundError:
+                pass
+        print(f'::warning title=CodeQL baseline refused::the restored baseline was deleted — {why}; the grade is strict (fail-closed)')
+        return 0
+    with open(os.path.join(d, 'baseline.verified'), 'w', encoding='ascii') as f:
+        f.write(hashlib.sha256(data).hexdigest())
+    print(f'ok baseline verified for {matched}')
+    return 0
+
+
+# ⏱ 2026-11-02 · O-CODEQL-BASELINE-SEALED (rows-club-ci-shell). The restore-keys of a pull request's baseline restore,
+# read with git ALONE by the shell's staged copy of this file, before any private code runs: the source workflow's key
+# list (codeql-sarif-report.mjs --emit-baseline-keys) is the pull request's own code, and a step that holds the master
+# (baseline-verify, right after the restore) must follow no step the pull request wrote. Byte for byte the rule of
+# codeql-sarif-report.mjs mainCommits + baselineRestoreKeys: HEAD^1 of the merge checkout and its first parents,
+# nearest first, BASELINE_ANCESTORS of them; never the base sha's own key (it is the restore's `key`); at most
+# MAX_RESTORE_KEYS (actions/cache takes ten keys counting the primary).
+BASELINE_KEY_PREFIX = 'codeql-main-baseline-'
+BASELINE_ANCESTORS = 10
+MAX_RESTORE_KEYS = 9
+SHA40 = re.compile(r'^[0-9a-f]{40}$')
+
+
+def baseline_main_commits(run=subprocess.run):
+    """The first-parent main commits of a pull request's merge checkout, newest first ([] when HEAD is not a two-parent
+    merge commit or the history is not there)."""
+    try:
+        p = run(['git', 'rev-list', '--parents', '-n', '1', 'HEAD'], capture_output=True, text=True, timeout=60)
+        if p.returncode != 0 or len(p.stdout.split()) != 3:
+            return []
+        r = run(['git', 'rev-list', '--first-parent', f'--max-count={BASELINE_ANCESTORS}', 'HEAD^1'], capture_output=True, text=True, timeout=60)
+    except (OSError, subprocess.SubprocessError):
+        return []
+    if r.returncode != 0:
+        return []
+    return [l.strip() for l in r.stdout.splitlines() if SHA40.match(l.strip())]
+
+
+def baseline_keys(env, run=subprocess.run):
+    """`baseline-keys`: the restore-keys, to $GITHUB_OUTPUT as the multi-line output `keys`. Never fails the step: no main
+    history is no fallback key (the restore then reads the base sha's exact key alone), and is said."""
+    base = env.get('NIKATRU_BASE_SHA', '').strip()
+    keys = [BASELINE_KEY_PREFIX + c for c in baseline_main_commits(run) if c != base][:MAX_RESTORE_KEYS]
+    print(f"baseline-keys: {len(keys)} main commit(s) a baseline may be restored from, nearest first"
+          + ('' if keys else " (no merge commit or no history here: the base sha's exact key only)"))
+    out = env.get('GITHUB_OUTPUT', '')
+    if out:
+        with open(out, 'a', encoding='utf-8') as f:
+            f.write('keys<<NIKATRU_BASELINE_KEYS\n' + ''.join(k + '\n' for k in keys) + 'NIKATRU_BASELINE_KEYS\n')
+    return 0
+
+
 def _write_key(path, key):
     fd = os.open(path, os.O_WRONLY | os.O_CREAT | os.O_TRUNC, 0o600)
     with os.fdopen(fd, 'w', encoding='ascii') as f:
@@ -538,13 +707,16 @@ def _write_key(path, key):
 
 def derive(env):
     """A quiet job's staging step: this run attempt's red-detail hand-off key, written to NIKATRU_DETAIL_KEY_FILE,
-    and/or this run's artifact hand-off key (run_handoff_key), written to NIKATRU_HANDOFF_KEY_FILE — each 0600 and
-    masked. With no master key (a run that gets no secrets) it writes nothing: a red detail is then not handed
+    and/or this run's artifact hand-off key (run_handoff_key), written to NIKATRU_HANDOFF_KEY_FILE, and/or the CodeQL
+    baseline key (baseline_key), written to NIKATRU_BASELINE_KEY_FILE, and/or the store-vitals state key
+    (VITALS_INFO), written to NIKATRU_VITALS_KEY_FILE — each 0600 and masked. With no master key (a run that gets no secrets) it writes nothing: a red detail is then not handed
     over and a seal refuses, exactly as a hand-off without a key never was."""
     out = env.get('NIKATRU_DETAIL_KEY_FILE', '')
     handoff_out = env.get('NIKATRU_HANDOFF_KEY_FILE', '')
-    if not out and not handoff_out:
-        raise Lost('neither NIKATRU_DETAIL_KEY_FILE nor NIKATRU_HANDOFF_KEY_FILE is set: nowhere to put a run key')
+    baseline_out = env.get(BASELINE_KEY_FILE_VAR, '')
+    vitals_out = env.get(VITALS_KEY_FILE_VAR, '')
+    if not out and not handoff_out and not baseline_out and not vitals_out:
+        raise Lost(f'none of NIKATRU_DETAIL_KEY_FILE, NIKATRU_HANDOFF_KEY_FILE, {BASELINE_KEY_FILE_VAR}, {VITALS_KEY_FILE_VAR} is set: nowhere to put a run key')
     master = env.get('NIKATRU_DETAIL_KEY', '')
     if not master:
         print('-- derive: NIKATRU_DETAIL_KEY is not set; this job hands nothing over')
@@ -559,6 +731,16 @@ def derive(env):
         print(f'::add-mask::{key}')
         _write_key(handoff_out, key)
         print(f'ok derive: the artifact hand-off key of run {env.get("GITHUB_RUN_ID", "")}')
+    if baseline_out:
+        key = baseline_key(master).hex()
+        print(f'::add-mask::{key}')
+        _write_key(baseline_out, key)
+        print('ok derive: the CodeQL baseline key')
+    if vitals_out:
+        key = hkdf_key(master, VITALS_INFO).hex()
+        print(f'::add-mask::{key}')
+        _write_key(vitals_out, key)
+        print('ok derive: the store-vitals state key')
     return 0
 
 
@@ -750,11 +932,14 @@ def build(context, state, env, detail, gate=False):
     return body
 
 
-def post(url, secret, body, timeout, opener=urllib.request.urlopen, sleep=time.sleep):
+def post(url, secret, body, timeout, opener=urllib.request.urlopen, sleep=time.sleep, now=time.time, stamp=False):
     """(status, why) of the report: a transient answer retried, RETRY_DELAYS apart, then the last.
-    `timeout` is the config's postTimeoutS: above the bridge's whole budget for one report."""
-    raw = json.dumps(body, ensure_ascii=False).encode('utf-8')
+    `timeout` is the config's postTimeoutS: above the bridge's whole budget for one report.
+    ⏱ 2026-10-31 · O-BRIDGE-REPORT-REPLAY-WINDOW: with `stamp` (send's /report posts) every attempt carries its own
+    `ts` (epoch seconds, `now`) and is signed afresh, so the bridge refuses a captured body outside its window and a replay of it (409), and a retry is
+    a new body, never a replay. A 409 is the bridge saying this body was already delivered (send counts it)."""
     for attempt in range(len(RETRY_DELAYS) + 1):
+        raw = json.dumps({**body, 'ts': int(now())} if stamp else body, ensure_ascii=False).encode('utf-8')
         status, why, upstream = post_once(url, secret, raw, opener, timeout)
         transient = status == 429 or (status in RETRY_STATUSES and (status != 502 or upstream is None or upstream in RETRY_UPSTREAMS))
         if not transient or attempt == len(RETRY_DELAYS):
@@ -982,8 +1167,9 @@ def send(env, cfg, opener=urllib.request.urlopen, clock=time.monotonic):
             if state == 'failure':
                 print(f"x  {item['context']}: the gate job succeeded without pr-meta's clear "
                       f"(meta {env.get('NIKATRU_GATE_META', '')[:20]!r}, and no hold this report can read): posted failure, never success")
-        status, why = post(url, secret, build(item['context'], state, env, detail, is_gate(item, cfg)), cfg['postTimeoutS'], opener)
-        ok = 200 <= status < 300
+        status, why = post(url, secret, build(item['context'], state, env, detail, is_gate(item, cfg)), cfg['postTimeoutS'], opener, stamp=True)
+        # A 409 is this very body already delivered (the bridge's seen-key, O-BRIDGE-REPORT-REPLAY-WINDOW): not a failure.
+        ok = 200 <= status < 300 or status == 409
         failed += 0 if ok else 1
         print(f"{'ok' if ok else 'x '} {item['context']} {state} -> HTTP {status}{f' ({why})' if why and not ok else ''}")
     # Every status was attempted: the report job's fallback step (no detail) need not run.
@@ -1255,10 +1441,16 @@ def main(argv, env):
             return tier(env)
         if len(argv) == 2 and argv[0] == 'place':
             return place(argv[1])
+        if argv == ['baseline-keys']:
+            return baseline_keys(env)
+        if len(argv) == 2 and argv[0] == 'baseline-seal':
+            return baseline_seal(env, argv[1])
+        if len(argv) == 2 and argv[0] == 'baseline-verify':
+            return baseline_verify(env, argv[1])
         if len(argv) == 2 and argv[0] in ('plan', 'collect', 'send'):
             cfg = load_config(argv[1])
             return {'plan': plan, 'collect': collect, 'send': send}[argv[0]](env, cfg)
-        print('usage: report.py handoff | derive | pr-meta | tier | plan <config> | place <key> | collect <config> | send <config>', file=sys.stderr)
+        print('usage: report.py handoff | derive | pr-meta | tier | plan <config> | place <key> | collect <config> | send <config> | baseline-keys | baseline-seal <dir> | baseline-verify <dir>', file=sys.stderr)
         return 2
     except Lost as e:
         print(f'x COVERAGE LOST - report.py: {e}', file=sys.stderr)

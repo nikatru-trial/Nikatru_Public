@@ -107,25 +107,7 @@ jobs:
         run: |
           NIKATRU_QUIET="$(mktemp "${RUNNER_TEMP:-/tmp}/nikatru-step.XXXXXX")"
           cat > "$NIKATRU_QUIET" <<'NIKATRU_QUIET_EOF'
-          set -euo pipefail
-          dirs=$(node -e '
-            const fs = require("fs"), path = require("path");
-            const out = [];
-            for (const c of fs.readdirSync(".", { withFileTypes: true })) {
-              if (!c.isDirectory() || c.name === "templates" || c.name === "node_modules" || c.name.startsWith(".")) continue;
-              for (const t of fs.readdirSync(c.name, { withFileTypes: true })) {
-                const d = path.posix.join(c.name, t.name, "test", "e2e");
-                if (t.isDirectory() && fs.existsSync(path.join(d, "package.json"))) out.push(d);
-              }
-            }
-            process.stdout.write(out.sort().join("\n"));
-          ')
-          if [ -z "$dirs" ]; then
-            echo "::error::no <Category>/<Tool>/test/e2e directory under extensions/, so this leg would run nothing on Chrome Beta and report success."
-            exit 1
-          fi
-          printf '%s\n' "$dirs"
-          { echo 'dirs<<EOF'; printf '%s\n' "$dirs"; echo 'EOF'; } >> "$GITHUB_OUTPUT"
+          node ../tooling/extensions/beta-discovery.mjs
           NIKATRU_QUIET_EOF
           NIKATRU_SHELL="${BASH:-bash}"; if command -v cygpath >/dev/null 2>&1; then NIKATRU_SHELL="$(cygpath -w "$NIKATRU_SHELL")"; fi
           node "$GITHUB_WORKSPACE/../.nikatru-shell/quiet-step.mjs" --name extensions-beta.beta.3 -- "$NIKATRU_SHELL" --noprofile --norc -eo pipefail "$NIKATRU_QUIET"
@@ -154,50 +136,7 @@ jobs:
         run: |
           NIKATRU_QUIET="$(mktemp "${RUNNER_TEMP:-/tmp}/nikatru-step.XXXXXX")"
           cat > "$NIKATRU_QUIET" <<'NIKATRU_QUIET_EOF'
-          node -e '
-            const fs = require("fs"), path = require("path"), cp = require("child_process");
-            const MARK = /\be2e-branded:([^\n]*)/;
-            const SETTING = /^FS_E2E_[A-Z_]+=[A-Za-z0-9,._-]+$/;
-            const dirs = process.env.DIRS.split("\n").map(s => s.trim()).filter(Boolean);
-            const picked = [];
-            for (const dir of dirs) {
-              const files = fs.readdirSync(dir).filter(f => f.endsWith(".mjs")).sort();
-              const src = new Map(files.map(f => [f, fs.readFileSync(path.join(dir, f), "utf8")]));
-              /* The library rule of the e2e-suite step: a file another file imports is not a suite. */
-              const suites = files.filter(g => !files.some(f => f !== g && src.get(f).includes("./" + g)));
-              for (const f of suites) {
-                const m = MARK.exec(src.get(f));
-                if (!m) continue;
-                const words = m[1].trim().split(/\s+/).filter(Boolean);
-                const bad = words.filter(w => !SETTING.test(w));
-                if (bad.length) {
-                  console.log(`::error::${dir}/${f} carries e2e-branded: with ${bad.join(" ")}, which is not an FS_E2E_NAME=value setting.`);
-                  process.exit(1);
-                }
-                picked.push({ dir, f, env: Object.fromEntries(words.map(w => [w.slice(0, w.indexOf("=")), w.slice(w.indexOf("=") + 1)])) });
-              }
-            }
-            /* Zero is not a pass: a leg that ran nothing on Chrome Beta would read as Chrome Beta being fine. */
-            if (!picked.length) {
-              console.log(`::error::no .mjs in ${dirs.join(", ")} carries an e2e-branded: line, so this leg would run nothing on Chrome Beta and report success.`);
-              process.exit(1);
-            }
-            const failed = [];
-            for (const p of picked) {
-              const t = Date.now();
-              console.log(`::group::node ${p.dir}/${p.f} on chrome-beta ${JSON.stringify(p.env)}`);
-              const r = cp.spawnSync(process.execPath, [p.f], { cwd: p.dir, stdio: "inherit", timeout: 15 * 60 * 1000, env: { ...process.env, ...p.env } });
-              console.log("::endgroup::");
-              const code = r.error ? 1 : (r.status === null ? 1 : r.status);
-              console.log(`chrome-beta ${code === 0 ? "PASS" : "FAIL"}  ${p.dir}/${p.f}  exit=${code}  ${Math.round((Date.now() - t) / 1000)}s`);
-              if (code !== 0) failed.push(`${p.dir}/${p.f} exit ${code}`);
-            }
-            if (failed.length) {
-              console.log(`::error title=An extension fails on Chrome Beta::${failed.length} of ${picked.length} suite(s) failed on chrome-beta: ${failed.join("; ")}. Chrome Beta reaches stable in about four weeks; the BROWSER line in the log names the build.`);
-              process.exit(1);
-            }
-            console.log(`${picked.length} suite(s) passed on chrome-beta.`);
-          '
+          node scripts/run-branded.mjs
           NIKATRU_QUIET_EOF
           NIKATRU_SHELL="${BASH:-bash}"; if command -v cygpath >/dev/null 2>&1; then NIKATRU_SHELL="$(cygpath -w "$NIKATRU_SHELL")"; fi
           node "$GITHUB_WORKSPACE/../.nikatru-shell/quiet-step.mjs" --name extensions-beta.beta.5 -- "$NIKATRU_SHELL" --noprofile --norc -eo pipefail "$NIKATRU_QUIET"

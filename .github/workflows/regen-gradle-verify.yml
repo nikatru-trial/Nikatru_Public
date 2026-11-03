@@ -13,7 +13,6 @@ on:
       app:
         description: The app under apps/ whose android/ project is regenerated.
         required: true
-        default: subscriptiontracker
         type: string
       private_ref:
         description: The PRIVATE ref this run builds, refs/heads/<branch> (generated; empty is the private main).

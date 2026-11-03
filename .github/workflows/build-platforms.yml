@@ -26,6 +26,10 @@ on:
         default: ''
         type: string
 
+concurrency:
+  group: build-platforms-${{ (github.event.client_payload.pr || github.event.client_payload.ref || 'refs/heads/main') }}
+  cancel-in-progress: false
+
 permissions:
   contents: read
   checks: read
@@ -601,6 +605,12 @@ jobs:
           track="$(node -p "require('./tooling/versions.json').snapcraft_track")"
           echo "snapcraft track ${track} (tooling/versions.json snapcraft_track)"
           sudo snap install snapcraft --classic --channel "$track"
+          want="$(node -p "require('./tooling/versions.json').snapcraft_version")"
+          got="$(snapcraft --version | sed -n 's/^snapcraft[[:space:]]*//p' | sed -n 1p)"
+          rev="$(snap list snapcraft | awk 'NR==2 {print $3}')"
+          echo "snapcraft ${got} (revision ${rev}) installed from ${track}; floor ${want} (tooling/versions.json snapcraft_version)"
+          [ -n "$got" ] && [ -n "$rev" ] || { echo "::error title=snapcraft pin::could not read the installed snapcraft version (${got:-none}) or revision (${rev:-none})."; exit 1; }
+          [ "$(printf '%s\n%s\n' "$want" "$got" | sort -V | sed -n 1p)" = "$want" ] || { echo "::error title=snapcraft pin::the ${track} track served snapcraft ${got}, BELOW the floor ${want} in tooling/versions.json: a rollback on the track, not a release to pack with."; exit 1; }
           NIKATRU_QUIET_EOF
           NIKATRU_SHELL="${BASH:-bash}"; if command -v cygpath >/dev/null 2>&1; then NIKATRU_SHELL="$(cygpath -w "$NIKATRU_SHELL")"; fi
           node "$GITHUB_WORKSPACE/../.nikatru-shell/quiet-step.mjs" --name build-platforms.linux_web_android.13 -- "$NIKATRU_SHELL" -e "$NIKATRU_QUIET"
@@ -638,7 +648,26 @@ jobs:
           set -euo pipefail
           prime="${RUNNER_TEMP}/snapcraft-${APP}/prime"
           snaps="$(node tooling/ci/assert-snap-primed-libs.mjs --prime "$prime" --emit-snaps)"
-          for s in $snaps; do sudo snap install "$s"; done
+          # why: O-SNAP-PRIMED-LIBS-SNAPS-UNPINNED. Each base and default-provider from the channel tooling/versions.json
+          # pins it to (snap_<name>_channel, `-` as `_`), so the check grades against a named channel, not the default
+          # one; a snap the recipe names that no key pins is refused. Already installed (core24 comes with snapcraft):
+          # refreshed onto that channel, and the tracking column must then say it. The installed revision is compared with
+          # snap_<name>_revision_<arch> (O-SNAP-INSTALL-REVISION-PINNED) and a difference is a WARNING, never a refusal:
+          # `snap install --revision` needs developer access, so the store moving a channel would otherwise red every run.
+          case "$(uname -m)" in x86_64) arch=amd64 ;; aarch64|arm64) arch=arm64 ;; *) arch="$(uname -m)" ;; esac
+          for s in $snaps; do
+            key="snap_${s//-/_}_channel"
+            rkey="snap_${s//-/_}_revision_${arch}"
+            channel="$(KEY="$key" node -p "require('./tooling/versions.json')[process.env.KEY] ?? ''")"
+            [ -n "$channel" ] || { echo "::error title=snap pin::meta/snap.yaml names the snap ${s}, and tooling/versions.json has no ${key}: pin its channel and revisions (with their updateExemptions why) before grading against it."; exit 1; }
+            if snap list "$s" >/dev/null 2>&1; then sudo snap refresh --channel "$channel" "$s"; else sudo snap install --channel "$channel" "$s"; fi
+            tracking="$(snap list "$s" | awk 'NR==2 {print $4}')"
+            [ "$tracking" = "$channel" ] || { echo "::error title=snap pin::${s} tracks ${tracking:-nothing}, not ${channel} (tooling/versions.json ${key})."; exit 1; }
+            rev="$(snap list "$s" | awk 'NR==2 {print $3}')"
+            pinned="$(KEY="$rkey" node -p "require('./tooling/versions.json')[process.env.KEY] ?? ''")"
+            [ "$rev" = "$pinned" ] || echo "::warning title=snap revision::${s} ${channel} installed revision ${rev:-none}, tooling/versions.json ${rkey} pins ${pinned:-nothing}: re-measure and move the pin in a reviewed commit."
+            echo "${s} $(snap list "$s" | awk 'NR==2 {print $2 " revision " $3}') from ${channel} (tooling/versions.json ${key}; pinned revision ${pinned:-none})"
+          done
           node tooling/ci/assert-snap-primed-libs.mjs --prime "$prime"
           NIKATRU_QUIET_EOF
           NIKATRU_SHELL="${BASH:-bash}"; if command -v cygpath >/dev/null 2>&1; then NIKATRU_SHELL="$(cygpath -w "$NIKATRU_SHELL")"; fi
@@ -939,12 +968,14 @@ jobs:
           set -euo pipefail
           gt_org="$(node -p "require('./tooling/ops/glitchtip-project.json').org")"
           gt_project="$(node -p "require('./tooling/ops/glitchtip-project.json').project")"
-          for lane in linux android-apk android-aab android-apk-apps-gov-in; do
-            node tooling/ops/upload-native-symbols.mjs \
-              --cli "${RUNNER_TEMP}/glitchtip-cli" \
-              --dir "apps/${APP}/build/symbols/${lane}" \
-              --org "$gt_org" --project "$gt_project"
-          done
+          # ONE invocation, the four sets CONCURRENTLY under one ceiling, a timing line each (O-STORE-SUBMIT-PATH-GAPS limb 3)
+          node tooling/ops/upload-native-symbols.mjs \
+            --cli "${RUNNER_TEMP}/glitchtip-cli" \
+            --dir "apps/${APP}/build/symbols/linux" \
+            --dir "apps/${APP}/build/symbols/android-apk" \
+            --dir "apps/${APP}/build/symbols/android-aab" \
+            --dir "apps/${APP}/build/symbols/android-apk-apps-gov-in" \
+            --org "$gt_org" --project "$gt_project"
           NIKATRU_QUIET_EOF
           NIKATRU_SHELL="${BASH:-bash}"; if command -v cygpath >/dev/null 2>&1; then NIKATRU_SHELL="$(cygpath -w "$NIKATRU_SHELL")"; fi
           node "$GITHUB_WORKSPACE/../.nikatru-shell/quiet-step.mjs" --name build-platforms.linux_web_android.34 -- "$NIKATRU_SHELL" -e "$NIKATRU_QUIET"
@@ -2137,8 +2168,9 @@ jobs:
           sudo snap install snapcraft --classic --channel "$track"
           want="$(node -p "require('./tooling/versions.json').snapcraft_version")"
           got="$(snapcraft --version | sed -n 's/^snapcraft[[:space:]]*//p' | sed -n 1p)"
-          echo "snapcraft ${got} installed from ${track}; floor ${want} (tooling/versions.json snapcraft_version)"
-          [ -n "$got" ] || { echo "::error title=snapcraft pin::could not read the installed snapcraft version."; exit 1; }
+          rev="$(snap list snapcraft | awk 'NR==2 {print $3}')"
+          echo "snapcraft ${got} (revision ${rev}) installed from ${track}; floor ${want} (tooling/versions.json snapcraft_version)"
+          [ -n "$got" ] && [ -n "$rev" ] || { echo "::error title=snapcraft pin::could not read the installed snapcraft version (${got:-none}) or revision (${rev:-none})."; exit 1; }
           [ "$(printf '%s\n%s\n' "$want" "$got" | sort -V | sed -n 1p)" = "$want" ] || { echo "::error title=snapcraft pin::the ${track} track served snapcraft ${got}, BELOW the floor ${want} in tooling/versions.json: a rollback on the track, not a release to pack with."; exit 1; }
           NIKATRU_QUIET_EOF
           NIKATRU_SHELL="${BASH:-bash}"; if command -v cygpath >/dev/null 2>&1; then NIKATRU_SHELL="$(cygpath -w "$NIKATRU_SHELL")"; fi
@@ -2179,7 +2211,26 @@ jobs:
           set -euo pipefail
           prime="${RUNNER_TEMP}/snapcraft-${APP}/prime"
           snaps="$(node tooling/ci/assert-snap-primed-libs.mjs --prime "$prime" --emit-snaps)"
-          for s in $snaps; do sudo snap install "$s"; done
+          # why: O-SNAP-PRIMED-LIBS-SNAPS-UNPINNED. Each base and default-provider from the channel tooling/versions.json
+          # pins it to (snap_<name>_channel, `-` as `_`), so the check grades against a named channel, not the default
+          # one; a snap the recipe names that no key pins is refused. Already installed (core24 comes with snapcraft):
+          # refreshed onto that channel, and the tracking column must then say it. The installed revision is compared with
+          # snap_<name>_revision_<arch> (O-SNAP-INSTALL-REVISION-PINNED) and a difference is a WARNING, never a refusal:
+          # `snap install --revision` needs developer access, so the store moving a channel would otherwise red every run.
+          case "$(uname -m)" in x86_64) arch=amd64 ;; aarch64|arm64) arch=arm64 ;; *) arch="$(uname -m)" ;; esac
+          for s in $snaps; do
+            key="snap_${s//-/_}_channel"
+            rkey="snap_${s//-/_}_revision_${arch}"
+            channel="$(KEY="$key" node -p "require('./tooling/versions.json')[process.env.KEY] ?? ''")"
+            [ -n "$channel" ] || { echo "::error title=snap pin::meta/snap.yaml names the snap ${s}, and tooling/versions.json has no ${key}: pin its channel and revisions (with their updateExemptions why) before grading against it."; exit 1; }
+            if snap list "$s" >/dev/null 2>&1; then sudo snap refresh --channel "$channel" "$s"; else sudo snap install --channel "$channel" "$s"; fi
+            tracking="$(snap list "$s" | awk 'NR==2 {print $4}')"
+            [ "$tracking" = "$channel" ] || { echo "::error title=snap pin::${s} tracks ${tracking:-nothing}, not ${channel} (tooling/versions.json ${key})."; exit 1; }
+            rev="$(snap list "$s" | awk 'NR==2 {print $3}')"
+            pinned="$(KEY="$rkey" node -p "require('./tooling/versions.json')[process.env.KEY] ?? ''")"
+            [ "$rev" = "$pinned" ] || echo "::warning title=snap revision::${s} ${channel} installed revision ${rev:-none}, tooling/versions.json ${rkey} pins ${pinned:-nothing}: re-measure and move the pin in a reviewed commit."
+            echo "${s} $(snap list "$s" | awk 'NR==2 {print $2 " revision " $3}') from ${channel} (tooling/versions.json ${key}; pinned revision ${pinned:-none})"
+          done
           node tooling/ci/assert-snap-primed-libs.mjs --prime "$prime"
           NIKATRU_QUIET_EOF
           NIKATRU_SHELL="${BASH:-bash}"; if command -v cygpath >/dev/null 2>&1; then NIKATRU_SHELL="$(cygpath -w "$NIKATRU_SHELL")"; fi
@@ -2353,6 +2404,8 @@ jobs:
           APPLE_PROVISIONING_PROFILES_BASE64: ${{ secrets.APPLE_PROVISIONING_PROFILES_BASE64 }}
           APPLE_TEAM_ID: ${{ secrets.APPLE_TEAM_ID }}
           APPLE_INSTALLER_CERT_P12_BASE64: ${{ secrets.APPLE_INSTALLER_CERT_P12_BASE64 }}
+          APPLE_PROVISIONING_PROFILES_WIDGET_BASE64: ${{ secrets.APPLE_PROVISIONING_PROFILES_WIDGET_BASE64 }}
+          APPLE_PROVISIONING_PROFILES_SHARE_BASE64: ${{ secrets.APPLE_PROVISIONING_PROFILES_SHARE_BASE64 }}
         run: |
           NIKATRU_QUIET="$(mktemp "${RUNNER_TEMP:-/tmp}/nikatru-step.XXXXXX")"
           cat > "$NIKATRU_QUIET" <<'NIKATRU_QUIET_EOF'
@@ -2557,6 +2610,34 @@ jobs:
           NIKATRU_HANDOFF_KEY: nikatru-handoff-symbols-${{ matrix.app }}-apple-${{ github.run_id }}-${{ github.run_attempt }}
           GH_TOKEN: ${{ github.token }}
         run: for t in 0 10 20 30 40 50 60 70 80 90; do [ "$t" = 0 ] || sleep 10; if j="$(curl -fsS --max-time 20 -H "Authorization:Bearer $GH_TOKEN" -H "Accept:application/vnd.github+json" "${GITHUB_API_URL:-https://api.github.com}/repos/$GITHUB_REPOSITORY/actions/caches?key=$NIKATRU_HANDOFF_KEY&per_page=100" | tr -d ' \t\r\n')"; then for x in "$NIKATRU_HANDOFF_KEY" "$NIKATRU_HANDOFF_KEY-r2" "$NIKATRU_HANDOFF_KEY-r3"; do case "$j" in *"\"key\":\"$x\""*) echo "::notice title=hand-off::the save of $x is in the cache, listed by the caches API $t s after the last confirm missed (the cache's read-after-write lag)"; exit 0;; esac; done; fi; done; echo "::error title=hand-off::no save of $NIKATRU_HANDOFF_KEY (nor $NIKATRU_HANDOFF_KEY-r2, $NIKATRU_HANDOFF_KEY-r3) is in the cache, so this run's later jobs cannot restore it; this job fails so a failed-jobs re-run re-runs it" && exit 1
+      - name: The Apple pods installed are the committed lock's
+        working-directory: apps/${{ matrix.app }}
+        run: |
+          NIKATRU_QUIET="$(mktemp "${RUNNER_TEMP:-/tmp}/nikatru-step.XXXXXX")"
+          cat > "$NIKATRU_QUIET" <<'NIKATRU_QUIET_EOF'
+          set -euo pipefail
+          drift=0
+          for platform in ios macos; do
+            lock="${platform}/Podfile.lock"
+            if git ls-files --error-unmatch "$lock" > /dev/null 2>&1; then
+              committed="$(git show "HEAD:./${lock}")"
+              if [ ! -s "${platform}/Pods/Manifest.lock" ]; then
+                echo "::error title=native lock unproven::${lock} is committed and ${platform}/Pods/Manifest.lock is absent: no pod install ran, so nothing says the build used the lock."
+                drift=1
+              elif [ "$(cat "${platform}/Pods/Manifest.lock")" = "$committed" ]; then
+                echo "ok   ${lock}: the pods this build installed are exactly the committed lock's"
+              else
+                echo "::error title=native lock drift::${lock} is committed and this build installed something else (${platform}/Pods/Manifest.lock differs). Re-resolve on a macOS runner and commit the lock in a reviewed change."
+                drift=1
+              fi
+            elif [ -f "$lock" ]; then
+              echo "::warning title=native deps unlocked::${lock} was resolved by this build and is NOT committed (sha256 $(shasum -a 256 "$lock" | cut -d' ' -f1)): nothing holds the next build to it."
+            fi
+          done
+          exit "$drift"
+          NIKATRU_QUIET_EOF
+          NIKATRU_SHELL="${BASH:-bash}"; if command -v cygpath >/dev/null 2>&1; then NIKATRU_SHELL="$(cygpath -w "$NIKATRU_SHELL")"; fi
+          node "$GITHUB_WORKSPACE/../.nikatru-shell/quiet-step.mjs" --name build-platforms.apple.19 -- "$NIKATRU_SHELL" -e "$NIKATRU_QUIET"
       - name: Package the macOS .pkg (Mac App Store)
         if: env.APPLE_SIGNING_POSTURE == 'release-signed'
         working-directory: apps/${{ matrix.app }}
@@ -2578,7 +2659,7 @@ jobs:
           ls -l "$out"
           NIKATRU_QUIET_EOF
           NIKATRU_SHELL="${BASH:-bash}"; if command -v cygpath >/dev/null 2>&1; then NIKATRU_SHELL="$(cygpath -w "$NIKATRU_SHELL")"; fi
-          node "$GITHUB_WORKSPACE/../.nikatru-shell/quiet-step.mjs" --name build-platforms.apple.19 -- "$NIKATRU_SHELL" -e "$NIKATRU_QUIET"
+          node "$GITHUB_WORKSPACE/../.nikatru-shell/quiet-step.mjs" --name build-platforms.apple.20 -- "$NIKATRU_SHELL" -e "$NIKATRU_QUIET"
       - name: Stamp the .pkg with the channel its build compiled in
         if: env.APPLE_SIGNING_POSTURE == 'release-signed'
         run: |
@@ -2587,7 +2668,7 @@ jobs:
           node tooling/ci/stamp-channel.mjs --channel macos-appstore --build-step build_macos apps/${{ matrix.app }}/build/macos/pkg/*.pkg
           NIKATRU_QUIET_EOF
           NIKATRU_SHELL="${BASH:-bash}"; if command -v cygpath >/dev/null 2>&1; then NIKATRU_SHELL="$(cygpath -w "$NIKATRU_SHELL")"; fi
-          node "$GITHUB_WORKSPACE/../.nikatru-shell/quiet-step.mjs" --name build-platforms.apple.20 -- "$NIKATRU_SHELL" -e "$NIKATRU_QUIET"
+          node "$GITHUB_WORKSPACE/../.nikatru-shell/quiet-step.mjs" --name build-platforms.apple.21 -- "$NIKATRU_SHELL" -e "$NIKATRU_QUIET"
       - name: PROVE the .ipa and .pkg are real and signed
         if: env.APPLE_SIGNING_POSTURE == 'release-signed'
         run: |
@@ -2596,7 +2677,7 @@ jobs:
           node tooling/ci/assert-artifact-signed-apple.mjs --capture ${{ runner.temp }}/apple-capture apps/${{ matrix.app }}/build/ios/ipa/*.ipa apps/${{ matrix.app }}/build/macos/pkg/*.pkg
           NIKATRU_QUIET_EOF
           NIKATRU_SHELL="${BASH:-bash}"; if command -v cygpath >/dev/null 2>&1; then NIKATRU_SHELL="$(cygpath -w "$NIKATRU_SHELL")"; fi
-          node "$GITHUB_WORKSPACE/../.nikatru-shell/quiet-step.mjs" --name build-platforms.apple.21 -- "$NIKATRU_SHELL" -e "$NIKATRU_QUIET"
+          node "$GITHUB_WORKSPACE/../.nikatru-shell/quiet-step.mjs" --name build-platforms.apple.22 -- "$NIKATRU_SHELL" -e "$NIKATRU_QUIET"
       - name: Store ci-proof-apple-capture-${{ matrix.app }} in the bridge's private home (generated)
         if: ${{ !cancelled() && env.APPLE_SIGNING_POSTURE == 'release-signed' }}
         shell: bash
@@ -2619,7 +2700,7 @@ jobs:
           exit "$status"
           NIKATRU_QUIET_EOF
           NIKATRU_SHELL="${BASH:-bash}"; if command -v cygpath >/dev/null 2>&1; then NIKATRU_SHELL="$(cygpath -w "$NIKATRU_SHELL")"; fi
-          node "$GITHUB_WORKSPACE/../.nikatru-shell/quiet-step.mjs" --name build-platforms.apple.23 -- "$NIKATRU_SHELL" -e "$NIKATRU_QUIET"
+          node "$GITHUB_WORKSPACE/../.nikatru-shell/quiet-step.mjs" --name build-platforms.apple.24 -- "$NIKATRU_SHELL" -e "$NIKATRU_QUIET"
       - name: The iOS bundle is signed by the identity this lane intended
         if: env.APPLE_SIGNING_POSTURE != 'release-signed'
         run: |
@@ -2628,7 +2709,7 @@ jobs:
           node tooling/ci/assert-artifact-signed-apple.mjs apps/${{ matrix.app }}/build/ios/iphoneos/*.app
           NIKATRU_QUIET_EOF
           NIKATRU_SHELL="${BASH:-bash}"; if command -v cygpath >/dev/null 2>&1; then NIKATRU_SHELL="$(cygpath -w "$NIKATRU_SHELL")"; fi
-          node "$GITHUB_WORKSPACE/../.nikatru-shell/quiet-step.mjs" --name build-platforms.apple.24 -- "$NIKATRU_SHELL" -e "$NIKATRU_QUIET"
+          node "$GITHUB_WORKSPACE/../.nikatru-shell/quiet-step.mjs" --name build-platforms.apple.25 -- "$NIKATRU_SHELL" -e "$NIKATRU_QUIET"
       - name: The iOS bundle carries the Info.plist keys app.yaml renders
         if: env.APPLE_SIGNING_POSTURE != 'release-signed'
         run: |
@@ -2637,7 +2718,7 @@ jobs:
           node tooling/ci/assert-built-info-plist.mjs --app ${{ matrix.app }} apps/${{ matrix.app }}/build/ios/iphoneos/*.app
           NIKATRU_QUIET_EOF
           NIKATRU_SHELL="${BASH:-bash}"; if command -v cygpath >/dev/null 2>&1; then NIKATRU_SHELL="$(cygpath -w "$NIKATRU_SHELL")"; fi
-          node "$GITHUB_WORKSPACE/../.nikatru-shell/quiet-step.mjs" --name build-platforms.apple.25 -- "$NIKATRU_SHELL" -e "$NIKATRU_QUIET"
+          node "$GITHUB_WORKSPACE/../.nikatru-shell/quiet-step.mjs" --name build-platforms.apple.26 -- "$NIKATRU_SHELL" -e "$NIKATRU_QUIET"
       - name: Every artifact this lane claims exists, and is not empty
         run: |
           NIKATRU_QUIET="$(mktemp "${RUNNER_TEMP:-/tmp}/nikatru-step.XXXXXX")"
@@ -2645,7 +2726,7 @@ jobs:
           node tooling/ci/assert-artifact-shape.mjs --app ${{ matrix.app }} --platform apple
           NIKATRU_QUIET_EOF
           NIKATRU_SHELL="${BASH:-bash}"; if command -v cygpath >/dev/null 2>&1; then NIKATRU_SHELL="$(cygpath -w "$NIKATRU_SHELL")"; fi
-          node "$GITHUB_WORKSPACE/../.nikatru-shell/quiet-step.mjs" --name build-platforms.apple.26 -- "$NIKATRU_SHELL" -e "$NIKATRU_QUIET"
+          node "$GITHUB_WORKSPACE/../.nikatru-shell/quiet-step.mjs" --name build-platforms.apple.27 -- "$NIKATRU_SHELL" -e "$NIKATRU_QUIET"
       - name: Install glitchtip-cli (pinned by version AND by digest)
         run: |
           NIKATRU_QUIET="$(mktemp "${RUNNER_TEMP:-/tmp}/nikatru-step.XXXXXX")"
@@ -2653,7 +2734,7 @@ jobs:
           node tooling/ci/install-pinned-tool.mjs glitchtip-cli --out "$RUNNER_TEMP"
           NIKATRU_QUIET_EOF
           NIKATRU_SHELL="${BASH:-bash}"; if command -v cygpath >/dev/null 2>&1; then NIKATRU_SHELL="$(cygpath -w "$NIKATRU_SHELL")"; fi
-          node "$GITHUB_WORKSPACE/../.nikatru-shell/quiet-step.mjs" --name build-platforms.apple.27 -- "$NIKATRU_SHELL" -e "$NIKATRU_QUIET"
+          node "$GITHUB_WORKSPACE/../.nikatru-shell/quiet-step.mjs" --name build-platforms.apple.28 -- "$NIKATRU_SHELL" -e "$NIKATRU_QUIET"
       - name: Upload the native debug symbols to GlitchTip
         env:
           SENTRY_AUTH_TOKEN: ${{ secrets.GLITCHTIP_TOKEN }}
@@ -2665,15 +2746,15 @@ jobs:
           set -euo pipefail
           gt_org="$(node -p "require('./tooling/ops/glitchtip-project.json').org")"
           gt_project="$(node -p "require('./tooling/ops/glitchtip-project.json').project")"
-          for lane in macos ios; do
-            node tooling/ops/upload-native-symbols.mjs \
-              --cli "${RUNNER_TEMP}/glitchtip-cli" \
-              --dir "apps/${APP}/build/symbols/${lane}" \
-              --org "$gt_org" --project "$gt_project"
-          done
+          # ONE invocation, both sets CONCURRENTLY under one ceiling, a timing line each (O-STORE-SUBMIT-PATH-GAPS limb 3)
+          node tooling/ops/upload-native-symbols.mjs \
+            --cli "${RUNNER_TEMP}/glitchtip-cli" \
+            --dir "apps/${APP}/build/symbols/macos" \
+            --dir "apps/${APP}/build/symbols/ios" \
+            --org "$gt_org" --project "$gt_project"
           NIKATRU_QUIET_EOF
           NIKATRU_SHELL="${BASH:-bash}"; if command -v cygpath >/dev/null 2>&1; then NIKATRU_SHELL="$(cygpath -w "$NIKATRU_SHELL")"; fi
-          node "$GITHUB_WORKSPACE/../.nikatru-shell/quiet-step.mjs" --name build-platforms.apple.28 -- "$NIKATRU_SHELL" -e "$NIKATRU_QUIET"
+          node "$GITHUB_WORKSPACE/../.nikatru-shell/quiet-step.mjs" --name build-platforms.apple.29 -- "$NIKATRU_SHELL" -e "$NIKATRU_QUIET"
       - name: Hand this job's red detail to the report job, sealed (generated)
         id: nikatru-handoff
         if: always()
@@ -3547,7 +3628,7 @@ jobs:
           # `--emit-release-json`'s refusal of an empty set after every platform built. The steps that read
           # dist/ skip on this output, with this line as their reason. A TAG never takes this branch: a tag
           # of nothing still fails at the describe step, which is the refusal a release day needs.
-          # tooling/ci/test/release-nothing_owed.test.mjs runs this job's real steps over an empty download.
+          # tooling/ci/test/release-nothing-owed.test.mjs runs this job's real steps over an empty download.
           if [ "$REF_TYPE" != "tag" ] && [ -z "$(find dist -type f -print -quit)" ]; then
             echo "nothing_owed=${APP}" >> "$GITHUB_OUTPUT"
             echo "::notice title=No release to describe (${APP})::--stage staged nothing and owes nothing on this non-tag run; the describe, checksum, grade, record and attest steps are skipped by design (the reason is printed above)."
@@ -4106,4 +4187,9 @@ jobs:
           GH_TOKEN: ${{ github.token }}
           NIKATRU_RELAY_RUN: ${{ github.run_id }}
           NIKATRU_RELAY_ATTEMPT: ${{ github.run_attempt }}
-        run: gh api --method POST "repos/$GITHUB_REPOSITORY/actions/workflows/redeploy-stranded.yml/dispatches" -f ref=main -f "inputs[nikatru_relay_run]=$NIKATRU_RELAY_RUN" -f "inputs[nikatru_relay_attempt]=$NIKATRU_RELAY_ATTEMPT" --silent || echo "::warning::could not start redeploy-stranded.yml after run $NIKATRU_RELAY_RUN attempt $NIKATRU_RELAY_ATTEMPT"
+          NIKATRU_RELAY_NAME: Build apps
+          NIKATRU_RELAY_PATH: .github/workflows/build-platforms.yml
+          NIKATRU_RELAY_CONCLUSION: ${{ contains(needs.*.result, 'cancelled') && 'cancelled' || contains(needs.*.result, 'failure') && 'failure' || 'success' }}
+          NIKATRU_RELAY_HEAD_SHA: ${{ needs.nikatru-pin.outputs.sha }}
+          NIKATRU_RELAY_EVENT: ${{ github.event.client_payload.event || github.event_name }}
+        run: gh api --method POST "repos/$GITHUB_REPOSITORY/actions/workflows/redeploy-stranded.yml/dispatches" -f ref=main -f "inputs[nikatru_relay_run]=$NIKATRU_RELAY_RUN" -f "inputs[nikatru_relay_attempt]=$NIKATRU_RELAY_ATTEMPT" -f "inputs[nikatru_relay_name]=$NIKATRU_RELAY_NAME" -f "inputs[nikatru_relay_path]=$NIKATRU_RELAY_PATH" -f "inputs[nikatru_relay_conclusion]=$NIKATRU_RELAY_CONCLUSION" -f "inputs[nikatru_relay_head_sha]=$NIKATRU_RELAY_HEAD_SHA" -f "inputs[nikatru_relay_event]=$NIKATRU_RELAY_EVENT" --silent || echo "::warning::could not start redeploy-stranded.yml after run $NIKATRU_RELAY_RUN attempt $NIKATRU_RELAY_ATTEMPT"

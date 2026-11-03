@@ -5,6 +5,8 @@ env:
 
 name: Main health status (posts CI's verdict)
 
+run-name: "main health: ${{ inputs.nikatru_relay_run != '' && format('{0} on {1} ({2})', inputs.nikatru_relay_conclusion, inputs.nikatru_relay_head_sha, inputs.nikatru_relay_event) || 'dispatched by hand' }}"
+
 on:
   workflow_dispatch:
     inputs:
@@ -15,6 +17,31 @@ on:
         type: string
       nikatru_relay_attempt:
         description: That run's attempt (generated; empty is its newest).
+        required: false
+        default: ''
+        type: string
+      nikatru_relay_name:
+        description: That run's name, for this run's title (generated; display only).
+        required: false
+        default: ''
+        type: string
+      nikatru_relay_path:
+        description: That run's path, for this run's title (generated; display only).
+        required: false
+        default: ''
+        type: string
+      nikatru_relay_conclusion:
+        description: That run's conclusion, for this run's title (generated; display only).
+        required: false
+        default: ''
+        type: string
+      nikatru_relay_head_sha:
+        description: That run's head_sha, for this run's title (generated; display only).
+        required: false
+        default: ''
+        type: string
+      nikatru_relay_event:
+        description: That run's event, for this run's title (generated; display only).
         required: false
         default: ''
         type: string

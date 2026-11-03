@@ -312,6 +312,9 @@ jobs:
     timeout-minutes: 45
     permissions:
       contents: read
+      actions: read
+      checks: read
+      deployments: write
       id-token: write
     steps:
       - name: Check out the private tree (generated)
@@ -369,6 +372,12 @@ jobs:
         working-directory: ${{ github.workspace }}
         run: printf '/.nikatru-trusted/\n' >> "$(git rev-parse --git-path info/exclude)"
       - uses: ./.nikatru-trusted/.github/actions/setup-node
+      - name: Require ci-gate to have passed for this commit
+        env:
+          GITHUB_TOKEN: ${{ github.token }}
+          GITHUB_REPOSITORY: ${{ github.repository }}
+          REF: ${{ (github.event.client_payload.ref || 'refs/heads/main') }}
+        run: node tooling/ci/assert-gate-passed.mjs ${{ env.NIKATRU_SHA }} --ref "$REF" --timeout-seconds 1200
       - name: Read the build the live platform runs
         id: live-build
         run: node tooling/catalog/store-grantable.mjs --print-live-build >> "$GITHUB_OUTPUT"
@@ -407,6 +416,11 @@ jobs:
           code=$?
           echo "catalog-sync --apply exited $code; its report is the private artifact catalog-sync-apply (never this log)."
           exit "$code"
+      - name: Record what the catalogue write shipped
+        if: always() && steps.apply.outcome == 'success'
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: node tooling/ci/record-deployment.mjs catalog
       - name: Store catalog-sync-apply in the bridge's private home (generated)
         if: always()
         shell: bash

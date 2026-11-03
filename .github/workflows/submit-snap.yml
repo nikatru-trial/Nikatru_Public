@@ -615,7 +615,9 @@ jobs:
           project="${RUNNER_TEMP}/snapcraft-${APP}"
           collected="${GITHUB_WORKSPACE}/apps/${APP}/build/linux/snap/${APP}.snap"
           cd "$project"
-          sudo snapcraft pack --destructive-mode
+          # why: SNAPCRAFT_BUILD_INFO=1 writes snap/manifest.yaml, the staged versions (O-SNAP-STAGE-PACKAGES-UNPINNED);
+          # through env, because sudo resets the environment.
+          sudo env SNAPCRAFT_BUILD_INFO=1 snapcraft pack --destructive-mode
           count="$(find "$project" -maxdepth 1 -type f -name '*.snap' | wc -l)"
           if [ "$count" -ne 1 ]; then
             echo "FAIL snapcraft exited 0 and left ${count} .snap file(s) in ${project}:" >&2
@@ -633,6 +635,21 @@ jobs:
           NIKATRU_QUIET_EOF
           NIKATRU_SHELL="${BASH:-bash}"; if command -v cygpath >/dev/null 2>&1; then NIKATRU_SHELL="$(cygpath -w "$NIKATRU_SHELL")"; fi
           node "$GITHUB_WORKSPACE/../.nikatru-shell/quiet-step.mjs" --name submit-snap.dry-run.14 -- "$NIKATRU_SHELL" -e "$NIKATRU_QUIET"
+      - name: Record the staged package versions (amd64, the snap's build manifest)
+        run: |
+          NIKATRU_QUIET="$(mktemp "${RUNNER_TEMP:-/tmp}/nikatru-step.XXXXXX")"
+          cat > "$NIKATRU_QUIET" <<'NIKATRU_QUIET_EOF'
+          set -euo pipefail
+          snap="${GITHUB_WORKSPACE}/apps/${APP}/build/linux/snap/${APP}.snap"
+          manifest="${snap%.snap}.manifest.yaml"
+          if ! unsquashfs -cat "$snap" snap/manifest.yaml > "$manifest"; then
+            echo "unsquashfs could not read snap/manifest.yaml out of ${snap}; reading the prime tree's copy" >&2
+            sudo cat "${RUNNER_TEMP}/snapcraft-${APP}/prime/snap/manifest.yaml" > "$manifest"
+          fi
+          node tooling/release/generate-snapcraft.mjs --staged-summary "$manifest" --label "${APP} amd64" | tee -a "$GITHUB_STEP_SUMMARY"
+          NIKATRU_QUIET_EOF
+          NIKATRU_SHELL="${BASH:-bash}"; if command -v cygpath >/dev/null 2>&1; then NIKATRU_SHELL="$(cygpath -w "$NIKATRU_SHELL")"; fi
+          node "$GITHUB_WORKSPACE/../.nikatru-shell/quiet-step.mjs" --name submit-snap.dry-run.15 -- "$NIKATRU_SHELL" -e "$NIKATRU_QUIET"
       - name: The packed snap loads only libraries it carries (ldd on the primed binary)
         run: |
           NIKATRU_QUIET="$(mktemp "${RUNNER_TEMP:-/tmp}/nikatru-step.XXXXXX")"
@@ -640,11 +657,30 @@ jobs:
           set -euo pipefail
           prime="${RUNNER_TEMP}/snapcraft-${APP}/prime"
           snaps="$(node tooling/ci/assert-snap-primed-libs.mjs --prime "$prime" --emit-snaps)"
-          for s in $snaps; do sudo snap install "$s"; done
+          # why: O-SNAP-PRIMED-LIBS-SNAPS-UNPINNED. Each base and default-provider from the channel tooling/versions.json
+          # pins it to (snap_<name>_channel, `-` as `_`), so the check grades against a named channel, not the default
+          # one; a snap the recipe names that no key pins is refused. Already installed (core24 comes with snapcraft):
+          # refreshed onto that channel, and the tracking column must then say it. The installed revision is compared with
+          # snap_<name>_revision_<arch> (O-SNAP-INSTALL-REVISION-PINNED) and a difference is a WARNING, never a refusal:
+          # `snap install --revision` needs developer access, so the store moving a channel would otherwise red every run.
+          case "$(uname -m)" in x86_64) arch=amd64 ;; aarch64|arm64) arch=arm64 ;; *) arch="$(uname -m)" ;; esac
+          for s in $snaps; do
+            key="snap_${s//-/_}_channel"
+            rkey="snap_${s//-/_}_revision_${arch}"
+            channel="$(KEY="$key" node -p "require('./tooling/versions.json')[process.env.KEY] ?? ''")"
+            [ -n "$channel" ] || { echo "::error title=snap pin::meta/snap.yaml names the snap ${s}, and tooling/versions.json has no ${key}: pin its channel and revisions (with their updateExemptions why) before grading against it."; exit 1; }
+            if snap list "$s" >/dev/null 2>&1; then sudo snap refresh --channel "$channel" "$s"; else sudo snap install --channel "$channel" "$s"; fi
+            tracking="$(snap list "$s" | awk 'NR==2 {print $4}')"
+            [ "$tracking" = "$channel" ] || { echo "::error title=snap pin::${s} tracks ${tracking:-nothing}, not ${channel} (tooling/versions.json ${key})."; exit 1; }
+            rev="$(snap list "$s" | awk 'NR==2 {print $3}')"
+            pinned="$(KEY="$rkey" node -p "require('./tooling/versions.json')[process.env.KEY] ?? ''")"
+            [ "$rev" = "$pinned" ] || echo "::warning title=snap revision::${s} ${channel} installed revision ${rev:-none}, tooling/versions.json ${rkey} pins ${pinned:-nothing}: re-measure and move the pin in a reviewed commit."
+            echo "${s} $(snap list "$s" | awk 'NR==2 {print $2 " revision " $3}') from ${channel} (tooling/versions.json ${key}; pinned revision ${pinned:-none})"
+          done
           node tooling/ci/assert-snap-primed-libs.mjs --prime "$prime"
           NIKATRU_QUIET_EOF
           NIKATRU_SHELL="${BASH:-bash}"; if command -v cygpath >/dev/null 2>&1; then NIKATRU_SHELL="$(cygpath -w "$NIKATRU_SHELL")"; fi
-          node "$GITHUB_WORKSPACE/../.nikatru-shell/quiet-step.mjs" --name submit-snap.dry-run.15 -- "$NIKATRU_SHELL" -e "$NIKATRU_QUIET"
+          node "$GITHUB_WORKSPACE/../.nikatru-shell/quiet-step.mjs" --name submit-snap.dry-run.16 -- "$NIKATRU_SHELL" -e "$NIKATRU_QUIET"
       - name: Restore the ${{ needs.build-arm64.outputs.artifact }} hand-off (generated)
         id: nikatru-restore-3
         timeout-minutes: 2
@@ -738,7 +774,7 @@ jobs:
           printf '%s  %s\n' "$EXPECTED_SHA256" "$SNAP_ARM64" | sha256sum --check --strict -
           NIKATRU_QUIET_EOF
           NIKATRU_SHELL="${BASH:-bash}"; if command -v cygpath >/dev/null 2>&1; then NIKATRU_SHELL="$(cygpath -w "$NIKATRU_SHELL")"; fi
-          node "$GITHUB_WORKSPACE/../.nikatru-shell/quiet-step.mjs" --name submit-snap.dry-run.17 -- "$NIKATRU_SHELL" -e "$NIKATRU_QUIET"
+          node "$GITHUB_WORKSPACE/../.nikatru-shell/quiet-step.mjs" --name submit-snap.dry-run.18 -- "$NIKATRU_SHELL" -e "$NIKATRU_QUIET"
       - name: Dry-run the Snap Store submission
         env:
           SNAPCRAFT_STORE_CREDENTIALS_EXPIRES: ${{ secrets.SNAPCRAFT_STORE_CREDENTIALS_EXPIRES }}
@@ -748,7 +784,7 @@ jobs:
           node tooling/release/submit-snap.mjs --dry-run --app "$APP"
           NIKATRU_QUIET_EOF
           NIKATRU_SHELL="${BASH:-bash}"; if command -v cygpath >/dev/null 2>&1; then NIKATRU_SHELL="$(cygpath -w "$NIKATRU_SHELL")"; fi
-          node "$GITHUB_WORKSPACE/../.nikatru-shell/quiet-step.mjs" --name submit-snap.dry-run.18 -- "$NIKATRU_SHELL" -e "$NIKATRU_QUIET"
+          node "$GITHUB_WORKSPACE/../.nikatru-shell/quiet-step.mjs" --name submit-snap.dry-run.19 -- "$NIKATRU_SHELL" -e "$NIKATRU_QUIET"
       - name: Name clearance holds for linux-snap (owner HELD or PROVEN-FREE)
         run: |
           NIKATRU_QUIET="$(mktemp "${RUNNER_TEMP:-/tmp}/nikatru-step.XXXXXX")"
@@ -756,7 +792,7 @@ jobs:
           node tooling/ci/assert-name-clearance.mjs --for-submission=linux-snap
           NIKATRU_QUIET_EOF
           NIKATRU_SHELL="${BASH:-bash}"; if command -v cygpath >/dev/null 2>&1; then NIKATRU_SHELL="$(cygpath -w "$NIKATRU_SHELL")"; fi
-          node "$GITHUB_WORKSPACE/../.nikatru-shell/quiet-step.mjs" --name submit-snap.dry-run.19 -- "$NIKATRU_SHELL" -e "$NIKATRU_QUIET"
+          node "$GITHUB_WORKSPACE/../.nikatru-shell/quiet-step.mjs" --name submit-snap.dry-run.20 -- "$NIKATRU_SHELL" -e "$NIKATRU_QUIET"
       - name: Every supported language is translated by the pipeline (linux-snap, dry run)
         run: |
           NIKATRU_QUIET="$(mktemp "${RUNNER_TEMP:-/tmp}/nikatru-step.XXXXXX")"
@@ -764,7 +800,7 @@ jobs:
           node tooling/ci/assert-translations-generated.mjs --for-submission=linux-snap --real-submission
           NIKATRU_QUIET_EOF
           NIKATRU_SHELL="${BASH:-bash}"; if command -v cygpath >/dev/null 2>&1; then NIKATRU_SHELL="$(cygpath -w "$NIKATRU_SHELL")"; fi
-          node "$GITHUB_WORKSPACE/../.nikatru-shell/quiet-step.mjs" --name submit-snap.dry-run.20 -- "$NIKATRU_SHELL" -e "$NIKATRU_QUIET"
+          node "$GITHUB_WORKSPACE/../.nikatru-shell/quiet-step.mjs" --name submit-snap.dry-run.21 -- "$NIKATRU_SHELL" -e "$NIKATRU_QUIET"
       - name: The Snap Store screenshot set covers its declared device types
         run: |
           NIKATRU_QUIET="$(mktemp "${RUNNER_TEMP:-/tmp}/nikatru-step.XXXXXX")"
@@ -772,7 +808,7 @@ jobs:
           node tooling/ci/assert-play-device-coverage.mjs --for-submission=linux-snap
           NIKATRU_QUIET_EOF
           NIKATRU_SHELL="${BASH:-bash}"; if command -v cygpath >/dev/null 2>&1; then NIKATRU_SHELL="$(cygpath -w "$NIKATRU_SHELL")"; fi
-          node "$GITHUB_WORKSPACE/../.nikatru-shell/quiet-step.mjs" --name submit-snap.dry-run.21 -- "$NIKATRU_SHELL" -e "$NIKATRU_QUIET"
+          node "$GITHUB_WORKSPACE/../.nikatru-shell/quiet-step.mjs" --name submit-snap.dry-run.22 -- "$NIKATRU_SHELL" -e "$NIKATRU_QUIET"
       - name: A build that cannot sign in reaches no public risk (linux-snap)
         run: |
           NIKATRU_QUIET="$(mktemp "${RUNNER_TEMP:-/tmp}/nikatru-step.XXXXXX")"
@@ -780,7 +816,7 @@ jobs:
           node tooling/ci/assert-channel-register.mjs --for-submission=linux-snap
           NIKATRU_QUIET_EOF
           NIKATRU_SHELL="${BASH:-bash}"; if command -v cygpath >/dev/null 2>&1; then NIKATRU_SHELL="$(cygpath -w "$NIKATRU_SHELL")"; fi
-          node "$GITHUB_WORKSPACE/../.nikatru-shell/quiet-step.mjs" --name submit-snap.dry-run.22 -- "$NIKATRU_SHELL" -e "$NIKATRU_QUIET"
+          node "$GITHUB_WORKSPACE/../.nikatru-shell/quiet-step.mjs" --name submit-snap.dry-run.23 -- "$NIKATRU_SHELL" -e "$NIKATRU_QUIET"
       - name: Every target this channel ships to has its golden-path legs graded (linux-snap)
         run: |
           NIKATRU_QUIET="$(mktemp "${RUNNER_TEMP:-/tmp}/nikatru-step.XXXXXX")"
@@ -788,7 +824,7 @@ jobs:
           node tooling/ci/assert-e2e-legs.mjs --for-submission=linux-snap
           NIKATRU_QUIET_EOF
           NIKATRU_SHELL="${BASH:-bash}"; if command -v cygpath >/dev/null 2>&1; then NIKATRU_SHELL="$(cygpath -w "$NIKATRU_SHELL")"; fi
-          node "$GITHUB_WORKSPACE/../.nikatru-shell/quiet-step.mjs" --name submit-snap.dry-run.23 -- "$NIKATRU_SHELL" -e "$NIKATRU_QUIET"
+          node "$GITHUB_WORKSPACE/../.nikatru-shell/quiet-step.mjs" --name submit-snap.dry-run.24 -- "$NIKATRU_SHELL" -e "$NIKATRU_QUIET"
       - name: Hand the submit job this snap's name and sha256
         id: bytes
         env:
@@ -803,7 +839,7 @@ jobs:
           echo "${sum}  ${SNAP}"
           NIKATRU_QUIET_EOF
           NIKATRU_SHELL="${BASH:-bash}"; if command -v cygpath >/dev/null 2>&1; then NIKATRU_SHELL="$(cygpath -w "$NIKATRU_SHELL")"; fi
-          node "$GITHUB_WORKSPACE/../.nikatru-shell/quiet-step.mjs" --name submit-snap.dry-run.24 -- "$NIKATRU_SHELL" -e "$NIKATRU_QUIET"
+          node "$GITHUB_WORKSPACE/../.nikatru-shell/quiet-step.mjs" --name submit-snap.dry-run.25 -- "$NIKATRU_SHELL" -e "$NIKATRU_QUIET"
       - name: Stage ${{ steps.bytes.outputs.artifact }} for this run's later jobs (generated)
         id: nikatru-stage-4
         shell: bash
@@ -887,7 +923,7 @@ jobs:
           node tooling/ci/record-deployment.mjs "${APP}-linux-snap" --mode dry-run
           NIKATRU_QUIET_EOF
           NIKATRU_SHELL="${BASH:-bash}"; if command -v cygpath >/dev/null 2>&1; then NIKATRU_SHELL="$(cygpath -w "$NIKATRU_SHELL")"; fi
-          node "$GITHUB_WORKSPACE/../.nikatru-shell/quiet-step.mjs" --name submit-snap.dry-run.26 -- "$NIKATRU_SHELL" -e "$NIKATRU_QUIET"
+          node "$GITHUB_WORKSPACE/../.nikatru-shell/quiet-step.mjs" --name submit-snap.dry-run.27 -- "$NIKATRU_SHELL" -e "$NIKATRU_QUIET"
       - name: Store this job's red detail in the bridge's private home (generated)
         if: always()
         continue-on-error: true
@@ -994,8 +1030,9 @@ jobs:
           sudo snap install snapcraft --classic --channel "$track"
           want="$(node -p "require('./tooling/versions.json').snapcraft_version")"
           got="$(snapcraft --version | sed -n 's/^snapcraft[[:space:]]*//p' | sed -n 1p)"
-          echo "snapcraft ${got} installed from ${track}; floor ${want} (tooling/versions.json snapcraft_version)"
-          [ -n "$got" ] || { echo "::error title=snapcraft pin::could not read the installed snapcraft version."; exit 1; }
+          rev="$(snap list snapcraft | awk 'NR==2 {print $3}')"
+          echo "snapcraft ${got} (revision ${rev}) installed from ${track}; floor ${want} (tooling/versions.json snapcraft_version)"
+          [ -n "$got" ] && [ -n "$rev" ] || { echo "::error title=snapcraft pin::could not read the installed snapcraft version (${got:-none}) or revision (${rev:-none})."; exit 1; }
           [ "$(printf '%s\n%s\n' "$want" "$got" | sort -V | sed -n 1p)" = "$want" ] || { echo "::error title=snapcraft pin::the ${track} track served snapcraft ${got}, BELOW the floor ${want} in tooling/versions.json."; exit 1; }
       - name: Promote latest/candidate to latest/stable
         id: promote
@@ -1247,8 +1284,9 @@ jobs:
           sudo snap install snapcraft --classic --channel "$track"
           want="$(node -p "require('./tooling/versions.json').snapcraft_version")"
           got="$(snapcraft --version | sed -n 's/^snapcraft[[:space:]]*//p' | sed -n 1p)"
-          echo "snapcraft ${got} installed from ${track}; floor ${want} (tooling/versions.json snapcraft_version)"
-          [ -n "$got" ] || { echo "::error title=snapcraft pin::could not read the installed snapcraft version."; exit 1; }
+          rev="$(snap list snapcraft | awk 'NR==2 {print $3}')"
+          echo "snapcraft ${got} (revision ${rev}) installed from ${track}; floor ${want} (tooling/versions.json snapcraft_version)"
+          [ -n "$got" ] && [ -n "$rev" ] || { echo "::error title=snapcraft pin::could not read the installed snapcraft version (${got:-none}) or revision (${rev:-none})."; exit 1; }
           [ "$(printf '%s\n%s\n' "$want" "$got" | sort -V | sed -n 1p)" = "$want" ] || { echo "::error title=snapcraft pin::the ${track} track served snapcraft ${got}, BELOW the floor ${want} in tooling/versions.json: a rollback on the track, not a release to pack with."; exit 1; }
           echo "version=${got}" >> "$GITHUB_OUTPUT"
           NIKATRU_QUIET_EOF
@@ -1262,7 +1300,9 @@ jobs:
           project="${RUNNER_TEMP}/snapcraft-${APP}"
           collected="${GITHUB_WORKSPACE}/apps/${APP}/build/linux/snap/${APP}-arm64.snap"
           cd "$project"
-          sudo snapcraft pack --destructive-mode
+          # why: SNAPCRAFT_BUILD_INFO=1 writes snap/manifest.yaml, the staged versions (O-SNAP-STAGE-PACKAGES-UNPINNED);
+          # through env, because sudo resets the environment.
+          sudo env SNAPCRAFT_BUILD_INFO=1 snapcraft pack --destructive-mode
           count="$(find "$project" -maxdepth 1 -type f -name '*.snap' | wc -l)"
           if [ "$count" -ne 1 ]; then
             echo "FAIL snapcraft exited 0 and left ${count} .snap file(s) in ${project}:" >&2
@@ -1283,6 +1323,21 @@ jobs:
           NIKATRU_QUIET_EOF
           NIKATRU_SHELL="${BASH:-bash}"; if command -v cygpath >/dev/null 2>&1; then NIKATRU_SHELL="$(cygpath -w "$NIKATRU_SHELL")"; fi
           node "$GITHUB_WORKSPACE/../.nikatru-shell/quiet-step.mjs" --name submit-snap.build-arm64.11 -- "$NIKATRU_SHELL" -e "$NIKATRU_QUIET"
+      - name: Record the staged package versions (arm64, the snap's build manifest)
+        run: |
+          NIKATRU_QUIET="$(mktemp "${RUNNER_TEMP:-/tmp}/nikatru-step.XXXXXX")"
+          cat > "$NIKATRU_QUIET" <<'NIKATRU_QUIET_EOF'
+          set -euo pipefail
+          snap="${GITHUB_WORKSPACE}/apps/${APP}/build/linux/snap/${APP}-arm64.snap"
+          manifest="${snap%.snap}.manifest.yaml"
+          if ! unsquashfs -cat "$snap" snap/manifest.yaml > "$manifest"; then
+            echo "unsquashfs could not read snap/manifest.yaml out of ${snap}; reading the prime tree's copy" >&2
+            sudo cat "${RUNNER_TEMP}/snapcraft-${APP}/prime/snap/manifest.yaml" > "$manifest"
+          fi
+          node tooling/release/generate-snapcraft.mjs --staged-summary "$manifest" --label "${APP} arm64" | tee -a "$GITHUB_STEP_SUMMARY"
+          NIKATRU_QUIET_EOF
+          NIKATRU_SHELL="${BASH:-bash}"; if command -v cygpath >/dev/null 2>&1; then NIKATRU_SHELL="$(cygpath -w "$NIKATRU_SHELL")"; fi
+          node "$GITHUB_WORKSPACE/../.nikatru-shell/quiet-step.mjs" --name submit-snap.build-arm64.12 -- "$NIKATRU_SHELL" -e "$NIKATRU_QUIET"
       - name: The packed snap loads only libraries it carries (ldd on the primed binary)
         run: |
           NIKATRU_QUIET="$(mktemp "${RUNNER_TEMP:-/tmp}/nikatru-step.XXXXXX")"
@@ -1290,11 +1345,30 @@ jobs:
           set -euo pipefail
           prime="${RUNNER_TEMP}/snapcraft-${APP}/prime"
           snaps="$(node tooling/ci/assert-snap-primed-libs.mjs --prime "$prime" --emit-snaps)"
-          for s in $snaps; do sudo snap install "$s"; done
+          # why: O-SNAP-PRIMED-LIBS-SNAPS-UNPINNED. Each base and default-provider from the channel tooling/versions.json
+          # pins it to (snap_<name>_channel, `-` as `_`), so the check grades against a named channel, not the default
+          # one; a snap the recipe names that no key pins is refused. Already installed (core24 comes with snapcraft):
+          # refreshed onto that channel, and the tracking column must then say it. The installed revision is compared with
+          # snap_<name>_revision_<arch> (O-SNAP-INSTALL-REVISION-PINNED) and a difference is a WARNING, never a refusal:
+          # `snap install --revision` needs developer access, so the store moving a channel would otherwise red every run.
+          case "$(uname -m)" in x86_64) arch=amd64 ;; aarch64|arm64) arch=arm64 ;; *) arch="$(uname -m)" ;; esac
+          for s in $snaps; do
+            key="snap_${s//-/_}_channel"
+            rkey="snap_${s//-/_}_revision_${arch}"
+            channel="$(KEY="$key" node -p "require('./tooling/versions.json')[process.env.KEY] ?? ''")"
+            [ -n "$channel" ] || { echo "::error title=snap pin::meta/snap.yaml names the snap ${s}, and tooling/versions.json has no ${key}: pin its channel and revisions (with their updateExemptions why) before grading against it."; exit 1; }
+            if snap list "$s" >/dev/null 2>&1; then sudo snap refresh --channel "$channel" "$s"; else sudo snap install --channel "$channel" "$s"; fi
+            tracking="$(snap list "$s" | awk 'NR==2 {print $4}')"
+            [ "$tracking" = "$channel" ] || { echo "::error title=snap pin::${s} tracks ${tracking:-nothing}, not ${channel} (tooling/versions.json ${key})."; exit 1; }
+            rev="$(snap list "$s" | awk 'NR==2 {print $3}')"
+            pinned="$(KEY="$rkey" node -p "require('./tooling/versions.json')[process.env.KEY] ?? ''")"
+            [ "$rev" = "$pinned" ] || echo "::warning title=snap revision::${s} ${channel} installed revision ${rev:-none}, tooling/versions.json ${rkey} pins ${pinned:-nothing}: re-measure and move the pin in a reviewed commit."
+            echo "${s} $(snap list "$s" | awk 'NR==2 {print $2 " revision " $3}') from ${channel} (tooling/versions.json ${key}; pinned revision ${pinned:-none})"
+          done
           node tooling/ci/assert-snap-primed-libs.mjs --prime "$prime"
           NIKATRU_QUIET_EOF
           NIKATRU_SHELL="${BASH:-bash}"; if command -v cygpath >/dev/null 2>&1; then NIKATRU_SHELL="$(cygpath -w "$NIKATRU_SHELL")"; fi
-          node "$GITHUB_WORKSPACE/../.nikatru-shell/quiet-step.mjs" --name submit-snap.build-arm64.12 -- "$NIKATRU_SHELL" -e "$NIKATRU_QUIET"
+          node "$GITHUB_WORKSPACE/../.nikatru-shell/quiet-step.mjs" --name submit-snap.build-arm64.13 -- "$NIKATRU_SHELL" -e "$NIKATRU_QUIET"
       - name: Hand on this snap's name and sha256
         id: bytes
         env:
@@ -1309,7 +1383,7 @@ jobs:
           echo "${sum}  ${SNAP}"
           NIKATRU_QUIET_EOF
           NIKATRU_SHELL="${BASH:-bash}"; if command -v cygpath >/dev/null 2>&1; then NIKATRU_SHELL="$(cygpath -w "$NIKATRU_SHELL")"; fi
-          node "$GITHUB_WORKSPACE/../.nikatru-shell/quiet-step.mjs" --name submit-snap.build-arm64.13 -- "$NIKATRU_SHELL" -e "$NIKATRU_QUIET"
+          node "$GITHUB_WORKSPACE/../.nikatru-shell/quiet-step.mjs" --name submit-snap.build-arm64.14 -- "$NIKATRU_SHELL" -e "$NIKATRU_QUIET"
       - name: Stage ${{ steps.bytes.outputs.artifact }} for this run's later jobs (generated)
         id: nikatru-stage-6
         shell: bash
@@ -1908,7 +1982,8 @@ jobs:
           LISTING_URL: ${{ inputs.listing_url }}
           RUN_NUMBER: ${{ github.run_number }}
           SNAP: apps/${{ needs.gate.outputs.app }}/build/linux/snap/${{ needs.gate.outputs.app }}.snap
-        run: node tooling/ci/record-deployment.mjs "${APP}-linux-snap" --state released --listing-url "$LISTING_URL" --mode production --artifact "$SNAP" --build-number "$RUN_NUMBER" --symbols-record "${RUNNER_TEMP}/symbols-record.json"
+          SNAP_ARM64: apps/${{ needs.gate.outputs.app }}/build/linux/snap/${{ needs.gate.outputs.app }}-arm64.snap
+        run: node tooling/ci/record-deployment.mjs "${APP}-linux-snap" --state released --listing-url "$LISTING_URL" --mode production --artifact "$SNAP" --artifact "$SNAP_ARM64" --build-number "$RUN_NUMBER" --symbols-record "${RUNNER_TEMP}/symbols-record.json"
 
   nikatru-ran:
     name: Fail this run if it ran nothing (generated)

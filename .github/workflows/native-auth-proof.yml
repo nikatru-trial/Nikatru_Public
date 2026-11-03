@@ -30,6 +30,11 @@ on:
         options:
           - token
           - form
+      targets:
+        description: 'all (default), or a comma list of android,ios,macos,windows,linux: the targets this dispatch proves. A Worker slot run proves all.'
+        required: false
+        default: all
+        type: string
       worker_slot:
         description: 'Set by the platform Worker cron only: the slot of record it fired for. Empty on a hand dispatch.'
         required: false
@@ -40,6 +45,19 @@ on:
         required: false
         default: ''
         type: string
+      observed_window:
+        description: "sign_in: form and targets: android only. <ISO>/<ISO> (UTC, at most 2 h, ended, within 6 days): the window a person signed in, signed up and recovered on a store-delivered build. Empty (default): no observed leg."
+        required: false
+        default: ''
+        type: string
+      observed_channel:
+        description: 'The Play Integrity channel the observed build must have attested as: play (Google Play delivered) or sideload (the pinned sideload build).'
+        type: choice
+        required: false
+        default: play
+        options:
+          - play
+          - sideload
       private_ref:
         description: The PRIVATE ref this run builds, refs/heads/<branch> (generated; empty is the private main).
         required: false
@@ -192,6 +210,7 @@ jobs:
     outputs:
       apps: ${{ steps.app.outputs.apps }}
       darwin: ${{ steps.darwin.outputs.darwin }}
+      targets: ${{ steps.targets.outputs.targets }}
     steps:
       - name: Check out the private tree (generated)
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
@@ -306,17 +325,98 @@ jobs:
           NIKATRU_QUIET_EOF
           NIKATRU_SHELL="${BASH:-bash}"; if command -v cygpath >/dev/null 2>&1; then NIKATRU_SHELL="$(cygpath -w "$NIKATRU_SHELL")"; fi
           node "$GITHUB_WORKSPACE/../.nikatru-shell/quiet-step.mjs" --name native-auth-proof.gate.4 -- "$NIKATRU_SHELL" -e "$NIKATRU_QUIET"
+      - name: The targets input names targets of this proof
+        id: targets
+        env:
+          TARGETS_INPUT: ${{ inputs.targets }}
+          EVENT: ${{ (github.event.client_payload.event || github.event_name) }}
+          WORKER_SLOT: ${{ inputs.worker_slot }}
+          OBSERVED_WINDOW: ${{ inputs.observed_window }}
+          SIGN_IN_FORM: ${{ inputs.sign_in == 'form' }}
+        run: |
+          NIKATRU_QUIET="$(mktemp "${RUNNER_TEMP:-/tmp}/nikatru-step.XXXXXX")"
+          cat > "$NIKATRU_QUIET" <<'NIKATRU_QUIET_EOF'
+          set -euo pipefail
+          raw="$(printf '%s' "$TARGETS_INPUT" | tr -d '[:space:]' | tr '[:upper:]' '[:lower:]')"
+          if [ -z "$raw" ] || [ "$raw" = all ]; then
+            targets=all
+          else
+            list=""
+            IFS=',' read -r -a asked <<< "$raw"
+            for t in "${asked[@]}"; do
+              case "$t" in
+                android|ios|macos|windows|linux) list="${list}${t}"$'\n' ;;
+                *)
+                  echo "::error::the targets input '${TARGETS_INPUT}' names '${t}': only all, or a comma list of android,ios,macos,windows,linux"
+                  exit 1
+                  ;;
+              esac
+            done
+            targets="$(printf '%s' "$list" | sort -u | paste -sd, -)"
+          fi
+          if [ "$targets" != all ] && { [ "$EVENT" = schedule ] || [ -n "$WORKER_SLOT" ]; }; then
+            echo "::error::a scheduled or worker-slot run proves every target; its targets input must be all, not '${TARGETS_INPUT}'"
+            exit 1
+          fi
+          # why: an observed dispatch is the android-observed job's proof alone (review of #1189, finding 6): with any
+          # other sign_in its job never runs, and with any other target the form legs it would also run can red the run
+          # the register cites. So it is refused, as a bad target is.
+          if [ -n "${OBSERVED_WINDOW:-}" ]; then
+            if [ "${SIGN_IN_FORM:-}" != true ] || [ "$targets" != android ]; then
+              echo "::error title=Targets::observed_window needs sign_in=form and targets=android (got sign_in form=${SIGN_IN_FORM:-false}, targets=${targets})"
+              exit 1
+            fi
+          fi
+          echo "targets: ${targets}"
+          echo "targets=${targets}" >> "$GITHUB_OUTPUT"
+          NIKATRU_QUIET_EOF
+          NIKATRU_SHELL="${BASH:-bash}"; if command -v cygpath >/dev/null 2>&1; then NIKATRU_SHELL="$(cygpath -w "$NIKATRU_SHELL")"; fi
+          node "$GITHUB_WORKSPACE/../.nikatru-shell/quiet-step.mjs" --name native-auth-proof.gate.5 -- "$NIKATRU_SHELL" -e "$NIKATRU_QUIET"
       - name: Did a Darwin input change since this app's last green proof
         id: darwin
         env:
           APPS: ${{ steps.app.outputs.apps }}
           GITHUB_TOKEN: ${{ github.token }}
           EVENT: ${{ (github.event.client_payload.event || github.event_name) }}
+          WORKER_SLOT: ${{ inputs.worker_slot }}
+          TARGETS: ${{ steps.targets.outputs.targets }}
         run: |
           NIKATRU_QUIET="$(mktemp "${RUNNER_TEMP:-/tmp}/nikatru-step.XXXXXX")"
           cat > "$NIKATRU_QUIET" <<'NIKATRU_QUIET_EOF'
           set -euo pipefail
+          # why: ⏱ 2026-10-29 · fold L303. darwin-inputs.mjs publishes `darwin-inputs: proven head <sha>`, and
+          # --since-green takes the newest green run whose gate printed it as the next Darwin BASE. So a run that
+          # does not run BOTH Darwin legs never runs it: with neither asked, darwin=false; with one, darwin=true
+          # (the leg asked for runs) and still no base — the skipped leg's changes must not be diffed away.
+          targets="${TARGETS:-all}"
+          if [ "$targets" != all ]; then
+            asked_ios=false; asked_macos=false
+            case ",${targets}," in *,ios,*) asked_ios=true ;; esac
+            case ",${targets}," in *,macos,*) asked_macos=true ;; esac
+            if [ "$asked_ios" = false ] && [ "$asked_macos" = false ]; then
+              echo "darwin=false" >> "$GITHUB_OUTPUT"
+              echo "::nikatru-public::::notice title=DARWIN NOT RUN::targets=${targets} asked for no Darwin target; this run is no Darwin proof and no darwin-inputs base"
+              exit 0
+            fi
+            if [ "$asked_ios" != "$asked_macos" ]; then
+              echo "darwin=true" >> "$GITHUB_OUTPUT"
+              echo "::nikatru-public::::notice title=DARWIN PARTIAL::targets=${targets} asked for one Darwin target; it runs, and this run is no darwin-inputs base"
+              exit 0
+            fi
+          fi
           darwin=false
+          # why: ⏱ 2026-10-31 · O-NATIVE-JOURNEY-TARGETS-INPUT. A run that asks for no Darwin target never runs
+          # darwin-inputs: its `proven head` line would make a run whose Darwin legs never ran the next Darwin base
+          # (darwin-inputs.mjs --since-green), and a later full run would diff from it and skip them wrongly.
+          # An empty TARGETS (the targets step did not answer) is not knowing, and not knowing runs them.
+          case ",${TARGETS:-}," in
+            ,,|,all,|*,ios,*|*,macos,*) ;;
+            *)
+              echo "darwin=false" >> "$GITHUB_OUTPUT"
+              echo "::nikatru-public::::notice title=DARWIN NOT RUN::targets=${TARGETS} asked for no Darwin target; this run is no Darwin proof and no darwin-inputs base"
+              exit 0
+              ;;
+          esac
           list="$(jq -r '.[]' <<< "$APPS")"
           [ -n "$list" ] || { echo "::error title=Darwin inputs::the gate's app set is empty"; exit 1; }
           for app in $list; do
@@ -334,12 +434,15 @@ jobs:
           # quiet-step echoes nothing else of a green step, so a plain ::notice or a step-summary line never reached the
           # run. This step is the one public-shell.json publicLines names for this job. The proof itself is the ios /
           # macos JOB conclusion (skipped here), never this line.
+          # ⏱ 2026-10-31 · O-NATIVE-AUTH-PROOF-NOTICE-NAMES-EVENT: the weekly Worker slot is a workflow_dispatch too, so
+          # the line names the slot when there is one, never "this workflow_dispatch run".
           if [ "$darwin" = false ]; then
-            echo "::nikatru-public::::notice title=DARWIN NOT PROVEN::no Darwin input changed since the last green proof, so this ${EVENT} run skips the ios and macos jobs and proves the non-Darwin targets only"
+            if [ -n "${WORKER_SLOT:-}" ]; then run="weekly Worker-slot run (${WORKER_SLOT})"; else run="${EVENT} run"; fi
+            echo "::nikatru-public::::notice title=DARWIN NOT PROVEN::no Darwin input changed since the last green proof, so this ${run} skips the ios and macos jobs and proves the non-Darwin targets only"
           fi
           NIKATRU_QUIET_EOF
           NIKATRU_SHELL="${BASH:-bash}"; if command -v cygpath >/dev/null 2>&1; then NIKATRU_SHELL="$(cygpath -w "$NIKATRU_SHELL")"; fi
-          node "$GITHUB_WORKSPACE/../.nikatru-shell/quiet-step.mjs" --name native-auth-proof.gate.5 --public -- "$NIKATRU_SHELL" -e "$NIKATRU_QUIET"
+          node "$GITHUB_WORKSPACE/../.nikatru-shell/quiet-step.mjs" --name native-auth-proof.gate.6 --public -- "$NIKATRU_SHELL" -e "$NIKATRU_QUIET"
       - name: Store this job's red detail in the bridge's private home (generated)
         if: always()
         continue-on-error: true
@@ -355,8 +458,8 @@ jobs:
 
   android:
     name: Android — emulator, form to Home, adb opens the callback
-    if: needs.nikatru-pin.result == 'success' && (needs.nikatru-approve.result == 'success' || (needs.nikatru-approve.result == 'skipped' && !((inputs.private_ref || '') != ''))) && !cancelled() && !failure() && needs.gate.result == 'success'
     needs: [nikatru-pin, nikatru-approve, gate]
+    if: needs.nikatru-pin.result == 'success' && (needs.nikatru-approve.result == 'success' || (needs.nikatru-approve.result == 'skipped' && !((inputs.private_ref || '') != ''))) && !cancelled() && !failure() && needs.gate.result == 'success' && (inputs.observed_window == '' && (needs.gate.outputs.targets == 'all' || contains(format(',{0},', needs.gate.outputs.targets), ',android,')))
     strategy:
       fail-fast: false
       matrix:
@@ -510,41 +613,10 @@ jobs:
           NIKATRU_QUIET="$(mktemp "${RUNNER_TEMP:-/tmp}/nikatru-step.XXXXXX")"
           cat > "$NIKATRU_QUIET" <<'NIKATRU_QUIET_EOF'
           set -euo pipefail
-          sdk="${ANDROID_HOME:-$ANDROID_SDK_ROOT}"
-          export ANDROID_AVD_HOME="${RUNNER_TEMP}/avd"
-          echo "ANDROID_AVD_HOME=${ANDROID_AVD_HOME}" >> "$GITHUB_ENV"
-          mkdir -p "$ANDROID_AVD_HOME"
-          emu_log="${RUNNER_TEMP}/emulator.log"
-          image="system-images;android-${API_LEVEL};google_apis;x86_64"
-          why() {
-            echo "::error title=Emulator::$1"
-            echo "── emulator.log (tail) ──"
-            tail -n 60 "$emu_log" 2>/dev/null || echo "(no emulator.log)"
-            exit 1
-          }
-          yes | "$sdk/cmdline-tools/latest/bin/sdkmanager" --licenses > /dev/null || true
-          timeout 600 "$sdk/cmdline-tools/latest/bin/sdkmanager" --install emulator platform-tools "$image" > /dev/null
-          echo no | "$sdk/cmdline-tools/latest/bin/avdmanager" create avd --force -n proof -k "$image" --device pixel_6
-          "$sdk/emulator/emulator" -list-avds | awk '$0 == "proof" { hit = 1 } END { exit !hit }' || why "avdmanager created no AVD the emulator can see in ANDROID_AVD_HOME=${ANDROID_AVD_HOME}"
-          nohup "$sdk/emulator/emulator" -avd proof -no-window -no-audio -no-boot-anim -no-snapshot \
-            -gpu swiftshader_indirect -accel on > "$emu_log" 2>&1 &
-          emu_pid=$!
-          echo "$sdk/platform-tools" >> "$GITHUB_PATH"
-          adb="$sdk/platform-tools/adb"
-          "$adb" start-server
-          deadline=$((SECONDS + 420))
-          phase="waiting for the device to appear"
-          while :; do
-            kill -0 "$emu_pid" 2>/dev/null || why "the emulator process exited during: ${phase}"
-            state="$("$adb" get-state 2>/dev/null | tr -d '\r' || true)"
-            if [ "$state" = "device" ]; then
-              phase="waiting for sys.boot_completed"
-              [ "$("$adb" shell getprop sys.boot_completed 2>/dev/null | tr -d '\r' || true)" = "1" ] && break
-            fi
-            [ "$SECONDS" -gt "$deadline" ] && why "not booted within 420 s (last phase: ${phase}; adb state: ${state:-none})"
-            sleep 5
-          done
-          echo "emulator booted at ${SECONDS}s"
+          # why: ⏱ 2026-10-31 · O-EMULATOR-BOOT-THREE-COPIES — the ONE boot (symbolication-proof.yml and the other
+          # emulator jobs call it too): pinned emulator and platform-tools (tooling/versions.json, sha256-checked),
+          # ANDROID_AVD_HOME and the pinned adb exported to the steps after it, and a wait that names a dead emulator.
+          bash tooling/ci/boot-emulator.sh --avd proof --api "$API_LEVEL"
           NIKATRU_QUIET_EOF
           NIKATRU_SHELL="${BASH:-bash}"; if command -v cygpath >/dev/null 2>&1; then NIKATRU_SHELL="$(cygpath -w "$NIKATRU_SHELL")"; fi
           node "$GITHUB_WORKSPACE/../.nikatru-shell/quiet-step.mjs" --name native-auth-proof.android.8 -- "$NIKATRU_SHELL" -e "$NIKATRU_QUIET"
@@ -625,6 +697,125 @@ jobs:
           NIKATRU_BRIDGE_ARTIFACT_URL: https://gh-bridge.nikatru.workers.dev/artifact
         run: node tooling/ops/bridge-artifact.mjs upload
 
+  android-observed:
+    name: Android — observed, a store-delivered build signs in at the Worker
+    needs: [nikatru-pin, nikatru-approve, gate]
+    if: needs.nikatru-pin.result == 'success' && (needs.nikatru-approve.result == 'success' || (needs.nikatru-approve.result == 'skipped' && !((inputs.private_ref || '') != ''))) && !cancelled() && !failure() && needs.gate.result == 'success' && (inputs.sign_in == 'form' && inputs.observed_window != '' && (needs.gate.outputs.targets == 'all' || contains(format(',{0},', needs.gate.outputs.targets), ',android,')))
+    strategy:
+      fail-fast: false
+      matrix:
+        app: ${{ fromJSON(needs.gate.outputs.apps) }}
+    runs-on: ubuntu-24.04
+    timeout-minutes: 10
+    permissions:
+      contents: read
+      id-token: write
+    env:
+      APP: ${{ matrix.app }}
+    steps:
+      - name: Check out the private tree (generated)
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
+        with:
+          repository: ${{ env.NIKATRU_PRIVATE_REPO }}
+          ref: ${{ needs.nikatru-pin.outputs.sha || 'nikatru-pin-did-not-succeed..' }}
+          ssh-key: ${{ secrets.PRIVATE_DEPLOY_KEY }}
+          persist-credentials: false
+      - name: Name the private commit (generated)
+        shell: bash
+        working-directory: ${{ github.workspace }}
+        env:
+          NIKATRU_P_EVENT: ${{ github.event.client_payload.event || github.event_name }}
+          NIKATRU_P_REF: ${{ github.event.client_payload.ref || inputs.private_ref || 'refs/heads/main' }}
+          NIKATRU_P_BASE_SHA: ${{ github.event.client_payload.base_sha }}
+          NIKATRU_P_BASE_REF: ${{ github.event.client_payload.base_ref }}
+          NIKATRU_P_PR: ${{ github.event.client_payload.pr }}
+          NIKATRU_P_PR_CREATED_AT: ${{ github.event.client_payload.pr_created_at }}
+          NIKATRU_P_DRAFT: ${{ github.event.client_payload.draft }}
+          NIKATRU_P_SHA: ${{ github.event.client_payload.sha }}
+        run: |
+          if [ "$NIKATRU_P_EVENT" = pull_request ]; then
+            set -- $(git cat-file -p HEAD | sed -n '1,/^$/s/^parent //p')
+            if [ "${2:-}" != "$NIKATRU_P_SHA" ]; then
+              echo "::error::the checked-out merge of PR #$NIKATRU_P_PR is not the merge of the dispatched head $NIKATRU_P_SHA (its second parent is ${2:-none}); the nikatru-pin job pins it — re-run the whole workflow, not this job"
+              exit 1
+            fi
+          fi
+          {
+            echo "NIKATRU_SHA=$(git rev-parse HEAD)"
+            echo "NIKATRU_HEAD_SHA=${NIKATRU_P_SHA:-$(git rev-parse HEAD)}"
+            echo "NIKATRU_EVENT_NAME=$NIKATRU_P_EVENT"
+            echo "NIKATRU_REF=$NIKATRU_P_REF"
+            echo "NIKATRU_REF_NAME=${NIKATRU_P_REF#refs/*/}"
+            echo "NIKATRU_BASE_SHA=$NIKATRU_P_BASE_SHA"
+            echo "NIKATRU_BASE_REF=$NIKATRU_P_BASE_REF"
+            echo "NIKATRU_PR=$NIKATRU_P_PR"
+            echo "NIKATRU_PR_CREATED_AT=$NIKATRU_P_PR_CREATED_AT"
+            echo "NIKATRU_DRAFT=$NIKATRU_P_DRAFT"
+          } >> "$GITHUB_ENV"
+      - name: Check out this shell repository's own step wrapper and reporter (generated)
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
+        with:
+          path: .nikatru-shell
+          sparse-checkout: .github/nikatru
+          persist-credentials: false
+      - name: Stage the shell's own copies outside the private checkout (generated)
+        shell: bash
+        working-directory: ${{ github.workspace }}
+        run: |
+          rm -rf ../.nikatru-shell
+          mv .nikatru-shell/.github/nikatru ../.nikatru-shell
+          rm -rf .nikatru-shell
+      - name: Check out private main's composite actions (generated)
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
+        with:
+          repository: ${{ env.NIKATRU_PRIVATE_REPO }}
+          ref: refs/heads/main
+          path: .nikatru-trusted
+          sparse-checkout: .github/actions
+          ssh-key: ${{ secrets.PRIVATE_DEPLOY_KEY }}
+          persist-credentials: false
+      - name: Keep private main's composite actions out of the branch's tree (generated)
+        shell: bash
+        working-directory: ${{ github.workspace }}
+        run: printf '/.nikatru-trusted/\n' >> "$(git rev-parse --git-path info/exclude)"
+      - uses: ./.nikatru-trusted/.github/actions/setup-node
+      - name: Resolve this app's databases from its Worker's wrangler file
+        id: backend
+        run: |
+          NIKATRU_QUIET="$(mktemp "${RUNNER_TEMP:-/tmp}/nikatru-step.XXXXXX")"
+          cat > "$NIKATRU_QUIET" <<'NIKATRU_QUIET_EOF'
+          node tooling/e2e/backend.mjs --app "$APP" --emit-output
+          NIKATRU_QUIET_EOF
+          NIKATRU_SHELL="${BASH:-bash}"; if command -v cygpath >/dev/null 2>&1; then NIKATRU_SHELL="$(cygpath -w "$NIKATRU_SHELL")"; fi
+          node "$GITHUB_WORKSPACE/../.nikatru-shell/quiet-step.mjs" --name native-auth-proof.android-observed.3 -- "$NIKATRU_SHELL" -e "$NIKATRU_QUIET"
+      - name: The observed proof — the Worker admitted the build's sign-in, sign-up and recovery
+        env:
+          CLOUDFLARE_ACCOUNT_ID: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
+          CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_READ_TOKEN }}
+          CLOUDFLARE_D1_TOKEN: ${{ secrets.CLOUDFLARE_D1_TOKEN }}
+          PLATFORM_D1_DATABASE_ID: ${{ steps.backend.outputs.platform_db }}
+          WINDOW: ${{ inputs.observed_window }}
+          CHANNEL: ${{ inputs.observed_channel }}
+        run: |
+          NIKATRU_QUIET="$(mktemp "${RUNNER_TEMP:-/tmp}/nikatru-step.XXXXXX")"
+          cat > "$NIKATRU_QUIET" <<'NIKATRU_QUIET_EOF'
+          node tooling/e2e/native_auth_proof.mjs --app "$APP" --target android --sign-in form --expect-sign-in --observed --window "$WINDOW" --channel "$CHANNEL"
+          NIKATRU_QUIET_EOF
+          NIKATRU_SHELL="${BASH:-bash}"; if command -v cygpath >/dev/null 2>&1; then NIKATRU_SHELL="$(cygpath -w "$NIKATRU_SHELL")"; fi
+          node "$GITHUB_WORKSPACE/../.nikatru-shell/quiet-step.mjs" --name native-auth-proof.android-observed.4 -- "$NIKATRU_SHELL" -e "$NIKATRU_QUIET"
+      - name: Store this job's red detail in the bridge's private home (generated)
+        if: always()
+        continue-on-error: true
+        shell: bash
+        working-directory: ${{ github.workspace }}
+        env:
+          NIKATRU_PATHS: ${{ runner.temp }}/report-detail.md
+          NIKATRU_ARTIFACT_NAME: report-detail-native-auth-proof.android-observed.${{ strategy.job-index }}
+          NIKATRU_IF_NO_FILES: ignore
+          BRIDGE_ARTIFACT_SECRET: ${{ secrets.BRIDGE_ARTIFACT_SECRET }}
+          NIKATRU_BRIDGE_ARTIFACT_URL: https://gh-bridge.nikatru.workers.dev/artifact
+        run: node tooling/ops/bridge-artifact.mjs upload
+
   ios:
     name: iOS — simulator, form to Home, the app opens its own callback
     needs: [nikatru-pin, nikatru-approve, gate]
@@ -632,7 +823,7 @@ jobs:
       fail-fast: false
       matrix:
         app: ${{ fromJSON(needs.gate.outputs.apps) }}
-    if: needs.nikatru-pin.result == 'success' && (needs.nikatru-approve.result == 'success' || (needs.nikatru-approve.result == 'skipped' && !((inputs.private_ref || '') != ''))) && !cancelled() && !failure() && needs.gate.result == 'success' && (needs.gate.outputs.darwin == 'true')
+    if: needs.nikatru-pin.result == 'success' && (needs.nikatru-approve.result == 'success' || (needs.nikatru-approve.result == 'skipped' && !((inputs.private_ref || '') != ''))) && !cancelled() && !failure() && needs.gate.result == 'success' && (needs.gate.outputs.darwin == 'true' && (needs.gate.outputs.targets == 'all' || contains(format(',{0},', needs.gate.outputs.targets), ',ios,')))
     runs-on: macos-26
     timeout-minutes: 60
     permissions:
@@ -867,7 +1058,7 @@ jobs:
       fail-fast: false
       matrix:
         app: ${{ fromJSON(needs.gate.outputs.apps) }}
-    if: needs.nikatru-pin.result == 'success' && (needs.nikatru-approve.result == 'success' || (needs.nikatru-approve.result == 'skipped' && !((inputs.private_ref || '') != ''))) && !cancelled() && !failure() && needs.gate.result == 'success' && (needs.gate.outputs.darwin == 'true')
+    if: needs.nikatru-pin.result == 'success' && (needs.nikatru-approve.result == 'success' || (needs.nikatru-approve.result == 'skipped' && !((inputs.private_ref || '') != ''))) && !cancelled() && !failure() && needs.gate.result == 'success' && (needs.gate.outputs.darwin == 'true' && (needs.gate.outputs.targets == 'all' || contains(format(',{0},', needs.gate.outputs.targets), ',macos,')))
     runs-on: macos-26
     timeout-minutes: 45
     permissions:
@@ -1062,8 +1253,8 @@ jobs:
 
   windows:
     name: Windows — form to Home (callback needs the MSIX, proven off-runner)
-    if: needs.nikatru-pin.result == 'success' && (needs.nikatru-approve.result == 'success' || (needs.nikatru-approve.result == 'skipped' && !((inputs.private_ref || '') != ''))) && !cancelled() && !failure() && needs.gate.result == 'success'
     needs: [nikatru-pin, nikatru-approve, gate]
+    if: needs.nikatru-pin.result == 'success' && (needs.nikatru-approve.result == 'success' || (needs.nikatru-approve.result == 'skipped' && !((inputs.private_ref || '') != ''))) && !cancelled() && !failure() && needs.gate.result == 'success' && (needs.gate.outputs.targets == 'all' || contains(format(',{0},', needs.gate.outputs.targets), ',windows,'))
     strategy:
       fail-fast: false
       matrix:
@@ -1275,8 +1466,8 @@ jobs:
 
   linux:
     name: Linux — the bundle under xvfb, form to Home, xdg-open opens the callback
-    if: needs.nikatru-pin.result == 'success' && (needs.nikatru-approve.result == 'success' || (needs.nikatru-approve.result == 'skipped' && !((inputs.private_ref || '') != ''))) && !cancelled() && !failure() && needs.gate.result == 'success'
     needs: [nikatru-pin, nikatru-approve, gate]
+    if: needs.nikatru-pin.result == 'success' && (needs.nikatru-approve.result == 'success' || (needs.nikatru-approve.result == 'skipped' && !((inputs.private_ref || '') != ''))) && !cancelled() && !failure() && needs.gate.result == 'success' && (needs.gate.outputs.targets == 'all' || contains(format(',{0},', needs.gate.outputs.targets), ',linux,'))
     strategy:
       fail-fast: false
       matrix:
@@ -1509,8 +1700,8 @@ jobs:
 
   android-oauth-return:
     name: Android — emulator, adb hands the app an OAuth return
-    if: needs.nikatru-pin.result == 'success' && (needs.nikatru-approve.result == 'success' || (needs.nikatru-approve.result == 'skipped' && !((inputs.private_ref || '') != ''))) && !cancelled() && !failure() && needs.gate.result == 'success'
     needs: [nikatru-pin, nikatru-approve, gate]
+    if: needs.nikatru-pin.result == 'success' && (needs.nikatru-approve.result == 'success' || (needs.nikatru-approve.result == 'skipped' && !((inputs.private_ref || '') != ''))) && !cancelled() && !failure() && needs.gate.result == 'success' && (needs.gate.outputs.targets == 'all' || contains(format(',{0},', needs.gate.outputs.targets), ',android,'))
     strategy:
       fail-fast: false
       matrix:
@@ -1653,41 +1844,10 @@ jobs:
           NIKATRU_QUIET="$(mktemp "${RUNNER_TEMP:-/tmp}/nikatru-step.XXXXXX")"
           cat > "$NIKATRU_QUIET" <<'NIKATRU_QUIET_EOF'
           set -euo pipefail
-          sdk="${ANDROID_HOME:-$ANDROID_SDK_ROOT}"
-          export ANDROID_AVD_HOME="${RUNNER_TEMP}/avd"
-          echo "ANDROID_AVD_HOME=${ANDROID_AVD_HOME}" >> "$GITHUB_ENV"
-          mkdir -p "$ANDROID_AVD_HOME"
-          emu_log="${RUNNER_TEMP}/emulator.log"
-          image="system-images;android-${API_LEVEL};google_apis;x86_64"
-          why() {
-            echo "::error title=Emulator::$1"
-            echo "── emulator.log (tail) ──"
-            tail -n 60 "$emu_log" 2>/dev/null || echo "(no emulator.log)"
-            exit 1
-          }
-          yes | "$sdk/cmdline-tools/latest/bin/sdkmanager" --licenses > /dev/null || true
-          timeout 600 "$sdk/cmdline-tools/latest/bin/sdkmanager" --install emulator platform-tools "$image" > /dev/null
-          echo no | "$sdk/cmdline-tools/latest/bin/avdmanager" create avd --force -n proof -k "$image" --device pixel_6
-          "$sdk/emulator/emulator" -list-avds | awk '$0 == "proof" { hit = 1 } END { exit !hit }' || why "avdmanager created no AVD the emulator can see in ANDROID_AVD_HOME=${ANDROID_AVD_HOME}"
-          nohup "$sdk/emulator/emulator" -avd proof -no-window -no-audio -no-boot-anim -no-snapshot \
-            -gpu swiftshader_indirect -accel on > "$emu_log" 2>&1 &
-          emu_pid=$!
-          echo "$sdk/platform-tools" >> "$GITHUB_PATH"
-          adb="$sdk/platform-tools/adb"
-          "$adb" start-server
-          deadline=$((SECONDS + 420))
-          phase="waiting for the device to appear"
-          while :; do
-            kill -0 "$emu_pid" 2>/dev/null || why "the emulator process exited during: ${phase}"
-            state="$("$adb" get-state 2>/dev/null | tr -d '\r' || true)"
-            if [ "$state" = "device" ]; then
-              phase="waiting for sys.boot_completed"
-              [ "$("$adb" shell getprop sys.boot_completed 2>/dev/null | tr -d '\r' || true)" = "1" ] && break
-            fi
-            [ "$SECONDS" -gt "$deadline" ] && why "not booted within 420 s (last phase: ${phase}; adb state: ${state:-none})"
-            sleep 5
-          done
-          echo "emulator booted at ${SECONDS}s"
+          # why: ⏱ 2026-10-31 · O-EMULATOR-BOOT-THREE-COPIES — the ONE boot (symbolication-proof.yml and the other
+          # emulator jobs call it too): pinned emulator and platform-tools (tooling/versions.json, sha256-checked),
+          # ANDROID_AVD_HOME and the pinned adb exported to the steps after it, and a wait that names a dead emulator.
+          bash tooling/ci/boot-emulator.sh --avd proof --api "$API_LEVEL"
           NIKATRU_QUIET_EOF
           NIKATRU_SHELL="${BASH:-bash}"; if command -v cygpath >/dev/null 2>&1; then NIKATRU_SHELL="$(cygpath -w "$NIKATRU_SHELL")"; fi
           node "$GITHUB_WORKSPACE/../.nikatru-shell/quiet-step.mjs" --name native-auth-proof.android-oauth-return.7 -- "$NIKATRU_SHELL" -e "$NIKATRU_QUIET"
@@ -1722,7 +1882,7 @@ jobs:
       fail-fast: false
       matrix:
         app: ${{ fromJSON(needs.gate.outputs.apps) }}
-    if: needs.nikatru-pin.result == 'success' && (needs.nikatru-approve.result == 'success' || (needs.nikatru-approve.result == 'skipped' && !((inputs.private_ref || '') != ''))) && !cancelled() && !failure() && needs.gate.result == 'success' && (needs.gate.outputs.darwin == 'true')
+    if: needs.nikatru-pin.result == 'success' && (needs.nikatru-approve.result == 'success' || (needs.nikatru-approve.result == 'skipped' && !((inputs.private_ref || '') != ''))) && !cancelled() && !failure() && needs.gate.result == 'success' && (needs.gate.outputs.darwin == 'true' && (needs.gate.outputs.targets == 'all' || contains(format(',{0},', needs.gate.outputs.targets), ',ios,')))
     runs-on: macos-26
     timeout-minutes: 45
     permissions:
@@ -1892,7 +2052,7 @@ jobs:
       fail-fast: false
       matrix:
         app: ${{ fromJSON(needs.gate.outputs.apps) }}
-    if: needs.nikatru-pin.result == 'success' && (needs.nikatru-approve.result == 'success' || (needs.nikatru-approve.result == 'skipped' && !((inputs.private_ref || '') != ''))) && !cancelled() && !failure() && needs.gate.result == 'success' && (needs.gate.outputs.darwin == 'true')
+    if: needs.nikatru-pin.result == 'success' && (needs.nikatru-approve.result == 'success' || (needs.nikatru-approve.result == 'skipped' && !((inputs.private_ref || '') != ''))) && !cancelled() && !failure() && needs.gate.result == 'success' && (needs.gate.outputs.darwin == 'true' && (needs.gate.outputs.targets == 'all' || contains(format(',{0},', needs.gate.outputs.targets), ',macos,')))
     runs-on: macos-26
     timeout-minutes: 45
     permissions:
@@ -2040,8 +2200,8 @@ jobs:
 
   windows-oauth-return:
     name: Windows — a second copy forwards an OAuth return to the app
-    if: needs.nikatru-pin.result == 'success' && (needs.nikatru-approve.result == 'success' || (needs.nikatru-approve.result == 'skipped' && !((inputs.private_ref || '') != ''))) && !cancelled() && !failure() && needs.gate.result == 'success'
     needs: [nikatru-pin, nikatru-approve, gate]
+    if: needs.nikatru-pin.result == 'success' && (needs.nikatru-approve.result == 'success' || (needs.nikatru-approve.result == 'skipped' && !((inputs.private_ref || '') != ''))) && !cancelled() && !failure() && needs.gate.result == 'success' && (needs.gate.outputs.targets == 'all' || contains(format(',{0},', needs.gate.outputs.targets), ',windows,'))
     strategy:
       fail-fast: false
       matrix:
@@ -2206,8 +2366,8 @@ jobs:
 
   linux-oauth-return:
     name: Linux — the bundle under xvfb, xdg-open hands it an OAuth return
-    if: needs.nikatru-pin.result == 'success' && (needs.nikatru-approve.result == 'success' || (needs.nikatru-approve.result == 'skipped' && !((inputs.private_ref || '') != ''))) && !cancelled() && !failure() && needs.gate.result == 'success'
     needs: [nikatru-pin, nikatru-approve, gate]
+    if: needs.nikatru-pin.result == 'success' && (needs.nikatru-approve.result == 'success' || (needs.nikatru-approve.result == 'skipped' && !((inputs.private_ref || '') != ''))) && !cancelled() && !failure() && needs.gate.result == 'success' && (needs.gate.outputs.targets == 'all' || contains(format(',{0},', needs.gate.outputs.targets), ',linux,'))
     strategy:
       fail-fast: false
       matrix:
@@ -2392,7 +2552,7 @@ jobs:
 
   nikatru-ran:
     name: Fail this run if it ran nothing (generated)
-    needs: [gate, android, ios, macos, windows, linux, android-oauth-return, ios-oauth-return, macos-oauth-return, windows-oauth-return, linux-oauth-return]
+    needs: [gate, android, android-observed, ios, macos, windows, linux, android-oauth-return, ios-oauth-return, macos-oauth-return, windows-oauth-return, linux-oauth-return]
     if: "!cancelled()"
     runs-on: ubuntu-24.04
     defaults:
@@ -2412,7 +2572,7 @@ jobs:
       - name: Fail when every job of this run was skipped (generated)
         shell: bash
         env:
-          NIKATRU_RESULTS: gate=${{ needs.gate.result }} android=${{ needs.android.result }} ios=${{ needs.ios.result }} macos=${{ needs.macos.result }} windows=${{ needs.windows.result }} linux=${{ needs.linux.result }} android-oauth-return=${{ needs.android-oauth-return.result }} ios-oauth-return=${{ needs.ios-oauth-return.result }} macos-oauth-return=${{ needs.macos-oauth-return.result }} windows-oauth-return=${{ needs.windows-oauth-return.result }} linux-oauth-return=${{ needs.linux-oauth-return.result }}
+          NIKATRU_RESULTS: gate=${{ needs.gate.result }} android=${{ needs.android.result }} android-observed=${{ needs.android-observed.result }} ios=${{ needs.ios.result }} macos=${{ needs.macos.result }} windows=${{ needs.windows.result }} linux=${{ needs.linux.result }} android-oauth-return=${{ needs.android-oauth-return.result }} ios-oauth-return=${{ needs.ios-oauth-return.result }} macos-oauth-return=${{ needs.macos-oauth-return.result }} windows-oauth-return=${{ needs.windows-oauth-return.result }} linux-oauth-return=${{ needs.linux-oauth-return.result }}
         run: |
           for r in $NIKATRU_RESULTS; do
             if [ "${r#*=}" != skipped ]; then echo "ran: $NIKATRU_RESULTS"; exit 0; fi

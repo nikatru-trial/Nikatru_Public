@@ -35,7 +35,7 @@ on:
         type: string
     secrets:
       CLOUDFLARE_API_TOKEN:
-        required: false
+        required: true
       CLOUDFLARE_ACCOUNT_ID:
         required: true
       PRIVATE_DEPLOY_KEY:
@@ -62,7 +62,7 @@ jobs:
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
         with:
           repository: ${{ env.NIKATRU_PRIVATE_REPO }}
-          ref: ${{ inputs.ref || (github.event.client_payload.event == 'pull_request' && format('refs/pull/{0}/merge', github.event.client_payload.pr) || github.event.client_payload.sha || 'main') }}
+          ref: ${{ inputs.ref || inputs.nikatru_sha || (github.event.client_payload.event == 'pull_request' && format('refs/pull/{0}/merge', github.event.client_payload.pr) || github.event.client_payload.sha || 'main') }}
           ssh-key: ${{ secrets.PRIVATE_DEPLOY_KEY }}
           persist-credentials: false
       - name: Name the private commit (generated)
@@ -213,7 +213,7 @@ jobs:
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
         with:
           repository: ${{ env.NIKATRU_PRIVATE_REPO }}
-          ref: ${{ inputs.ref || (github.event.client_payload.event == 'pull_request' && format('refs/pull/{0}/merge', github.event.client_payload.pr) || github.event.client_payload.sha || 'main') }}
+          ref: ${{ inputs.ref || inputs.nikatru_sha || (github.event.client_payload.event == 'pull_request' && format('refs/pull/{0}/merge', github.event.client_payload.pr) || github.event.client_payload.sha || 'main') }}
           ssh-key: ${{ secrets.PRIVATE_DEPLOY_KEY }}
           persist-credentials: false
       - name: Name the private commit (generated)
@@ -248,15 +248,30 @@ jobs:
             echo "NIKATRU_PR_CREATED_AT=$NIKATRU_P_PR_CREATED_AT"
             echo "NIKATRU_DRAFT=$NIKATRU_P_DRAFT"
           } >> "$GITHUB_ENV"
+      - name: "Check out private main's gate scripts beside it (the two checks below run these) (generated: the private tree)"
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
+        with:
+          repository: ${{ env.NIKATRU_PRIVATE_REPO }}
+          ref: main
+          path: .sandbox-main
+          sparse-checkout: |
+            tooling/ci
+            tooling/ops
+            tooling/generated
+            tooling/app-yaml
+          ssh-key: ${{ secrets.PRIVATE_DEPLOY_KEY }}
+          persist-credentials: false
       - name: Refuse any ref but main
+        working-directory: .sandbox-main
         run: node tooling/ci/assert-deploy-ref.mjs --allow sandbox
       - name: ci-gate passed for the commit checked out
         if: inputs.ref != ''
+        working-directory: .sandbox-main
         env:
           GITHUB_TOKEN: ${{ github.token }}
           GITHUB_REPOSITORY: ${{ github.repository }}
           PR: ${{ inputs.pr }}
-        run: node tooling/ci/assert-gate-passed.mjs "$(git rev-parse HEAD)" --pr "$PR"
+        run: node tooling/ci/assert-gate-passed.mjs "$(git -C "$GITHUB_WORKSPACE" rev-parse HEAD)" --pr "$PR"
       - name: Check out private main's composite actions (generated)
         if: needs.workers.outputs.platform == 'true'
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
@@ -317,7 +332,7 @@ jobs:
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
         with:
           repository: ${{ env.NIKATRU_PRIVATE_REPO }}
-          ref: ${{ inputs.ref || (github.event.client_payload.event == 'pull_request' && format('refs/pull/{0}/merge', github.event.client_payload.pr) || github.event.client_payload.sha || 'main') }}
+          ref: ${{ inputs.ref || inputs.nikatru_sha || (github.event.client_payload.event == 'pull_request' && format('refs/pull/{0}/merge', github.event.client_payload.pr) || github.event.client_payload.sha || 'main') }}
           ssh-key: ${{ secrets.PRIVATE_DEPLOY_KEY }}
           persist-credentials: false
       - name: Name the private commit (generated)
@@ -352,15 +367,30 @@ jobs:
             echo "NIKATRU_PR_CREATED_AT=$NIKATRU_P_PR_CREATED_AT"
             echo "NIKATRU_DRAFT=$NIKATRU_P_DRAFT"
           } >> "$GITHUB_ENV"
+      - name: "Check out private main's gate scripts beside it (the two checks below run these) (generated: the private tree)"
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
+        with:
+          repository: ${{ env.NIKATRU_PRIVATE_REPO }}
+          ref: main
+          path: .sandbox-main
+          sparse-checkout: |
+            tooling/ci
+            tooling/ops
+            tooling/generated
+            tooling/app-yaml
+          ssh-key: ${{ secrets.PRIVATE_DEPLOY_KEY }}
+          persist-credentials: false
       - name: Refuse any ref but main
+        working-directory: .sandbox-main
         run: node tooling/ci/assert-deploy-ref.mjs --allow sandbox
       - name: ci-gate passed for the commit checked out
         if: inputs.ref != ''
+        working-directory: .sandbox-main
         env:
           GITHUB_TOKEN: ${{ github.token }}
           GITHUB_REPOSITORY: ${{ github.repository }}
           PR: ${{ inputs.pr }}
-        run: node tooling/ci/assert-gate-passed.mjs "$(git rev-parse HEAD)" --pr "$PR"
+        run: node tooling/ci/assert-gate-passed.mjs "$(git -C "$GITHUB_WORKSPACE" rev-parse HEAD)" --pr "$PR"
       - name: Check out private main's composite actions (generated)
         if: matrix.worker.worker != 'none'
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1

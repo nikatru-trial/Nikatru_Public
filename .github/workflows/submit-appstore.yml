@@ -1206,11 +1206,19 @@ jobs:
               exit 1
             fi
           done
-          printf '%s  %s\n' "$IPA_SHA256" "${DL}/${APP}.ipa" | sha256sum --check -
-          printf '%s  %s\n' "$PKG_SHA256" "${DL}/${APP}.pkg" | sha256sum --check -
+          printf '%s  %s\n' "$IPA_SHA256" "${DL}/${APP}.ipa" | sha256sum --check --strict -
+          printf '%s  %s\n' "$PKG_SHA256" "${DL}/${APP}.pkg" | sha256sum --check --strict -
           mkdir -p "apps/${APP}/build/ios/ipa" "apps/${APP}/build/macos/pkg"
           cp "${DL}/${APP}.ipa" "apps/${APP}/build/ios/ipa/${APP}.ipa"
           cp "${DL}/${APP}.pkg" "apps/${APP}/build/macos/pkg/${APP}.pkg"
+      - name: The ios-appstore and macos-appstore artifacts are within their store's size limit
+        env:
+          GH_TOKEN: ${{ github.token }}
+          GITHUB_REPOSITORY: ${{ github.repository }}
+        run: |
+          set -euo pipefail
+          node tooling/ci/assert-artifact-size.mjs --app "$APP" --channel ios-appstore "apps/${APP}/build/ios/ipa/${APP}.ipa"
+          node tooling/ci/assert-artifact-size.mjs --app "$APP" --channel macos-appstore "apps/${APP}/build/macos/pkg/${APP}.pkg"
       - name: PROVE the .ipa and .pkg are real and signed
         run: >
           node tooling/ci/assert-artifact-signed-apple.mjs

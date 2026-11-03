@@ -30,7 +30,7 @@ on:
           - skip
           - run
       worker_slot:
-        description: 'Set by the platform Worker cron only: the slot of record it fired for. Empty on a hand dispatch.'
+        description: 'Set by the platform Worker cron (the slot of record it fired for) or autopilot-watch after a web deploy (after-deploy). Empty on a hand dispatch.'
         required: false
         default: ''
         type: string
@@ -1138,41 +1138,10 @@ jobs:
           NIKATRU_QUIET="$(mktemp "${RUNNER_TEMP:-/tmp}/nikatru-step.XXXXXX")"
           cat > "$NIKATRU_QUIET" <<'NIKATRU_QUIET_EOF'
           set -euo pipefail
-          sdk="${ANDROID_HOME:-$ANDROID_SDK_ROOT}"
-          export ANDROID_AVD_HOME="${RUNNER_TEMP}/avd"
-          echo "ANDROID_AVD_HOME=${ANDROID_AVD_HOME}" >> "$GITHUB_ENV"
-          mkdir -p "$ANDROID_AVD_HOME"
-          emu_log="${RUNNER_TEMP}/emulator.log"
-          image="system-images;android-${API_LEVEL};google_apis;x86_64"
-          why() {
-            echo "::error title=Emulator::$1"
-            echo "── emulator.log (tail) ──"
-            tail -n 60 "$emu_log" 2>/dev/null || echo "(no emulator.log)"
-            exit 1
-          }
-          yes | "$sdk/cmdline-tools/latest/bin/sdkmanager" --licenses > /dev/null || true
-          timeout 600 "$sdk/cmdline-tools/latest/bin/sdkmanager" --install emulator platform-tools "$image" > /dev/null
-          echo no | "$sdk/cmdline-tools/latest/bin/avdmanager" create avd --force -n proof -k "$image" --device pixel_6
-          "$sdk/emulator/emulator" -list-avds | awk '$0 == "proof" { hit = 1 } END { exit !hit }' || why "avdmanager created no AVD the emulator can see in ANDROID_AVD_HOME=${ANDROID_AVD_HOME}"
-          nohup "$sdk/emulator/emulator" -avd proof -no-window -no-audio -no-boot-anim -no-snapshot \
-            -gpu swiftshader_indirect -accel on > "$emu_log" 2>&1 &
-          emu_pid=$!
-          echo "$sdk/platform-tools" >> "$GITHUB_PATH"
-          adb="$sdk/platform-tools/adb"
-          "$adb" start-server
-          deadline=$((SECONDS + 420))
-          phase="waiting for the device to appear"
-          while :; do
-            kill -0 "$emu_pid" 2>/dev/null || why "the emulator process exited during: ${phase}"
-            state="$("$adb" get-state 2>/dev/null | tr -d '\r' || true)"
-            if [ "$state" = "device" ]; then
-              phase="waiting for sys.boot_completed"
-              [ "$("$adb" shell getprop sys.boot_completed 2>/dev/null | tr -d '\r' || true)" = "1" ] && break
-            fi
-            [ "$SECONDS" -gt "$deadline" ] && why "not booted within 420 s (last phase: ${phase}; adb state: ${state:-none})"
-            sleep 5
-          done
-          echo "emulator booted at ${SECONDS}s"
+          # why: ⏱ 2026-10-31 · O-EMULATOR-BOOT-THREE-COPIES — the ONE boot (symbolication-proof.yml and the other
+          # emulator jobs call it too): pinned emulator and platform-tools (tooling/versions.json, sha256-checked),
+          # ANDROID_AVD_HOME and the pinned adb exported to the steps after it, and a wait that names a dead emulator.
+          bash tooling/ci/boot-emulator.sh --avd proof --api "$API_LEVEL"
           NIKATRU_QUIET_EOF
           NIKATRU_SHELL="${BASH:-bash}"; if command -v cygpath >/dev/null 2>&1; then NIKATRU_SHELL="$(cygpath -w "$NIKATRU_SHELL")"; fi
           node "$GITHUB_WORKSPACE/../.nikatru-shell/quiet-step.mjs" --name e2e.native.11 -- "$NIKATRU_SHELL" --noprofile --norc -eo pipefail "$NIKATRU_QUIET"
@@ -1939,4 +1908,9 @@ jobs:
           GH_TOKEN: ${{ github.token }}
           NIKATRU_RELAY_RUN: ${{ github.run_id }}
           NIKATRU_RELAY_ATTEMPT: ${{ github.run_attempt }}
-        run: gh api --method POST "repos/$GITHUB_REPOSITORY/actions/workflows/autopilot-watch.yml/dispatches" -f ref=main -f "inputs[nikatru_relay_run]=$NIKATRU_RELAY_RUN" -f "inputs[nikatru_relay_attempt]=$NIKATRU_RELAY_ATTEMPT" --silent || echo "::warning::could not start autopilot-watch.yml after run $NIKATRU_RELAY_RUN attempt $NIKATRU_RELAY_ATTEMPT"
+          NIKATRU_RELAY_NAME: E2E live
+          NIKATRU_RELAY_PATH: .github/workflows/e2e.yml
+          NIKATRU_RELAY_CONCLUSION: ${{ contains(needs.*.result, 'cancelled') && 'cancelled' || contains(needs.*.result, 'failure') && 'failure' || 'success' }}
+          NIKATRU_RELAY_HEAD_SHA: ${{ needs.nikatru-pin.outputs.sha }}
+          NIKATRU_RELAY_EVENT: ${{ github.event.client_payload.event || github.event_name }}
+        run: gh api --method POST "repos/$GITHUB_REPOSITORY/actions/workflows/autopilot-watch.yml/dispatches" -f ref=main -f "inputs[nikatru_relay_run]=$NIKATRU_RELAY_RUN" -f "inputs[nikatru_relay_attempt]=$NIKATRU_RELAY_ATTEMPT" -f "inputs[nikatru_relay_name]=$NIKATRU_RELAY_NAME" -f "inputs[nikatru_relay_path]=$NIKATRU_RELAY_PATH" -f "inputs[nikatru_relay_conclusion]=$NIKATRU_RELAY_CONCLUSION" -f "inputs[nikatru_relay_head_sha]=$NIKATRU_RELAY_HEAD_SHA" -f "inputs[nikatru_relay_event]=$NIKATRU_RELAY_EVENT" --silent || echo "::warning::could not start autopilot-watch.yml after run $NIKATRU_RELAY_RUN attempt $NIKATRU_RELAY_ATTEMPT"

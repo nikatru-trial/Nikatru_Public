@@ -155,7 +155,7 @@ jobs:
 
   heartbeats:
     name: Every declared duty is fresh — the heartbeat rail AND the register
-    needs: [nikatru-pin, status, supabase-drift, prod-provenance, pages-deployments, runner-budget, glitchtip, config-drift, edge-shield, failure-ledger, renovate-backlog, code-scanning-age, tech-currency, self-review, digest]
+    needs: [nikatru-pin, status, supabase-drift, prod-provenance, pages-deployments, worker-source-drift, runner-budget, shell-barriers, store-vitals-state, store-vitals, glitchtip, config-drift, edge-shield, failure-ledger, renovate-backlog, code-scanning-age, tech-currency, self-review, digest]
     if: ${{ !cancelled() }}
     runs-on: ubuntu-24.04
     timeout-minutes: 25
@@ -589,6 +589,31 @@ jobs:
           NIKATRU_QUIET_EOF
           NIKATRU_SHELL="${BASH:-bash}"; if command -v cygpath >/dev/null 2>&1; then NIKATRU_SHELL="$(cygpath -w "$NIKATRU_SHELL")"; fi
           node "$GITHUB_WORKSPACE/../.nikatru-shell/quiet-step.mjs" --name ops-watch.heartbeats.22 -- "$NIKATRU_SHELL" -e "$NIKATRU_QUIET"
+      - name: Mark this period's weekly readers as run
+        if: ${{ !cancelled() && inputs.worker_slot != '' && (needs.status.outputs.mark_weekly == 'true' || needs.status.outputs.mark_twice == 'true') && needs.status.outputs.week != '' }}
+        env:
+          WEEK: ${{ needs.status.outputs.week }}
+          HALF: ${{ needs.status.outputs.half }}
+        run: |
+          NIKATRU_QUIET="$(mktemp "${RUNNER_TEMP:-/tmp}/nikatru-step.XXXXXX")"
+          cat > "$NIKATRU_QUIET" <<'NIKATRU_QUIET_EOF'
+          mkdir -p .cache/ops-watch-weekly
+          printf '%s %s %s\n' "$WEEK" "$HALF" "$GITHUB_RUN_ID" > .cache/ops-watch-weekly/marker
+          NIKATRU_QUIET_EOF
+          NIKATRU_SHELL="${BASH:-bash}"; if command -v cygpath >/dev/null 2>&1; then NIKATRU_SHELL="$(cygpath -w "$NIKATRU_SHELL")"; fi
+          node "$GITHUB_WORKSPACE/../.nikatru-shell/quiet-step.mjs" --name ops-watch.heartbeats.23 -- "$NIKATRU_SHELL" -e "$NIKATRU_QUIET"
+      - name: Save this ISO week's weekly marker
+        if: ${{ !cancelled() && inputs.worker_slot != '' && needs.status.outputs.mark_weekly == 'true' && needs.status.outputs.week != '' }}
+        uses: actions/cache/save@55cc8345863c7cc4c66a329aec7e433d2d1c52a9
+        with:
+          path: .cache/ops-watch-weekly
+          key: ops-watch-weekly-${{ needs.status.outputs.week }}
+      - name: Save this half week's marker
+        if: ${{ !cancelled() && inputs.worker_slot != '' && needs.status.outputs.mark_twice == 'true' && needs.status.outputs.week != '' && needs.status.outputs.half != '' }}
+        uses: actions/cache/save@55cc8345863c7cc4c66a329aec7e433d2d1c52a9
+        with:
+          path: .cache/ops-watch-weekly
+          key: ops-watch-twice-${{ needs.status.outputs.week }}-${{ needs.status.outputs.half }}
       - name: No outside read was answered from a last-good copy
         if: ${{ !cancelled() }}
         env:
@@ -599,7 +624,7 @@ jobs:
           node tooling/ops/check-last-good-reads.mjs
           NIKATRU_QUIET_EOF
           NIKATRU_SHELL="${BASH:-bash}"; if command -v cygpath >/dev/null 2>&1; then NIKATRU_SHELL="$(cygpath -w "$NIKATRU_SHELL")"; fi
-          node "$GITHUB_WORKSPACE/../.nikatru-shell/quiet-step.mjs" --name ops-watch.heartbeats.23 -- "$NIKATRU_SHELL" -e "$NIKATRU_QUIET"
+          node "$GITHUB_WORKSPACE/../.nikatru-shell/quiet-step.mjs" --name ops-watch.heartbeats.26 -- "$NIKATRU_SHELL" -e "$NIKATRU_QUIET"
       - name: Store this job's red detail in the bridge's private home (generated)
         if: always()
         continue-on-error: true
@@ -617,10 +642,14 @@ jobs:
     needs: [nikatru-pin]
     name: Every enumerated surface produced its expected output
     runs-on: ubuntu-24.04
-    timeout-minutes: 10
+    timeout-minutes: 12
     outputs:
       weekly: ${{ steps.due.outputs.weekly }}
       twice: ${{ steps.due.outputs.twice }}
+      mark_weekly: ${{ steps.due.outputs.mark_weekly }}
+      mark_twice: ${{ steps.due.outputs.mark_twice }}
+      repeat_weekly: ${{ steps.due.outputs.repeat_weekly }}
+      repeat_twice: ${{ steps.due.outputs.repeat_twice }}
       week: ${{ steps.period.outputs.week }}
       half: ${{ steps.period.outputs.half }}
     permissions:
@@ -737,18 +766,39 @@ jobs:
           NIKATRU_QUIET_EOF
           NIKATRU_SHELL="${BASH:-bash}"; if command -v cygpath >/dev/null 2>&1; then NIKATRU_SHELL="$(cygpath -w "$NIKATRU_SHELL")"; fi
           node "$GITHUB_WORKSPACE/../.nikatru-shell/quiet-step.mjs" --name ops-watch.status.5 -- "$NIKATRU_SHELL" -e "$NIKATRU_QUIET"
+      - name: Has this ISO week's weekly run happened
+        id: weekly-hit
+        if: ${{ !cancelled() && inputs.worker_slot != '' && steps.period.outputs.week != '' }}
+        uses: actions/cache/restore@55cc8345863c7cc4c66a329aec7e433d2d1c52a9
+        with:
+          path: .cache/ops-watch-weekly
+          key: ops-watch-weekly-${{ steps.period.outputs.week }}
+          lookup-only: true
+      - name: Has this half week's run happened
+        id: twice-hit
+        if: ${{ !cancelled() && inputs.worker_slot != '' && steps.period.outputs.week != '' && steps.period.outputs.half != '' }}
+        uses: actions/cache/restore@55cc8345863c7cc4c66a329aec7e433d2d1c52a9
+        with:
+          path: .cache/ops-watch-weekly
+          key: ops-watch-twice-${{ steps.period.outputs.week }}-${{ steps.period.outputs.half }}
+          lookup-only: true
       - name: Which weekly readers are due
         id: due
         if: ${{ !cancelled() }}
         env:
           EVENT: ${{ (github.event.client_payload.event || github.event_name) }}
+          WORKER_SLOT: ${{ inputs.worker_slot }}
+          WEEKLY_HIT: ${{ steps.weekly-hit.outputs.cache-hit }}
+          TWICE_HIT: ${{ steps.twice-hit.outputs.cache-hit }}
+          WEEKLY_ASKED: ${{ inputs.failure_ledger }}
+          TWICE_ASKED: ${{ inputs.renovate_backlog }}
         run: |
           NIKATRU_QUIET="$(mktemp "${RUNNER_TEMP:-/tmp}/nikatru-step.XXXXXX")"
           cat > "$NIKATRU_QUIET" <<'NIKATRU_QUIET_EOF'
-          node tooling/ops/ops-watch-weekly-slot.mjs --decide --event "$EVENT" --weekly-hit false --twice-hit false
+          node tooling/ops/ops-watch-weekly-slot.mjs --decide --event "$EVENT" --weekly-hit "${WEEKLY_HIT:-false}" --twice-hit "${TWICE_HIT:-false}" --slot "$WORKER_SLOT" --weekly-asked "${WEEKLY_ASKED:-false}" --twice-asked "${TWICE_ASKED:-false}"
           NIKATRU_QUIET_EOF
           NIKATRU_SHELL="${BASH:-bash}"; if command -v cygpath >/dev/null 2>&1; then NIKATRU_SHELL="$(cygpath -w "$NIKATRU_SHELL")"; fi
-          node "$GITHUB_WORKSPACE/../.nikatru-shell/quiet-step.mjs" --name ops-watch.status.6 -- "$NIKATRU_SHELL" -e "$NIKATRU_QUIET"
+          node "$GITHUB_WORKSPACE/../.nikatru-shell/quiet-step.mjs" --name ops-watch.status.8 -- "$NIKATRU_SHELL" -e "$NIKATRU_QUIET"
       - name: Store this job's red detail in the bridge's private home (generated)
         if: always()
         continue-on-error: true
@@ -1139,6 +1189,117 @@ jobs:
           NIKATRU_BRIDGE_ARTIFACT_URL: https://gh-bridge.nikatru.workers.dev/artifact
         run: node tooling/ops/bridge-artifact.mjs upload
 
+  worker-source-drift:
+    needs: [nikatru-pin]
+    name: Every hand-deployed Worker runs what main would build
+    runs-on: ubuntu-24.04
+    timeout-minutes: 10
+    permissions:
+      contents: read
+      id-token: write
+    steps:
+      - name: Check out the private tree (generated)
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
+        with:
+          repository: ${{ env.NIKATRU_PRIVATE_REPO }}
+          ref: ${{ needs.nikatru-pin.outputs.sha || 'nikatru-pin-did-not-succeed..' }}
+          fetch-depth: 0
+          ssh-key: ${{ secrets.PRIVATE_DEPLOY_KEY }}
+          persist-credentials: false
+      - name: Name the private commit (generated)
+        shell: bash
+        working-directory: ${{ github.workspace }}
+        env:
+          NIKATRU_P_EVENT: ${{ github.event.client_payload.event || github.event_name }}
+          NIKATRU_P_REF: ${{ github.event.client_payload.ref || 'refs/heads/main' }}
+          NIKATRU_P_BASE_SHA: ${{ github.event.client_payload.base_sha }}
+          NIKATRU_P_BASE_REF: ${{ github.event.client_payload.base_ref }}
+          NIKATRU_P_PR: ${{ github.event.client_payload.pr }}
+          NIKATRU_P_PR_CREATED_AT: ${{ github.event.client_payload.pr_created_at }}
+          NIKATRU_P_DRAFT: ${{ github.event.client_payload.draft }}
+          NIKATRU_P_SHA: ${{ github.event.client_payload.sha }}
+        run: |
+          if [ "$NIKATRU_P_EVENT" = pull_request ]; then
+            set -- $(git cat-file -p HEAD | sed -n '1,/^$/s/^parent //p')
+            if [ "${2:-}" != "$NIKATRU_P_SHA" ]; then
+              echo "::error::the checked-out merge of PR #$NIKATRU_P_PR is not the merge of the dispatched head $NIKATRU_P_SHA (its second parent is ${2:-none}); the nikatru-pin job pins it — re-run the whole workflow, not this job"
+              exit 1
+            fi
+          fi
+          {
+            echo "NIKATRU_SHA=$(git rev-parse HEAD)"
+            echo "NIKATRU_HEAD_SHA=${NIKATRU_P_SHA:-$(git rev-parse HEAD)}"
+            echo "NIKATRU_EVENT_NAME=$NIKATRU_P_EVENT"
+            echo "NIKATRU_REF=$NIKATRU_P_REF"
+            echo "NIKATRU_REF_NAME=${NIKATRU_P_REF#refs/*/}"
+            echo "NIKATRU_BASE_SHA=$NIKATRU_P_BASE_SHA"
+            echo "NIKATRU_BASE_REF=$NIKATRU_P_BASE_REF"
+            echo "NIKATRU_PR=$NIKATRU_P_PR"
+            echo "NIKATRU_PR_CREATED_AT=$NIKATRU_P_PR_CREATED_AT"
+            echo "NIKATRU_DRAFT=$NIKATRU_P_DRAFT"
+          } >> "$GITHUB_ENV"
+      - name: Check out this shell repository's own step wrapper and reporter (generated)
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
+        with:
+          path: .nikatru-shell
+          sparse-checkout: .github/nikatru
+          persist-credentials: false
+      - name: Stage the shell's own copies outside the private checkout (generated)
+        shell: bash
+        working-directory: ${{ github.workspace }}
+        run: |
+          rm -rf ../.nikatru-shell
+          mv .nikatru-shell/.github/nikatru ../.nikatru-shell
+          rm -rf .nikatru-shell
+      - name: Check out private main's composite actions (generated)
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
+        with:
+          repository: ${{ env.NIKATRU_PRIVATE_REPO }}
+          ref: refs/heads/main
+          path: .nikatru-trusted
+          sparse-checkout: .github/actions
+          ssh-key: ${{ secrets.PRIVATE_DEPLOY_KEY }}
+          persist-credentials: false
+      - name: Keep private main's composite actions out of the branch's tree (generated)
+        shell: bash
+        working-directory: ${{ github.workspace }}
+        run: printf '/.nikatru-trusted/\n' >> "$(git rev-parse --git-path info/exclude)"
+      - uses: ./.nikatru-trusted/.github/actions/setup-node
+      - name: Every hand-deployed Worker runs what main would build
+        if: ${{ !cancelled() }}
+        timeout-minutes: 5
+        env:
+          CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_READ_TOKEN }}
+          CLOUDFLARE_ACCOUNT_ID: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
+        run: |
+          NIKATRU_QUIET="$(mktemp "${RUNNER_TEMP:-/tmp}/nikatru-step.XXXXXX")"
+          cat > "$NIKATRU_QUIET" <<'NIKATRU_QUIET_EOF'
+          set +e
+          node tooling/ops/check-worker-source-drift.mjs --cloudflare-read-paged --unstamped-until 2026-11-30
+          code=$?
+          set -e
+          if [ "$code" -eq 2 ]; then
+            echo "::error title=Hand-deployed Worker drift is UNKNOWN - nothing was compared::A Cloudflare read did not answer, a version carries no source stamp past the deferral, an input set could not be read from git, or a Worker imports a file outside its directory. The step log names the Worker."
+          elif [ "$code" -eq 1 ]; then
+            echo "::error title=A hand-deployed Worker does not run what main would build::Main changed its inputs over a day ago and the live version is another build. Deploy it from main with the stamped command the step log prints."
+          fi
+          exit "$code"
+          NIKATRU_QUIET_EOF
+          NIKATRU_SHELL="${BASH:-bash}"; if command -v cygpath >/dev/null 2>&1; then NIKATRU_SHELL="$(cygpath -w "$NIKATRU_SHELL")"; fi
+          node "$GITHUB_WORKSPACE/../.nikatru-shell/quiet-step.mjs" --name ops-watch.worker-source-drift.3 -- "$NIKATRU_SHELL" -e "$NIKATRU_QUIET"
+      - name: Store this job's red detail in the bridge's private home (generated)
+        if: always()
+        continue-on-error: true
+        shell: bash
+        working-directory: ${{ github.workspace }}
+        env:
+          NIKATRU_PATHS: ${{ runner.temp }}/report-detail.md
+          NIKATRU_ARTIFACT_NAME: report-detail-ops-watch.worker-source-drift.${{ strategy.job-index }}
+          NIKATRU_IF_NO_FILES: ignore
+          BRIDGE_ARTIFACT_SECRET: ${{ secrets.BRIDGE_ARTIFACT_SECRET }}
+          NIKATRU_BRIDGE_ARTIFACT_URL: https://gh-bridge.nikatru.workers.dev/artifact
+        run: node tooling/ops/bridge-artifact.mjs upload
+
   runner-budget:
     needs: [nikatru-pin]
     name: Actions quota cannot silently stop the scheduled proofs
@@ -1272,6 +1433,27 @@ jobs:
           NIKATRU_QUIET_EOF
           NIKATRU_SHELL="${BASH:-bash}"; if command -v cygpath >/dev/null 2>&1; then NIKATRU_SHELL="$(cygpath -w "$NIKATRU_SHELL")"; fi
           node "$GITHUB_WORKSPACE/../.nikatru-shell/quiet-step.mjs" --name ops-watch.runner-budget.5 -- "$NIKATRU_SHELL" -e "$NIKATRU_QUIET"
+      - name: Sweep the merged wip/* safety branches of the code repository
+        if: ${{ !cancelled() && inputs.worker_slot != '' && ((env.NIKATRU_REF || (github.event.client_payload.ref || 'refs/heads/main')) == 'refs/heads/main' && contains(fromJSON('["push","schedule","workflow_dispatch"]'), env.NIKATRU_EVENT_NAME || (github.event.client_payload.event || github.event_name)) && !env.NIKATRU_PR) }}
+        timeout-minutes: 4
+        env:
+          BRIDGE_READ_SECRET: ${{ (github.event.client_payload.event || github.event_name) != 'pull_request' && secrets.BRIDGE_READ_SECRET || '' }}
+          BRIDGE_OPS_SECRET: ${{ (github.event.client_payload.event || github.event_name) != 'pull_request' && secrets.BRIDGE_OPS_SECRET || '' }}
+          NIKATRU_BRIDGE_OPS_URL: ${{ (github.event.client_payload.event || github.event_name) != 'pull_request' && 'https://gh-bridge.nikatru.workers.dev/ops' || '' }}
+        run: |
+          NIKATRU_QUIET="$(mktemp "${RUNNER_TEMP:-/tmp}/nikatru-step.XXXXXX")"
+          cat > "$NIKATRU_QUIET" <<'NIKATRU_QUIET_EOF'
+          set +e
+          node tooling/ops/sweep-wip-branches.mjs
+          code=$?
+          set -e
+          if [ "$code" -eq 2 ]; then
+            echo "::error title=The wip/* branch sweep is UNKNOWN - nothing more was deleted::The bridge's wip-sweep list could not be read, or a delete call was not answered (the step holds no bridge ops URL or key, the bridge refused, or GitHub failed it). The step log names which; every branch the bridge did not delete is still there."
+          fi
+          exit "$code"
+          NIKATRU_QUIET_EOF
+          NIKATRU_SHELL="${BASH:-bash}"; if command -v cygpath >/dev/null 2>&1; then NIKATRU_SHELL="$(cygpath -w "$NIKATRU_SHELL")"; fi
+          node "$GITHUB_WORKSPACE/../.nikatru-shell/quiet-step.mjs" --name ops-watch.runner-budget.6 -- "$NIKATRU_SHELL" -e "$NIKATRU_QUIET"
       - name: The CI repository's Actions cache is under its red line
         if: ${{ !cancelled() }}
         env:
@@ -1291,7 +1473,7 @@ jobs:
           exit "$code"
           NIKATRU_QUIET_EOF
           NIKATRU_SHELL="${BASH:-bash}"; if command -v cygpath >/dev/null 2>&1; then NIKATRU_SHELL="$(cygpath -w "$NIKATRU_SHELL")"; fi
-          node "$GITHUB_WORKSPACE/../.nikatru-shell/quiet-step.mjs" --name ops-watch.runner-budget.6 -- "$NIKATRU_SHELL" -e "$NIKATRU_QUIET"
+          node "$GITHUB_WORKSPACE/../.nikatru-shell/quiet-step.mjs" --name ops-watch.runner-budget.7 -- "$NIKATRU_SHELL" -e "$NIKATRU_QUIET"
       - name: Store this job's red detail in the bridge's private home (generated)
         if: always()
         continue-on-error: true
@@ -1300,6 +1482,306 @@ jobs:
         env:
           NIKATRU_PATHS: ${{ runner.temp }}/report-detail.md
           NIKATRU_ARTIFACT_NAME: report-detail-ops-watch.runner-budget.${{ strategy.job-index }}
+          NIKATRU_IF_NO_FILES: ignore
+          BRIDGE_ARTIFACT_SECRET: ${{ secrets.BRIDGE_ARTIFACT_SECRET }}
+          NIKATRU_BRIDGE_ARTIFACT_URL: https://gh-bridge.nikatru.workers.dev/artifact
+        run: node tooling/ops/bridge-artifact.mjs upload
+
+  shell-barriers:
+    name: The shell's fork approval, reviewed environments, required variables and signing branches hold
+    needs: [nikatru-pin, status]
+    if: ${{ !cancelled() }}
+    runs-on: ubuntu-24.04
+    timeout-minutes: 8
+    permissions:
+      contents: read
+      id-token: write
+    steps:
+      - name: Check out the private tree (generated)
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
+        with:
+          repository: ${{ env.NIKATRU_PRIVATE_REPO }}
+          ref: ${{ needs.nikatru-pin.outputs.sha || 'nikatru-pin-did-not-succeed..' }}
+          ssh-key: ${{ secrets.PRIVATE_DEPLOY_KEY }}
+          persist-credentials: false
+      - name: Name the private commit (generated)
+        shell: bash
+        working-directory: ${{ github.workspace }}
+        env:
+          NIKATRU_P_EVENT: ${{ github.event.client_payload.event || github.event_name }}
+          NIKATRU_P_REF: ${{ github.event.client_payload.ref || 'refs/heads/main' }}
+          NIKATRU_P_BASE_SHA: ${{ github.event.client_payload.base_sha }}
+          NIKATRU_P_BASE_REF: ${{ github.event.client_payload.base_ref }}
+          NIKATRU_P_PR: ${{ github.event.client_payload.pr }}
+          NIKATRU_P_PR_CREATED_AT: ${{ github.event.client_payload.pr_created_at }}
+          NIKATRU_P_DRAFT: ${{ github.event.client_payload.draft }}
+          NIKATRU_P_SHA: ${{ github.event.client_payload.sha }}
+        run: |
+          if [ "$NIKATRU_P_EVENT" = pull_request ]; then
+            set -- $(git cat-file -p HEAD | sed -n '1,/^$/s/^parent //p')
+            if [ "${2:-}" != "$NIKATRU_P_SHA" ]; then
+              echo "::error::the checked-out merge of PR #$NIKATRU_P_PR is not the merge of the dispatched head $NIKATRU_P_SHA (its second parent is ${2:-none}); the nikatru-pin job pins it — re-run the whole workflow, not this job"
+              exit 1
+            fi
+          fi
+          {
+            echo "NIKATRU_SHA=$(git rev-parse HEAD)"
+            echo "NIKATRU_HEAD_SHA=${NIKATRU_P_SHA:-$(git rev-parse HEAD)}"
+            echo "NIKATRU_EVENT_NAME=$NIKATRU_P_EVENT"
+            echo "NIKATRU_REF=$NIKATRU_P_REF"
+            echo "NIKATRU_REF_NAME=${NIKATRU_P_REF#refs/*/}"
+            echo "NIKATRU_BASE_SHA=$NIKATRU_P_BASE_SHA"
+            echo "NIKATRU_BASE_REF=$NIKATRU_P_BASE_REF"
+            echo "NIKATRU_PR=$NIKATRU_P_PR"
+            echo "NIKATRU_PR_CREATED_AT=$NIKATRU_P_PR_CREATED_AT"
+            echo "NIKATRU_DRAFT=$NIKATRU_P_DRAFT"
+          } >> "$GITHUB_ENV"
+      - name: Check out this shell repository's own step wrapper and reporter (generated)
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
+        with:
+          path: .nikatru-shell
+          sparse-checkout: .github/nikatru
+          persist-credentials: false
+      - name: Stage the shell's own copies outside the private checkout (generated)
+        shell: bash
+        working-directory: ${{ github.workspace }}
+        run: |
+          rm -rf ../.nikatru-shell
+          mv .nikatru-shell/.github/nikatru ../.nikatru-shell
+          rm -rf .nikatru-shell
+      - name: Check out private main's composite actions (generated)
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
+        with:
+          repository: ${{ env.NIKATRU_PRIVATE_REPO }}
+          ref: refs/heads/main
+          path: .nikatru-trusted
+          sparse-checkout: .github/actions
+          ssh-key: ${{ secrets.PRIVATE_DEPLOY_KEY }}
+          persist-credentials: false
+      - name: Keep private main's composite actions out of the branch's tree (generated)
+        shell: bash
+        working-directory: ${{ github.workspace }}
+        run: printf '/.nikatru-trusted/\n' >> "$(git rev-parse --git-path info/exclude)"
+      - uses: ./.nikatru-trusted/.github/actions/setup-node
+      - name: Hold the shell barriers — fork approval through the bridge, environments, variables, signing
+        timeout-minutes: 5
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          NIKATRU_VAR_SET_TURNSTILE_SITE_KEY: ${{ vars.TURNSTILE_SITE_KEY != '' }}
+          NIKATRU_VAR_SET_NIKATRU_SIGNUPS_KV_ID: ${{ vars.NIKATRU_SIGNUPS_KV_ID != '' }}
+          BRIDGE_READ_SECRET: ${{ (github.event.client_payload.event || github.event_name) != 'pull_request' && secrets.BRIDGE_READ_SECRET || '' }}
+          BRIDGE_OPS_SECRET: ${{ (github.event.client_payload.event || github.event_name) != 'pull_request' && secrets.BRIDGE_OPS_SECRET || '' }}
+          NIKATRU_BRIDGE_OPS_URL: ${{ (github.event.client_payload.event || github.event_name) != 'pull_request' && 'https://gh-bridge.nikatru.workers.dev/ops' || '' }}
+        run: |
+          NIKATRU_QUIET="$(mktemp "${RUNNER_TEMP:-/tmp}/nikatru-step.XXXXXX")"
+          cat > "$NIKATRU_QUIET" <<'NIKATRU_QUIET_EOF'
+          set +e
+          node tooling/ci/assert-shell-barriers.mjs --source shell-job
+          code=$?
+          set -e
+          if [ "$code" -eq 2 ]; then
+            echo "::error title=The shell's barriers are UNKNOWN — not judged::A limb above is COVERAGE LOST: the bridge's /ops shell-barriers was not reached or refused (no bridge ops URL or key in this step, or gh-bridge holds no fork-approval read token: 500 'shell-barriers token not configured'), GitHub refused the read, or a NIKATRU_VAR_SET_* line is missing. 'I could not look' is never 'it holds'."
+          elif [ "$code" -eq 1 ]; then
+            echo "::error title=A shell barrier is weaker than its pin::Read the FINDING line(s) above: the fork approval policy is not all_external_contributors, a reviewed environment lost its reviewer, a gated or signing environment lost its branch policy, or a required Actions variable is unset. Restore the setting on the shell repository; tooling/ci/public-shell.json holds the pins."
+          fi
+          exit "$code"
+          NIKATRU_QUIET_EOF
+          NIKATRU_SHELL="${BASH:-bash}"; if command -v cygpath >/dev/null 2>&1; then NIKATRU_SHELL="$(cygpath -w "$NIKATRU_SHELL")"; fi
+          node "$GITHUB_WORKSPACE/../.nikatru-shell/quiet-step.mjs" --name ops-watch.shell-barriers.3 -- "$NIKATRU_SHELL" -e "$NIKATRU_QUIET"
+      - name: Store this job's red detail in the bridge's private home (generated)
+        if: always()
+        continue-on-error: true
+        shell: bash
+        working-directory: ${{ github.workspace }}
+        env:
+          NIKATRU_PATHS: ${{ runner.temp }}/report-detail.md
+          NIKATRU_ARTIFACT_NAME: report-detail-ops-watch.shell-barriers.${{ strategy.job-index }}
+          NIKATRU_IF_NO_FILES: ignore
+          BRIDGE_ARTIFACT_SECRET: ${{ secrets.BRIDGE_ARTIFACT_SECRET }}
+          NIKATRU_BRIDGE_ARTIFACT_URL: https://gh-bridge.nikatru.workers.dev/artifact
+        run: node tooling/ops/bridge-artifact.mjs upload
+
+  store-vitals-state:
+    needs: [nikatru-pin]
+    name: The last known vitals grades, handed on as data (no checkout, no secret)
+    if: ${{ !cancelled() }}
+    runs-on: ubuntu-24.04
+    timeout-minutes: 5
+    permissions: {}
+    outputs:
+      state: ${{ steps.state.outputs.state }}
+      seal: ${{ steps.state.outputs.seal }}
+    steps:
+      - name: Restore the last known vitals grades
+        uses: actions/cache/restore@55cc8345863c7cc4c66a329aec7e433d2d1c52a9
+        with:
+          path: .cache/store-vitals
+          key: store-vitals-${{ github.run_id }}-${{ github.run_attempt }}
+          restore-keys: |
+            store-vitals-
+      - name: Hand the grades on as a size-capped output
+        id: state
+        shell: bash
+        run: |
+          set -euo pipefail
+          f=.cache/store-vitals/state.json
+          if [ -f "$f" ] && [ ! -L "$f" ] && [ "$(wc -c < "$f")" -le 32768 ]; then
+            echo "state=$(base64 -w0 "$f")" >> "$GITHUB_OUTPUT"
+          else
+            echo "state=" >> "$GITHUB_OUTPUT"
+            echo "no state.json of at most 32768 bytes restored: store-vitals starts from no known grade"
+          fi
+          # why (⏱ 2026-11-02 · review F2): the seal store-vitals wrote beside it, as at most 64 hex characters. This
+          # job holds no key and checks nothing: store-vitals verifies it (state-intake.mjs) before it believes a byte.
+          s=.cache/store-vitals/state.seal
+          seal=""
+          if [ -f "$s" ] && [ ! -L "$s" ] && [ "$(wc -c < "$s")" -le 128 ]; then seal="$(tr -dc '0-9a-f' < "$s" | cut -c1-64)"; fi
+          echo "seal=$seal" >> "$GITHUB_OUTPUT"
+
+  store-vitals:
+    name: Store crash and ANR rates did not worsen
+    needs: [nikatru-pin, status, store-vitals-state]
+    if: ${{ !cancelled() }}
+    runs-on: ubuntu-24.04
+    timeout-minutes: 10
+    permissions:
+      contents: read
+      id-token: write
+    steps:
+      - name: Check out the private tree (generated)
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
+        with:
+          repository: ${{ env.NIKATRU_PRIVATE_REPO }}
+          ref: ${{ needs.nikatru-pin.outputs.sha || 'nikatru-pin-did-not-succeed..' }}
+          ssh-key: ${{ secrets.PRIVATE_DEPLOY_KEY }}
+          persist-credentials: false
+      - name: Name the private commit (generated)
+        shell: bash
+        working-directory: ${{ github.workspace }}
+        env:
+          NIKATRU_P_EVENT: ${{ github.event.client_payload.event || github.event_name }}
+          NIKATRU_P_REF: ${{ github.event.client_payload.ref || 'refs/heads/main' }}
+          NIKATRU_P_BASE_SHA: ${{ github.event.client_payload.base_sha }}
+          NIKATRU_P_BASE_REF: ${{ github.event.client_payload.base_ref }}
+          NIKATRU_P_PR: ${{ github.event.client_payload.pr }}
+          NIKATRU_P_PR_CREATED_AT: ${{ github.event.client_payload.pr_created_at }}
+          NIKATRU_P_DRAFT: ${{ github.event.client_payload.draft }}
+          NIKATRU_P_SHA: ${{ github.event.client_payload.sha }}
+        run: |
+          if [ "$NIKATRU_P_EVENT" = pull_request ]; then
+            set -- $(git cat-file -p HEAD | sed -n '1,/^$/s/^parent //p')
+            if [ "${2:-}" != "$NIKATRU_P_SHA" ]; then
+              echo "::error::the checked-out merge of PR #$NIKATRU_P_PR is not the merge of the dispatched head $NIKATRU_P_SHA (its second parent is ${2:-none}); the nikatru-pin job pins it — re-run the whole workflow, not this job"
+              exit 1
+            fi
+          fi
+          {
+            echo "NIKATRU_SHA=$(git rev-parse HEAD)"
+            echo "NIKATRU_HEAD_SHA=${NIKATRU_P_SHA:-$(git rev-parse HEAD)}"
+            echo "NIKATRU_EVENT_NAME=$NIKATRU_P_EVENT"
+            echo "NIKATRU_REF=$NIKATRU_P_REF"
+            echo "NIKATRU_REF_NAME=${NIKATRU_P_REF#refs/*/}"
+            echo "NIKATRU_BASE_SHA=$NIKATRU_P_BASE_SHA"
+            echo "NIKATRU_BASE_REF=$NIKATRU_P_BASE_REF"
+            echo "NIKATRU_PR=$NIKATRU_P_PR"
+            echo "NIKATRU_PR_CREATED_AT=$NIKATRU_P_PR_CREATED_AT"
+            echo "NIKATRU_DRAFT=$NIKATRU_P_DRAFT"
+          } >> "$GITHUB_ENV"
+      - name: Check out this shell repository's own step wrapper and reporter (generated)
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
+        with:
+          path: .nikatru-shell
+          sparse-checkout: .github/nikatru
+          persist-credentials: false
+      - name: Stage the shell's own copies outside the private checkout (generated)
+        shell: bash
+        working-directory: ${{ github.workspace }}
+        env:
+          NIKATRU_DETAIL_KEY: ${{ secrets.NIKATRU_DETAIL_KEY }}
+          NIKATRU_VITALS_KEY_FILE: ${{ github.workspace }}/../.nikatru-shell/vitals.key
+        run: |
+          rm -rf ../.nikatru-shell
+          mv .nikatru-shell/.github/nikatru ../.nikatru-shell
+          rm -rf .nikatru-shell
+          py=python3; python3 -c '' >/dev/null 2>&1 || py=python
+          "$py" -I "$GITHUB_WORKSPACE/../.nikatru-shell/report.py" derive
+      - name: Check out private main's composite actions (generated)
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
+        with:
+          repository: ${{ env.NIKATRU_PRIVATE_REPO }}
+          ref: refs/heads/main
+          path: .nikatru-trusted
+          sparse-checkout: .github/actions
+          ssh-key: ${{ secrets.PRIVATE_DEPLOY_KEY }}
+          persist-credentials: false
+      - name: Keep private main's composite actions out of the branch's tree (generated)
+        shell: bash
+        working-directory: ${{ github.workspace }}
+        run: printf '/.nikatru-trusted/\n' >> "$(git rev-parse --git-path info/exclude)"
+      - uses: ./.nikatru-trusted/.github/actions/setup-node
+      - name: Take the last known vitals grades in, checked as untrusted data
+        env:
+          STORE_VITALS_STATE: ${{ needs.store-vitals-state.outputs.state }}
+          STORE_VITALS_SEAL: ${{ needs.store-vitals-state.outputs.seal }}
+          NIKATRU_VITALS_KEY_FILE: ${{ github.workspace }}/../.nikatru-shell/vitals.key
+        run: |
+          NIKATRU_QUIET="$(mktemp "${RUNNER_TEMP:-/tmp}/nikatru-step.XXXXXX")"
+          cat > "$NIKATRU_QUIET" <<'NIKATRU_QUIET_EOF'
+          node tooling/ops/vitals/state-intake.mjs --out .cache/store-vitals/state.json
+          NIKATRU_QUIET_EOF
+          NIKATRU_SHELL="${BASH:-bash}"; if command -v cygpath >/dev/null 2>&1; then NIKATRU_SHELL="$(cygpath -w "$NIKATRU_SHELL")"; fi
+          node "$GITHUB_WORKSPACE/../.nikatru-shell/quiet-step.mjs" --name ops-watch.store-vitals.3 -- "$NIKATRU_SHELL" -e "$NIKATRU_QUIET"
+      - name: Read every app's store crash and ANR rates and page on a worsened grade
+        id: vitals
+        if: ${{ !cancelled() }}
+        timeout-minutes: 6
+        env:
+          PLAY_SERVICE_ACCOUNT_JSON: ${{ secrets.PLAY_READ_SERVICE_ACCOUNT_JSON }}
+          APP_STORE_CONNECT_KEY_ID: ${{ secrets.APP_STORE_CONNECT_READONLY_KEY_ID }}
+          APP_STORE_CONNECT_ISSUER_ID: ${{ secrets.APP_STORE_CONNECT_ISSUER_ID }}
+          APP_STORE_CONNECT_PRIVATE_KEY: ${{ secrets.APP_STORE_CONNECT_READONLY_PRIVATE_KEY }}
+        run: |
+          NIKATRU_QUIET="$(mktemp "${RUNNER_TEMP:-/tmp}/nikatru-step.XXXXXX")"
+          cat > "$NIKATRU_QUIET" <<'NIKATRU_QUIET_EOF'
+          mkdir -p .cache/store-vitals
+          set +e
+          node tooling/ops/check-store-vitals.mjs --state .cache/store-vitals/state.json --not-judged-until-event play-production-users
+          code=$?
+          set -e
+          if [ "$code" -eq 2 ]; then
+            echo "::error title=Store vitals are UNKNOWN — nothing was read::No store answered for any app and channel (a credential unset or refused, an API not enabled), past the register's judging event. The log names each channel and the secret it lacked. An unread crash rate is not a low one."
+          elif [ "$code" -eq 1 ]; then
+            echo "::error title=A store crash or ANR rate WORSENED::Read the PAGE: line(s) above: the app, channel, metric, its rate and threshold, and the grade it held before. Or the thresholds register is incomplete, or a store answered in a shape its docs do not describe. Halt or roll back the release behind it before editing a threshold."
+          fi
+          exit "$code"
+          NIKATRU_QUIET_EOF
+          NIKATRU_SHELL="${BASH:-bash}"; if command -v cygpath >/dev/null 2>&1; then NIKATRU_SHELL="$(cygpath -w "$NIKATRU_SHELL")"; fi
+          node "$GITHUB_WORKSPACE/../.nikatru-shell/quiet-step.mjs" --name ops-watch.store-vitals.4 -- "$NIKATRU_SHELL" -e "$NIKATRU_QUIET"
+      - name: Seal this run's vitals grades
+        if: ${{ always() && hashFiles('.cache/store-vitals/state.json') != '' }}
+        env:
+          NIKATRU_VITALS_KEY_FILE: ${{ github.workspace }}/../.nikatru-shell/vitals.key
+        run: |
+          NIKATRU_QUIET="$(mktemp "${RUNNER_TEMP:-/tmp}/nikatru-step.XXXXXX")"
+          cat > "$NIKATRU_QUIET" <<'NIKATRU_QUIET_EOF'
+          node tooling/ops/vitals/state-intake.mjs --seal .cache/store-vitals/state.json
+          NIKATRU_QUIET_EOF
+          NIKATRU_SHELL="${BASH:-bash}"; if command -v cygpath >/dev/null 2>&1; then NIKATRU_SHELL="$(cygpath -w "$NIKATRU_SHELL")"; fi
+          node "$GITHUB_WORKSPACE/../.nikatru-shell/quiet-step.mjs" --name ops-watch.store-vitals.5 -- "$NIKATRU_SHELL" -e "$NIKATRU_QUIET"
+      - name: Save this run's vitals grades
+        if: ${{ always() && hashFiles('.cache/store-vitals/state.json') != '' }}
+        uses: actions/cache/save@55cc8345863c7cc4c66a329aec7e433d2d1c52a9
+        with:
+          path: .cache/store-vitals
+          key: store-vitals-${{ github.run_id }}-${{ github.run_attempt }}
+      - name: Store this job's red detail in the bridge's private home (generated)
+        if: always()
+        continue-on-error: true
+        shell: bash
+        working-directory: ${{ github.workspace }}
+        env:
+          NIKATRU_PATHS: ${{ runner.temp }}/report-detail.md
+          NIKATRU_ARTIFACT_NAME: report-detail-ops-watch.store-vitals.${{ strategy.job-index }}
           NIKATRU_IF_NO_FILES: ignore
           BRIDGE_ARTIFACT_SECRET: ${{ secrets.BRIDGE_ARTIFACT_SECRET }}
           NIKATRU_BRIDGE_ARTIFACT_URL: https://gh-bridge.nikatru.workers.dev/artifact
@@ -1450,10 +1932,10 @@ jobs:
         env:
           CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_READ_TOKEN }}
           CLOUDFLARE_ACCOUNT_ID: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
-          PADDLE_API_KEY: ${{ secrets.PADDLE_READ_API_KEY }}
-          APP_STORE_CONNECT_KEY_ID: ${{ secrets.APP_STORE_CONNECT_READ_KEY_ID }}
-          APP_STORE_CONNECT_ISSUER_ID: ${{ secrets.APP_STORE_CONNECT_READ_ISSUER_ID }}
-          APP_STORE_CONNECT_PRIVATE_KEY: ${{ secrets.APP_STORE_CONNECT_READ_PRIVATE_KEY }}
+          PADDLE_API_KEY: ${{ secrets.PADDLE_API_KEY_READ }}
+          APP_STORE_CONNECT_KEY_ID: ${{ secrets.APP_STORE_CONNECT_READONLY_KEY_ID }}
+          APP_STORE_CONNECT_ISSUER_ID: ${{ secrets.APP_STORE_CONNECT_ISSUER_ID }}
+          APP_STORE_CONNECT_PRIVATE_KEY: ${{ secrets.APP_STORE_CONNECT_READONLY_PRIVATE_KEY }}
           PLAY_SERVICE_ACCOUNT_JSON: ${{ secrets.PLAY_READ_SERVICE_ACCOUNT_JSON }}
           MS_STORE_TENANT_ID: ${{ secrets.MS_STORE_READ_TENANT_ID }}
           MS_STORE_CLIENT_ID: ${{ secrets.MS_STORE_READ_CLIENT_ID }}
@@ -1589,15 +2071,17 @@ jobs:
         env:
           SELFHOSTED_SUPABASE_URL: ${{ secrets.SELFHOSTED_SUPABASE_URL }}
           SELFHOSTED_SUPABASE_ANON_KEY: ${{ secrets.SELFHOSTED_SUPABASE_ANON_KEY }}
+          CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_READ_TOKEN }}
+          CLOUDFLARE_ACCOUNT_ID: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
         run: |
           NIKATRU_QUIET="$(mktemp "${RUNNER_TEMP:-/tmp}/nikatru-step.XXXXXX")"
           cat > "$NIKATRU_QUIET" <<'NIKATRU_QUIET_EOF'
           set +e
-          node tooling/ops/verify-supabase-templates.mjs --selfhosted --env-not-judged-until 2026-11-20
+          node tooling/ops/verify-supabase-templates.mjs --selfhosted --boxc-env-manifest
           code=$?
           set -e
           if [ "$code" -eq 2 ]; then
-            echo "::error title=Auth mail drift is UNKNOWN — a look was not made::A served template could not be fetched, auth/v1/settings could not be read (SELFHOSTED_SUPABASE_ANON_KEY unset or refused), or the env deferral expired. The log above names the look. OWNER ACTION when the log says NOT SET: add SELFHOSTED_SUPABASE_ANON_KEY (and SELFHOSTED_SUPABASE_URL if the sender is not https://auth-api.nikatru.com) as repository secrets. 'I could not look' never reads as 'I looked and it was fine'."
+            echo "::error title=Auth mail drift is UNKNOWN — a look was not made::A served template could not be fetched, auth/v1/settings could not be read (SELFHOSTED_SUPABASE_ANON_KEY unset or refused), or Box C's GoTrue env digest could not be read from box_config_manifest (CLOUDFLARE_READ_TOKEN / CLOUDFLARE_ACCOUNT_ID unset or refused, no digest posted, or one older than its window). The log above names the look. OWNER ACTION when the log says NOT SET: add SELFHOSTED_SUPABASE_ANON_KEY (and SELFHOSTED_SUPABASE_URL if the sender is not https://auth-api.nikatru.com) as repository secrets. 'I could not look' never reads as 'I looked and it was fine'."
           elif [ "$code" -eq 1 ]; then
             echo "::error title=The live auth mail sender has DRIFTED::A template nikatru.com serves differs from docs/platform/supabase/email-templates/, or the self-hosted GoTrue settings differ from tooling/mail-transport.json. The served copies are generated from the repo (tooling/sites/gen-auth-mail.mjs) and published by the nikatru site deploy; decide which side is stale before editing either — the log names every look."
           fi
@@ -1706,7 +2190,7 @@ jobs:
           cat > "$NIKATRU_QUIET" <<'NIKATRU_QUIET_EOF'
           set +e
           # why: --public: this log is the public shell's; ids are printed as short hashes (finding 16).
-          node tooling/ops/money-reconcile.mjs --rails paddle --while-paywall-off --public
+          node tooling/ops/money-reconcile.mjs --rails paddle,razorpay --while-paywall-off --public
           code=$?
           set -e
           if [ "$code" -eq 2 ]; then
@@ -1723,8 +2207,8 @@ jobs:
         timeout-minutes: 3
         env:
           APP_STORE_CONNECT_ISSUER_ID: ${{ secrets.APP_STORE_CONNECT_ISSUER_ID }}
-          APP_STORE_CONNECT_KEY_ID: ${{ secrets.APP_STORE_CONNECT_READONLY_PRIVATE_KEY && secrets.APP_STORE_CONNECT_READONLY_KEY_ID || secrets.APP_STORE_CONNECT_KEY_ID }}
-          APP_STORE_CONNECT_PRIVATE_KEY: ${{ secrets.APP_STORE_CONNECT_READONLY_KEY_ID && secrets.APP_STORE_CONNECT_READONLY_PRIVATE_KEY || secrets.APP_STORE_CONNECT_PRIVATE_KEY }}
+          APP_STORE_CONNECT_KEY_ID: ${{ secrets.APP_STORE_CONNECT_READONLY_KEY_ID }}
+          APP_STORE_CONNECT_PRIVATE_KEY: ${{ secrets.APP_STORE_CONNECT_READONLY_PRIVATE_KEY }}
         run: |
           NIKATRU_QUIET="$(mktemp "${RUNNER_TEMP:-/tmp}/nikatru-step.XXXXXX")"
           cat > "$NIKATRU_QUIET" <<'NIKATRU_QUIET_EOF'
@@ -1985,7 +2469,7 @@ jobs:
   failure-ledger:
     name: Failed-run ledger and guard yield (weekly; red pages the ops-watch issue)
     needs: [nikatru-pin, status]
-    if: ${{ !cancelled() && (needs.status.outputs.weekly == 'true' || ((github.event.client_payload.event || github.event_name) == 'workflow_dispatch' && inputs.failure_ledger)) }}
+    if: ${{ !cancelled() && (needs.status.outputs.weekly == 'true' || ((github.event.client_payload.event || github.event_name) == 'workflow_dispatch' && inputs.failure_ledger && needs.status.outputs.repeat_weekly != 'true')) }}
     runs-on: ubuntu-24.04
     timeout-minutes: 40
     permissions:
@@ -2150,7 +2634,7 @@ jobs:
   renovate-backlog:
     name: The Renovate queue drains at least as fast as it fills
     needs: [nikatru-pin, status]
-    if: ${{ !cancelled() && (needs.status.outputs.twice == 'true' || ((github.event.client_payload.event || github.event_name) == 'workflow_dispatch' && inputs.renovate_backlog)) }}
+    if: ${{ !cancelled() && (needs.status.outputs.twice == 'true' || ((github.event.client_payload.event || github.event_name) == 'workflow_dispatch' && inputs.renovate_backlog && needs.status.outputs.repeat_twice != 'true')) }}
     runs-on: ubuntu-24.04
     timeout-minutes: 5
     permissions:
@@ -2261,7 +2745,7 @@ jobs:
   code-scanning-age:
     name: No high or critical code-scanning alert stands untriaged past its window
     needs: [nikatru-pin, status]
-    if: ${{ !cancelled() && (needs.status.outputs.twice == 'true' || ((github.event.client_payload.event || github.event_name) == 'workflow_dispatch' && inputs.code_scanning_age)) }}
+    if: ${{ !cancelled() && (needs.status.outputs.twice == 'true' || ((github.event.client_payload.event || github.event_name) == 'workflow_dispatch' && inputs.code_scanning_age && needs.status.outputs.repeat_twice != 'true')) }}
     runs-on: ubuntu-24.04
     timeout-minutes: 5
     permissions:
@@ -2383,7 +2867,7 @@ jobs:
   tech-currency:
     name: What the pipeline runs on is not being retired by its vendors
     needs: [nikatru-pin, status]
-    if: ${{ !cancelled() && (needs.status.outputs.twice == 'true' || ((github.event.client_payload.event || github.event_name) == 'workflow_dispatch' && inputs.tech_currency)) }}
+    if: ${{ !cancelled() && (needs.status.outputs.twice == 'true' || ((github.event.client_payload.event || github.event_name) == 'workflow_dispatch' && inputs.tech_currency && needs.status.outputs.repeat_twice != 'true')) }}
     runs-on: ubuntu-24.04
     timeout-minutes: 10
     permissions:
@@ -2509,7 +2993,7 @@ jobs:
   self-review:
     name: Weekly self-review — the factory measured, three proposals filed and never applied
     needs: [nikatru-pin, status]
-    if: ${{ !cancelled() && (needs.status.outputs.weekly == 'true' || ((github.event.client_payload.event || github.event_name) == 'workflow_dispatch' && inputs.self_review)) }}
+    if: ${{ !cancelled() && (needs.status.outputs.weekly == 'true' || ((github.event.client_payload.event || github.event_name) == 'workflow_dispatch' && inputs.self_review && needs.status.outputs.repeat_weekly != 'true')) }}
     runs-on: ubuntu-24.04
     timeout-minutes: 30
     permissions:
@@ -2663,7 +3147,7 @@ jobs:
 
   alert:
     name: Open or refresh the ops-watch issue
-    needs: [nikatru-pin, heartbeats, status, supabase-drift, prod-provenance, pages-deployments, runner-budget, glitchtip, config-drift, edge-shield, failure-ledger, renovate-backlog, code-scanning-age, tech-currency, self-review]
+    needs: [nikatru-pin, heartbeats, status, supabase-drift, prod-provenance, pages-deployments, worker-source-drift, runner-budget, shell-barriers, store-vitals-state, store-vitals, glitchtip, config-drift, edge-shield, failure-ledger, renovate-backlog, code-scanning-age, tech-currency, self-review]
     if: failure() && (((github.event.client_payload.event || github.event_name) == 'schedule' || inputs.worker_slot != '') || ((github.event.client_payload.event || github.event_name) == 'workflow_dispatch' && inputs.unattended))
     runs-on: ubuntu-24.04
     timeout-minutes: 5
@@ -2806,7 +3290,7 @@ jobs:
   digest:
     name: Weekly digest
     needs: [nikatru-pin, status, failure-ledger]
-    if: always() && (needs.status.outputs.weekly == 'true' || ((github.event.client_payload.event || github.event_name) == 'workflow_dispatch' && inputs.digest))
+    if: always() && (needs.status.outputs.weekly == 'true' || ((github.event.client_payload.event || github.event_name) == 'workflow_dispatch' && inputs.digest && needs.status.outputs.repeat_weekly != 'true'))
     runs-on: ubuntu-24.04
     timeout-minutes: 10
     permissions:
@@ -2983,7 +3467,7 @@ jobs:
 
   nikatru-ran:
     name: Fail this run if it ran nothing (generated)
-    needs: [heartbeats, status, supabase-drift, prod-provenance, pages-deployments, runner-budget, glitchtip, config-drift, edge-shield, failure-ledger, renovate-backlog, code-scanning-age, tech-currency, self-review, alert, digest]
+    needs: [heartbeats, status, supabase-drift, prod-provenance, pages-deployments, worker-source-drift, runner-budget, shell-barriers, store-vitals-state, store-vitals, glitchtip, config-drift, edge-shield, failure-ledger, renovate-backlog, code-scanning-age, tech-currency, self-review, alert, digest]
     if: "!cancelled()"
     runs-on: ubuntu-24.04
     defaults:
@@ -3003,7 +3487,7 @@ jobs:
       - name: Fail when every job of this run was skipped (generated)
         shell: bash
         env:
-          NIKATRU_RESULTS: heartbeats=${{ needs.heartbeats.result }} status=${{ needs.status.result }} supabase-drift=${{ needs.supabase-drift.result }} prod-provenance=${{ needs.prod-provenance.result }} pages-deployments=${{ needs.pages-deployments.result }} runner-budget=${{ needs.runner-budget.result }} glitchtip=${{ needs.glitchtip.result }} config-drift=${{ needs.config-drift.result }} edge-shield=${{ needs.edge-shield.result }} failure-ledger=${{ needs.failure-ledger.result }} renovate-backlog=${{ needs.renovate-backlog.result }} code-scanning-age=${{ needs.code-scanning-age.result }} tech-currency=${{ needs.tech-currency.result }} self-review=${{ needs.self-review.result }} alert=${{ needs.alert.result }} digest=${{ needs.digest.result }}
+          NIKATRU_RESULTS: heartbeats=${{ needs.heartbeats.result }} status=${{ needs.status.result }} supabase-drift=${{ needs.supabase-drift.result }} prod-provenance=${{ needs.prod-provenance.result }} pages-deployments=${{ needs.pages-deployments.result }} worker-source-drift=${{ needs.worker-source-drift.result }} runner-budget=${{ needs.runner-budget.result }} shell-barriers=${{ needs.shell-barriers.result }} store-vitals-state=${{ needs.store-vitals-state.result }} store-vitals=${{ needs.store-vitals.result }} glitchtip=${{ needs.glitchtip.result }} config-drift=${{ needs.config-drift.result }} edge-shield=${{ needs.edge-shield.result }} failure-ledger=${{ needs.failure-ledger.result }} renovate-backlog=${{ needs.renovate-backlog.result }} code-scanning-age=${{ needs.code-scanning-age.result }} tech-currency=${{ needs.tech-currency.result }} self-review=${{ needs.self-review.result }} alert=${{ needs.alert.result }} digest=${{ needs.digest.result }}
         run: |
           for r in $NIKATRU_RESULTS; do
             if [ "${r#*=}" != skipped ]; then echo "ran: $NIKATRU_RESULTS"; exit 0; fi

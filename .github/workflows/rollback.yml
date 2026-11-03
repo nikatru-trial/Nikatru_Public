@@ -30,7 +30,7 @@ on:
         type: string
 
 concurrency:
-  group: ${{ ((github.event.client_payload.event || github.event_name) == 'schedule' || inputs.worker_slot != '') && 'rollback-rehearsal' || 'rollback' }}
+  group: ${{ inputs.worker_slot != '' && 'rollback-rehearsal' || 'rollback' }}
   cancel-in-progress: false
 
 permissions:
@@ -303,6 +303,8 @@ jobs:
           UNIT: ${{ inputs.unit }}
           DEPLOYMENT: ${{ inputs.deployment }}
           DRY_RUN: ${{ inputs.dry_run }}
+          BRIDGE_WATCH_SECRET: ${{ secrets.BRIDGE_WATCH_SECRET }}
+          NIKATRU_BRIDGE_WATCH_URL: https://gh-bridge.nikatru.workers.dev/watch
         shell: bash
         run: |
           dry=()
@@ -329,7 +331,7 @@ jobs:
   rehearse:
     needs: [nikatru-pin]
     name: Rehearse the break-glass rollback plan (dry run, every production unit)
-    if: ((github.event.client_payload.event || github.event_name) == 'schedule' || inputs.worker_slot != '')
+    if: inputs.worker_slot != ''
     runs-on: ubuntu-24.04
     timeout-minutes: 10
     permissions:
@@ -424,10 +426,12 @@ jobs:
       - name: Plan every production unit back to its last known-good, changing nothing
         env:
           GH_TOKEN: ${{ github.token }}
+          BRIDGE_WATCH_SECRET: ${{ secrets.BRIDGE_WATCH_SECRET }}
+          NIKATRU_BRIDGE_WATCH_URL: https://gh-bridge.nikatru.workers.dev/watch
         run: |
           NIKATRU_QUIET="$(mktemp "${RUNNER_TEMP:-/tmp}/nikatru-step.XXXXXX")"
           cat > "$NIKATRU_QUIET" <<'NIKATRU_QUIET_EOF'
-          node tooling/ops/rollback.mjs --break-glass --dry-run --audit "$RUNNER_TEMP/rollback-audit.jsonl" --by "rollback.yml schedule"
+          node tooling/ops/rollback.mjs --break-glass --dry-run --audit "$RUNNER_TEMP/rollback-audit.jsonl" --by "rollback.yml worker slot"
           NIKATRU_QUIET_EOF
           NIKATRU_SHELL="${BASH:-bash}"; if command -v cygpath >/dev/null 2>&1; then NIKATRU_SHELL="$(cygpath -w "$NIKATRU_SHELL")"; fi
           node "$GITHUB_WORKSPACE/../.nikatru-shell/quiet-step.mjs" --name rollback.rehearse.4 -- "$NIKATRU_SHELL" -e "$NIKATRU_QUIET"
@@ -435,10 +439,12 @@ jobs:
         if: ${{ !cancelled() }}
         env:
           GH_TOKEN: ${{ github.token }}
+          BRIDGE_WATCH_SECRET: ${{ secrets.BRIDGE_WATCH_SECRET }}
+          NIKATRU_BRIDGE_WATCH_URL: https://gh-bridge.nikatru.workers.dev/watch
         run: |
           NIKATRU_QUIET="$(mktemp "${RUNNER_TEMP:-/tmp}/nikatru-step.XXXXXX")"
           cat > "$NIKATRU_QUIET" <<'NIKATRU_QUIET_EOF'
-          node tooling/ops/rollback.mjs --break-glass --dry-run --rehearse-previous --audit "$RUNNER_TEMP/rollback-audit-previous.jsonl" --by "rollback.yml schedule (previous)"
+          node tooling/ops/rollback.mjs --break-glass --dry-run --rehearse-previous --audit "$RUNNER_TEMP/rollback-audit-previous.jsonl" --by "rollback.yml worker slot (previous)"
           NIKATRU_QUIET_EOF
           NIKATRU_SHELL="${BASH:-bash}"; if command -v cygpath >/dev/null 2>&1; then NIKATRU_SHELL="$(cygpath -w "$NIKATRU_SHELL")"; fi
           node "$GITHUB_WORKSPACE/../.nikatru-shell/quiet-step.mjs" --name rollback.rehearse.5 -- "$NIKATRU_SHELL" -e "$NIKATRU_QUIET"
