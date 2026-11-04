@@ -157,6 +157,16 @@ jobs:
           NIKATRU_QUIET_EOF
           NIKATRU_SHELL="${BASH:-bash}"; if command -v cygpath >/dev/null 2>&1; then NIKATRU_SHELL="$(cygpath -w "$NIKATRU_SHELL")"; fi
           node "$GITHUB_WORKSPACE/../.nikatru-shell/quiet-step.mjs" --name rehearse-app2.rehearse.7 -- "$NIKATRU_SHELL" -e "$NIKATRU_QUIET"
+      - name: Record time-to-ship into the rehearsal report
+        if: ${{ !cancelled() }}
+        run: |
+          NIKATRU_QUIET="$(mktemp "${RUNNER_TEMP:-/tmp}/nikatru-step.XXXXXX")"
+          cat > "$NIKATRU_QUIET" <<'NIKATRU_QUIET_EOF'
+          if [ ! -f "$RUNNER_TEMP/app2-rehearsal.json" ]; then echo "no rehearsal report to record (the rehearsal step wrote none)"; exit 2; fi
+          node tooling/kit/rehearsal-trend.mjs --record "$RUNNER_TEMP/app2-rehearsal.json" --run "${GITHUB_RUN_ID}/${GITHUB_RUN_ATTEMPT}" --into "$RUNNER_TEMP/app2-rehearsal.json"
+          NIKATRU_QUIET_EOF
+          NIKATRU_SHELL="${BASH:-bash}"; if command -v cygpath >/dev/null 2>&1; then NIKATRU_SHELL="$(cygpath -w "$NIKATRU_SHELL")"; fi
+          node "$GITHUB_WORKSPACE/../.nikatru-shell/quiet-step.mjs" --name rehearse-app2.rehearse.8 -- "$NIKATRU_SHELL" -e "$NIKATRU_QUIET"
       - name: Store app2-rehearsal in the bridge's private home (generated)
         if: ${{ !cancelled() }}
         shell: bash
@@ -176,7 +186,7 @@ jobs:
           node -e "const r=require(process.argv[1]);console.log(JSON.stringify(r.totals,null,2))" "$RUNNER_TEMP/app2-rehearsal.json"
           NIKATRU_QUIET_EOF
           NIKATRU_SHELL="${BASH:-bash}"; if command -v cygpath >/dev/null 2>&1; then NIKATRU_SHELL="$(cygpath -w "$NIKATRU_SHELL")"; fi
-          node "$GITHUB_WORKSPACE/../.nikatru-shell/quiet-step.mjs" --name rehearse-app2.rehearse.9 -- "$NIKATRU_SHELL" -e "$NIKATRU_QUIET"
+          node "$GITHUB_WORKSPACE/../.nikatru-shell/quiet-step.mjs" --name rehearse-app2.rehearse.10 -- "$NIKATRU_SHELL" -e "$NIKATRU_QUIET"
       - name: The rehearsal's verdict
         env:
           REHEARSE_EXIT: ${{ steps.rehearse.outputs.exit }}
@@ -187,7 +197,7 @@ jobs:
           test "${REHEARSE_EXIT}" = "0"
           NIKATRU_QUIET_EOF
           NIKATRU_SHELL="${BASH:-bash}"; if command -v cygpath >/dev/null 2>&1; then NIKATRU_SHELL="$(cygpath -w "$NIKATRU_SHELL")"; fi
-          node "$GITHUB_WORKSPACE/../.nikatru-shell/quiet-step.mjs" --name rehearse-app2.rehearse.10 -- "$NIKATRU_SHELL" -e "$NIKATRU_QUIET"
+          node "$GITHUB_WORKSPACE/../.nikatru-shell/quiet-step.mjs" --name rehearse-app2.rehearse.11 -- "$NIKATRU_SHELL" -e "$NIKATRU_QUIET"
       - name: Store this job's red detail in the bridge's private home (generated)
         if: always()
         continue-on-error: true

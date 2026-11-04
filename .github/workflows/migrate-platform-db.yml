@@ -2,7 +2,7 @@
 # Do not edit: `node tooling/ci/gen-public-shell.mjs --check` re-generates it and fails on any difference.
 env:
   NIKATRU_PRIVATE_REPO: com-nikatru/Nikatru_Private
-  NIKATRU_SHELL_FINGERPRINT: cf4a366d7d802c647f155e4fc520ba5b484d6a59fc6e16d716a55169212a95fc
+  NIKATRU_SHELL_FINGERPRINT: 47f2587d311208dd4d6eb7fefd05e580b8550afb85e29c0dad7b3f92ddf5096b
 
 name: Part of CI · Migrate PLATFORM_DB
 
@@ -46,7 +46,7 @@ jobs:
     environment: production
     permissions:
       contents: read
-      deployments: read
+      deployments: write
     outputs:
       restore_bookmark: ${{ steps.restore_point.outputs.bookmark }}
       pre_migration_export: ${{ steps.pre_export.outputs.export }}
@@ -156,6 +156,14 @@ jobs:
         env:
           PRE_MIGRATION_MANIFEST: ${{ steps.export_manifest.outputs.command-output }}
         run: node tooling/ops/pre-migration-export.mjs
+      - name: Record this apply's rollback point in the migration ledger (refuse the apply without it)
+        id: ledger
+        if: steps.plan.outputs.deploy == 'true'
+        env:
+          GH_TOKEN: ${{ github.token }}
+          PRE_MIGRATION_EXPORT_ID: ${{ steps.pre_export.outputs.export }}
+          RESTORE_BOOKMARK: ${{ steps.restore_point.outputs.bookmark }}
+        run: node tooling/ops/pre-migration-export.mjs --record
       - name: Apply PLATFORM_DB migrations (before every deploy that reads it)
         if: steps.plan.outputs.deploy == 'true'
         uses: cloudflare/wrangler-action@953926a2e2182532811c01a25e53647d93bf07c0

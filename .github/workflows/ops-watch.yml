@@ -1479,7 +1479,7 @@ jobs:
           code=$?
           set -e
           if [ "$code" -eq 2 ]; then
-            echo "::error title=The wip/* branch sweep is UNKNOWN - nothing more was deleted::The bridge's wip-sweep list could not be read, or a delete call was not answered (the step holds no bridge ops URL or key, the bridge refused, or GitHub failed it). The step log names which; every branch the bridge did not delete is still there."
+            echo "::error title=The wip/* branch sweep is UNKNOWN - nothing more was deleted::The bridge's wip-sweep list could not be read, or a delete call was not answered (the step holds no bridge ops URL, or no BRIDGE_OPS_SECRET - the sweep is never signed with the read key -, the bridge refused, or GitHub failed it). The step log names which; every branch the bridge did not delete is still there."
           fi
           exit "$code"
           NIKATRU_QUIET_EOF
@@ -2583,21 +2583,6 @@ jobs:
         working-directory: ${{ github.workspace }}
         run: printf '/.nikatru-trusted/\n' >> "$(git rev-parse --git-path info/exclude)"
       - uses: ./.nikatru-trusted/.github/actions/setup-node
-      - name: The ISO week the log cache is keyed by, and the week before it
-        id: week
-        run: |
-          NIKATRU_QUIET="$(mktemp "${RUNNER_TEMP:-/tmp}/nikatru-step.XXXXXX")"
-          cat > "$NIKATRU_QUIET" <<'NIKATRU_QUIET_EOF'
-          echo "week=$(date -u +%G-W%V)" >> "$GITHUB_OUTPUT"
-          echo "prev=$(date -u -d '7 days ago' +%G-W%V)" >> "$GITHUB_OUTPUT"
-          NIKATRU_QUIET_EOF
-          NIKATRU_SHELL="${BASH:-bash}"; if command -v cygpath >/dev/null 2>&1; then NIKATRU_SHELL="$(cygpath -w "$NIKATRU_SHELL")"; fi
-          node "$GITHUB_WORKSPACE/../.nikatru-shell/quiet-step.mjs" --name ops-watch.failure-ledger.3 -- "$NIKATRU_SHELL" -e "$NIKATRU_QUIET"
-      - name: Restore this run's ledger cache (this attempt's exact key only)
-        uses: actions/cache/restore@55cc8345863c7cc4c66a329aec7e433d2d1c52a9
-        with:
-          path: .cache/triage
-          key: failure-ledger-${{ steps.week.outputs.week }}-${{ github.run_id }}-${{ github.run_attempt }}
       - name: Every failed run of the last eight days, and the recorded cause it maps to
         id: ledger
         env:
@@ -2610,7 +2595,6 @@ jobs:
           NIKATRU_QUIET="$(mktemp "${RUNNER_TEMP:-/tmp}/nikatru-step.XXXXXX")"
           cat > "$NIKATRU_QUIET" <<'NIKATRU_QUIET_EOF'
           since="$(date -u -d '8 days ago' +%Y-%m-%dT%H:%M:%SZ)"
-          if [ -d .cache/triage ]; then find .cache/triage -type f -mtime +8 -delete; fi
           set +e
           node tooling/ops/triage-failed-runs.mjs --since "$since" --no-prs --branch main --cache-dir .cache/triage --max-requests 2000 > "${RUNNER_TEMP}/ledger.txt" 2>&1
           code=$?
@@ -2627,13 +2611,7 @@ jobs:
           exit "$code"
           NIKATRU_QUIET_EOF
           NIKATRU_SHELL="${BASH:-bash}"; if command -v cygpath >/dev/null 2>&1; then NIKATRU_SHELL="$(cygpath -w "$NIKATRU_SHELL")"; fi
-          node "$GITHUB_WORKSPACE/../.nikatru-shell/quiet-step.mjs" --name ops-watch.failure-ledger.5 -- "$NIKATRU_SHELL" -e "$NIKATRU_QUIET"
-      - name: Save this run's ledger cache, read in full or not
-        if: always() && steps.week.outputs.week != ''
-        uses: actions/cache/save@55cc8345863c7cc4c66a329aec7e433d2d1c52a9
-        with:
-          path: .cache/triage
-          key: failure-ledger-${{ steps.week.outputs.week }}-${{ github.run_id }}-${{ github.run_attempt }}
+          node "$GITHUB_WORKSPACE/../.nikatru-shell/quiet-step.mjs" --name ops-watch.failure-ledger.3 -- "$NIKATRU_SHELL" -e "$NIKATRU_QUIET"
       - name: The guard yield is fresh, attributed, and every zero-catch guard is dispositioned
         if: always()
         run: |
@@ -2651,7 +2629,7 @@ jobs:
           exit "$code"
           NIKATRU_QUIET_EOF
           NIKATRU_SHELL="${BASH:-bash}"; if command -v cygpath >/dev/null 2>&1; then NIKATRU_SHELL="$(cygpath -w "$NIKATRU_SHELL")"; fi
-          node "$GITHUB_WORKSPACE/../.nikatru-shell/quiet-step.mjs" --name ops-watch.failure-ledger.7 -- "$NIKATRU_SHELL" -e "$NIKATRU_QUIET"
+          node "$GITHUB_WORKSPACE/../.nikatru-shell/quiet-step.mjs" --name ops-watch.failure-ledger.4 -- "$NIKATRU_SHELL" -e "$NIKATRU_QUIET"
       - name: Store this job's red detail in the bridge's private home (generated)
         if: always()
         continue-on-error: true

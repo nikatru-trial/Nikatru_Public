@@ -1275,10 +1275,14 @@ def runner_sources_touched(run=subprocess.run):
 # 429 from the bridge's per-minute bucket and a send that got no answer at all; this port made ONE send, so a rate-limit
 # hit or one dropped connection lost the gate of a run whose every lane was green. The same bounded waits, re-signed
 # each time: a 429 is sent again after each of RATE_WAITS_S, a send with no answer (a refused or dropped connection, a
-# DNS blip) after each of NETWORK_WAITS_S; a TIMEOUT (the bridge took the connection and did not answer) and every
-# other HTTP answer are lost at once.
+# DNS blip) after each of NETWORK_WAITS_S; every other HTTP answer is lost at once.
+# ⏱ 2026-11-04 · club-integration-1104: a TIMEOUT (the bridge took the connection and did not answer within
+# PR_META_TIMEOUT_S) is re-sent, re-signed, exactly TIMEOUT_RESENDS times and then lost: one slow bridge answer used to
+# lose the gate of a run whose every lane was green (39 minutes of it). Bounded, so a bridge that never answers costs
+# (TIMEOUT_RESENDS + 1) x PR_META_TIMEOUT_S, never a hung step. Tests: tooling/ci/test/pr-meta-timeout-retry.test.mjs.
 RATE_WAITS_S = (20, 45)
 NETWORK_WAITS_S = (2, 6)
+TIMEOUT_RESENDS = 1
 
 
 def _is_timeout(e):
@@ -1287,7 +1291,7 @@ def _is_timeout(e):
 
 def read_pr_meta(env, opener=urllib.request.urlopen, now=time.time, sleep=time.sleep):
     """({answer} | None, why): a signed POST /pr-meta, carrying this job's OIDC token, re-sent on a 429 or on no
-    answer at all within RATE_WAITS_S / NETWORK_WAITS_S."""
+    answer at all within RATE_WAITS_S / NETWORK_WAITS_S, and on a timeout TIMEOUT_RESENDS times."""
     url = env.get('NIKATRU_BRIDGE_READ_URL', '')
     secret = env.get('BRIDGE_READ_SECRET', '')
     pr, sha = env.get('NIKATRU_P_PR', ''), env.get('NIKATRU_P_SHA', '')
@@ -1297,7 +1301,7 @@ def read_pr_meta(env, opener=urllib.request.urlopen, now=time.time, sleep=time.s
         return None, 'BRIDGE_READ_SECRET is not set in this step: the read cannot be signed'
     if not re.fullmatch(r'[1-9][0-9]{0,9}', pr) or not SHA.match(sha):
         return None, 'the dispatch names no PR number and head sha'
-    rate, net = 0, 0
+    rate, net, slow = 0, 0, 0
     while True:
         token, lost = caller_token(env, opener)
         if lost:
@@ -1325,12 +1329,17 @@ def read_pr_meta(env, opener=urllib.request.urlopen, now=time.time, sleep=time.s
                 return None, f'the bridge\'s rate limit refused the read (HTTP 429) — after {len(RATE_WAITS_S) + 1} sends'
             return None, f'the bridge refused the read (HTTP {e.code})'
         except (urllib.error.URLError, OSError) as e:
-            if not _is_timeout(e) and net < len(NETWORK_WAITS_S):
+            if _is_timeout(e):
+                if slow < TIMEOUT_RESENDS:
+                    slow += 1
+                    continue
+                return None, (f'the bridge read failed ({type(e).__name__}): no answer within {PR_META_TIMEOUT_S}s, '
+                              f'{slow + 1} times — after {net + rate + slow + 1} sends')
+            if net < len(NETWORK_WAITS_S):
                 sleep(NETWORK_WAITS_S[net])
                 net += 1
                 continue
-            more = f' — after {net + rate + 1} sends' if not _is_timeout(e) else ''
-            return None, f'the bridge read failed ({type(e).__name__}){more}'
+            return None, f'the bridge read failed ({type(e).__name__}) — after {net + rate + slow + 1} sends'
         except ValueError as e:
             return None, f'the bridge read failed ({type(e).__name__})'
     if not isinstance(answer, dict):

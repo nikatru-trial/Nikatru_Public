@@ -192,6 +192,38 @@ function parseDartText(lines) {
   return counts ? { failures, failed, dart: true, counts: `dart/flutter test: ${counts}` } : null;
 }
 
+// ⏱ 2026-11-04 · club-integration-1104: a red `dart test` step (1,078 passed, 1 failed) reached the report as
+// `(earlier detail cut to fit the report)` and no failing test's name. On a runner GITHUB_ACTIONS=true, so
+// package:test's default reporter is `github`, not the expanded one parseDartText reads: a failure is a
+// `::group::❌ <name> (failed)` line, its error, `::endgroup::`, and the run ends `::error::N tests passed, M failed.`
+// Without a result file (the `dart test` legs write none) the step named nothing, so its tail was all a cut kept.
+const DART_GITHUB_FAIL = /^(?:([\w.-]+): )?(?:::group::)?❌ (.*) \(failed\)$/;
+const DART_GITHUB_DONE = /^(?:[\w.-]+: )?(?:::error::|🎉 |✅ )(\d+) tests? passed\b/;
+/** `flutter test` / `dart test`, github reporter (package:test's default on GitHub Actions): `❌ … (failed)` groups. */
+function parseDartGithub(lines) {
+  const failures = [];
+  let counts = null;
+  let failed = 0;
+  lines.forEach((l, i) => {
+    const done = l.length < 400 ? DART_GITHUB_DONE.exec(l) : null;
+    if (done) {
+      const f = Number(/, (\d+) failed\b/.exec(l)?.[1] ?? 0);
+      const s = Number(/, (\d+) skipped\b/.exec(l)?.[1] ?? 0);
+      counts = `${done[1]} passed, ${s} skipped, ${f} failed`;
+      failed = f;
+      return;
+    }
+    const m = DART_GITHUB_FAIL.exec(l);
+    if (!m) return;
+    const name = m[2];
+    const file = /^(\S+\.dart): /.exec(name)?.[1] ?? /^loading (\S+\.dart)$/.exec(name)?.[1] ?? '';
+    const own = (x) => (m[1] && x.startsWith(`${m[1]}: `) ? x.slice(m[1].length + 2) : x);
+    failures.push({ name, file, lines: firstLines(lines.slice(i + 1).map(own), 0, (x) => /^::endgroup::$|^::group::/.test(x) || DART_GITHUB_FAIL.test(x)) });
+  });
+  if (!counts && failures.length === 0) return null;
+  return { failures, failed: Math.max(failed, failures.length), dart: true, counts: counts ? `dart/flutter test: ${counts}` : null };
+}
+
 /** node --test, TAP reporter: `not ok N - name` and its YAML block (a parent whose subtests failed is not named). */
 function parseNodeTap(lines) {
   const failures = [];
@@ -287,16 +319,20 @@ export function testFailures(captured, resultFiles = []) {
     if (got) found.push({ ...got, counts: `flutter test (${r.name}): ${got.counts}` });
   }
   // The text is read too: a step can run more than one runner, and a result file is written only by the legs that ask.
-  const fromText = [parseDartText, parseNodeTap, parseNodeSpec, parseVitest, parsePlaywright].map((p) => p(lines)).filter(Boolean);
+  const fromText = [parseDartText, parseDartGithub, parseNodeTap, parseNodeSpec, parseVitest, parsePlaywright].map((p) => p(lines)).filter(Boolean);
   if (found.length === 0) found.push(...fromText);
   else {
     // ⏱ 2026-10-12 · review of #447, finding 4: a package that died before its reporter wrote JSON (a compile
     // error, a crash) still names its `[E]` tests in the text, so only a text failure the JSON already names
     // is dropped — by file and name — and the text's counts give way to the files'.
     const inJson = new Set(found.flatMap((r) => r.failures).map((f) => `${f.file.replace(/:\d+$/, '')}\0${f.name}`));
+    // A one-suite run prints no path before a test's name (either text reporter), so a text failure with no file
+    // is the JSON's when the JSON names it at all.
+    const namesInJson = new Set(found.flatMap((r) => r.failures).map((f) => f.name));
+    const known = (f) => inJson.has(`${f.file}\0${f.name.replace(/^\S+\.dart: /, '')}`) || (!f.file && namesInJson.has(f.name));
     for (const r of fromText) {
       if (!r.dart) found.push(r);
-      else found.push({ ...r, counts: null, failures: r.failures.filter((f) => !inJson.has(`${f.file}\0${f.name.replace(/^\S+\.dart: /, '')}`)) });
+      else found.push({ ...r, counts: null, failures: r.failures.filter((f) => !known(f)) });
     }
   }
   // ⏱ 2026-10-12 · review of #447, finding 3: a guard's `12:30 +5: deploying` or `  3 passed` is not a test run that

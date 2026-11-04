@@ -1396,6 +1396,7 @@ jobs:
       deployments: write
     outputs:
       tool: ${{ steps.tag.outputs.id }}
+      gates_tail: ${{ steps.gates.outputs.tail }}
     steps:
       - name: Check out the private tree (generated)
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
@@ -1763,16 +1764,27 @@ jobs:
           echo "::error::$why"
           exit 1
       - name: Gates (manifest == CHANGELOG == tag, policy, core sync, lint, store metadata, catalogue)
+        id: gates
+        shell: bash
         env:
           TOOL: ${{ steps.tag.outputs.id }}
           VERSION: ${{ steps.tag.outputs.version }}
         run: |
-          node scripts/check-version.mjs "$TOOL" --expect "$VERSION"
-          node scripts/policy-check.mjs   "$TOOL" --release
-          node scripts/check-core-sync.mjs "$TOOL"
-          node scripts/lint.mjs "$TOOL"
-          node scripts/check-store-metadata.mjs "$TOOL"
-          node scripts/check-catalog.mjs
+          code=0
+          {
+            node scripts/check-version.mjs "$TOOL" --expect "$VERSION" &&
+            node scripts/policy-check.mjs   "$TOOL" --release &&
+            node scripts/check-core-sync.mjs "$TOOL" &&
+            node scripts/lint.mjs "$TOOL" &&
+            node scripts/check-store-metadata.mjs "$TOOL" &&
+            node scripts/check-catalog.mjs
+          } > "$RUNNER_TEMP/release-gates.log" 2>&1 || code=$?
+          cat "$RUNNER_TEMP/release-gates.log"
+          if [ "$code" -ne 0 ]; then
+            tail -n 40 "$RUNNER_TEMP/release-gates.log" > "$RUNNER_TEMP/release-gates.tail"
+            echo "tail=$(head -c 6000 "$RUNNER_TEMP/release-gates.tail" | base64 -w0)" >> "$GITHUB_OUTPUT"
+          fi
+          exit "$code"
       - name: Secret scan (full tree)
         run: node scripts/secret-scan.mjs .
       - name: Sims
@@ -2982,10 +2994,16 @@ jobs:
           ACTION: ${{ github.event.action }}
           LABEL: ${{ '' }}
           LANE: ${{ inputs.lane }}
+          RELEASE_GATES_TAIL: ${{ needs.release.outputs.gates_tail }}
         run: |
           NIKATRU_QUIET="$(mktemp "${RUNNER_TEMP:-/tmp}/nikatru-step.XXXXXX")"
           cat > "$NIKATRU_QUIET" <<'NIKATRU_QUIET_EOF'
           set -euo pipefail
+          if [ -n "${RELEASE_GATES_TAIL:-}" ]; then
+            echo "release Gates step was red; its last lines:"
+            printf '%s' "$RELEASE_GATES_TAIL" | base64 -d || echo "(the handed tail did not decode)"
+            echo
+          fi
           # 🔴 WHY THIS JOB EXISTS. Three trigger families share one file, so
           # every job below carries a lane guard, and a lane guard that is wrong
           # makes its job SKIP. GitHub reports a skipped job as Success, and a

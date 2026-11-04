@@ -294,7 +294,7 @@ jobs:
       worker: all
       ref: ${{ needs.gate.outputs.sha }}
       pr: ${{ inputs.private_pr }}
-      nikatru_sha: ${{ needs.nikatru-pin.outputs.sha || 'nikatru-pin-did-not-succeed..' }}
+      nikatru_sha: ${{ needs.gate.outputs.sha || 'nikatru-pin-did-not-succeed..' }}
     permissions:
       contents: read
       checks: read
@@ -314,7 +314,7 @@ jobs:
       rail: ${{ inputs.rail || 'all' }}
       ref: ${{ needs.gate.outputs.sha }}
       evidence: ${{ (github.event.client_payload.ref || inputs.private_ref || 'refs/heads/main') == 'refs/heads/main' && 'true' || 'false' }}
-      nikatru_sha: ${{ needs.nikatru-pin.outputs.sha || 'nikatru-pin-did-not-succeed..' }}
+      nikatru_sha: ${{ needs.gate.outputs.sha || 'nikatru-pin-did-not-succeed..' }}
     permissions:
       contents: read
       id-token: write
@@ -443,7 +443,7 @@ jobs:
     with:
       worker: all
       ref: ${{ needs.main-gate.outputs.sha }}
-      nikatru_sha: ${{ needs.nikatru-pin.outputs.sha || 'nikatru-pin-did-not-succeed..' }}
+      nikatru_sha: ${{ needs.main-gate.outputs.sha || 'nikatru-pin-did-not-succeed..' }}
     permissions:
       contents: read
       checks: read
