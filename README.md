@@ -19,11 +19,12 @@ verdict back to that repository. It is generated: a pull request here is not how
   that woke it from a fork or a pull request.
 - **Barrier**: a fork pull request's run waits for a maintainer's approval (`approval_policy: all_external_contributors`,
   read live by `tooling/ci/assert-shell-barriers.mjs` in the private repository). It is what keeps
-  an outsider's workflow from running at all: from waking a chain, and from restoring the
-  `actions/cache` hand-offs between the jobs of one run (signed store bundles, debug symbols, the
-  extensions release directory). It is no longer the only one: each hand-off is SEALED before
-  it is cached (AES-256-GCM, bound to its cache key) and unsealed only by a job of the same
-  repository holding the key, so a restore without it reads ciphertext. What the seal does NOT
+  an outsider's workflow from running at all: from waking a chain, and from reading the
+  hand-offs between the jobs of one run (signed store bundles, debug symbols, the extensions
+  release directory). It is no longer the only one: each hand-off is SEALED before it leaves its
+  job (AES-256-GCM, bound to its run and name) and travels as an artifact of THAT run alone,
+  kept 1 day, which no other run can upload into; it is unsealed only by a job of the same
+  run holding the key, so a download without it reads ciphertext. What the seal does NOT
   stop: the seal steps run in a job that already ran a private pull request's code, which can
   reach any later step of its job. Those steps hold only keys derived for THIS run (the staging
   step derives them from the master key before any private code runs; no step after it binds the
@@ -32,7 +33,7 @@ verdict back to that repository. It is generated: a pull request here is not how
   master in its seal steps. Against a private pull request's own run it rests on review.
 - **Logs**: each script step prints one line (`ok <step> <ms>` or `RED <step> exit N`). The
   tail of a red step goes to the private pull request, not to this log.
-- **Artifacts**: none here. An artifact meant for a person (a public one is downloadable by anyone
+- **Artifacts**: only the sealed hand-offs above (`nikatru-handoff-*`, ciphertext). An artifact meant for a person (a public one is downloadable by anyone
   signed in) goes to the bridge's private store instead (`POST /artifact`, a live run's declaring
   job only), and is listed with expiring links on the private pull request or artifact issue.
 - **Reports**: each job seals its red detail before it caches it; each workflow ends with
@@ -50,7 +51,7 @@ verdict back to that repository. It is generated: a pull request here is not how
   `BRIDGE_ARTIFACT_SECRET` (signs a private artifact upload; held only by the private-artifact
   steps), plus what each workflow reads.
 
-## Workflows (51)
+## Workflows (52)
 
 - `apple-expiry-write.yml`
 - `autopilot-watch.yml`
@@ -89,6 +90,7 @@ verdict back to that repository. It is generated: a pull request here is not how
 - `regen-gradle-verify.yml`
 - `rehearse-app2.yml`
 - `renovate.yml` — reports `renovate`
+- `review-crawl.yml`
 - `rollback.yml`
 - `shell-rehearsal.yml` — reports `shell-rehearsal`
 - `status-page.yml`

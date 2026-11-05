@@ -168,7 +168,6 @@ jobs:
     timeout-minutes: 30
     permissions:
       contents: read
-      actions: read
     strategy:
       fail-fast: false
       matrix:
@@ -269,71 +268,25 @@ jobs:
           NIKATRU_PATHS: ${{ runner.temp }}/guard-tests/
           NIKATRU_IF_NO_FILES: error
         run: node tooling/ci/shell-handoff.mjs stage
-      - name: Seal guard-tests-junit-shard-${{ matrix.shard }} for the public cache (generated)
+      - name: Seal guard-tests-junit-shard-${{ matrix.shard }} for this run's later jobs (generated)
         id: nikatru-seal-1
         if: ${{ (!cancelled()) && steps.nikatru-stage-1.outputs.has == 'true' }}
         shell: bash
         working-directory: ${{ github.workspace }}
         env:
           NIKATRU_HANDOFF_KEY_FILE: ${{ github.workspace }}/../.nikatru-shell/handoff.key
-          NIKATRU_HANDOFF_KEY: nikatru-handoff-guard-tests-junit-shard-${{ matrix.shard }}-${{ github.run_id }}-${{ github.run_attempt }}
+          NIKATRU_HANDOFF_KEY: nikatru-handoff-guard-tests-junit-shard-${{ matrix.shard }}-${{ github.run_id }}-run
         run: node tooling/ci/shell-handoff.mjs seal
-      - name: Hand off guard-tests-junit-shard-${{ matrix.shard }} to this run's later jobs (generated)
+      - name: Hand off guard-tests-junit-shard-${{ matrix.shard }} to this run's later jobs, sealed (generated)
         if: ${{ (!cancelled()) && steps.nikatru-seal-1.outcome == 'success' }}
-        uses: actions/cache/save@55cc8345863c7cc4c66a329aec7e433d2d1c52a9
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9
         with:
+          name: nikatru-handoff-guard-tests-junit-shard-${{ matrix.shard }}
           path: .nikatru-handoff/sealed
-          key: nikatru-handoff-guard-tests-junit-shard-${{ matrix.shard }}-${{ github.run_id }}-${{ github.run_attempt }}
-          enableCrossOsArchive: true
-      - name: Confirm the guard-tests-junit-shard-${{ matrix.shard }} hand-off is in the cache (generated)
-        id: nikatru-saved-1-1
-        if: ${{ (!cancelled()) && steps.nikatru-seal-1.outcome == 'success' }}
-        uses: actions/cache/restore@55cc8345863c7cc4c66a329aec7e433d2d1c52a9
-        with:
-          path: .nikatru-handoff/sealed
-          key: nikatru-handoff-guard-tests-junit-shard-${{ matrix.shard }}-${{ github.run_id }}-${{ github.run_attempt }}
-          lookup-only: true
-          enableCrossOsArchive: true
-      - name: "Hand off guard-tests-junit-shard-${{ matrix.shard }} again, as -r2: no save was confirmed (generated)"
-        if: ${{ (!cancelled()) && steps.nikatru-seal-1.outcome == 'success' && steps.nikatru-saved-1-1.outputs.cache-hit != 'true' }}
-        uses: actions/cache/save@55cc8345863c7cc4c66a329aec7e433d2d1c52a9
-        with:
-          path: .nikatru-handoff/sealed
-          key: nikatru-handoff-guard-tests-junit-shard-${{ matrix.shard }}-${{ github.run_id }}-${{ github.run_attempt }}-r2
-          enableCrossOsArchive: true
-      - name: Confirm the guard-tests-junit-shard-${{ matrix.shard }} hand-off is in the cache as -r2 (generated)
-        id: nikatru-saved-1-2
-        if: ${{ (!cancelled()) && steps.nikatru-seal-1.outcome == 'success' && steps.nikatru-saved-1-1.outputs.cache-hit != 'true' }}
-        uses: actions/cache/restore@55cc8345863c7cc4c66a329aec7e433d2d1c52a9
-        with:
-          path: .nikatru-handoff/sealed
-          key: nikatru-handoff-guard-tests-junit-shard-${{ matrix.shard }}-${{ github.run_id }}-${{ github.run_attempt }}-r2
-          lookup-only: true
-          enableCrossOsArchive: true
-      - name: "Hand off guard-tests-junit-shard-${{ matrix.shard }} again, as -r3: no save was confirmed (generated)"
-        if: ${{ (!cancelled()) && steps.nikatru-seal-1.outcome == 'success' && steps.nikatru-saved-1-1.outputs.cache-hit != 'true' && steps.nikatru-saved-1-2.outputs.cache-hit != 'true' }}
-        uses: actions/cache/save@55cc8345863c7cc4c66a329aec7e433d2d1c52a9
-        with:
-          path: .nikatru-handoff/sealed
-          key: nikatru-handoff-guard-tests-junit-shard-${{ matrix.shard }}-${{ github.run_id }}-${{ github.run_attempt }}-r3
-          enableCrossOsArchive: true
-      - name: Confirm the guard-tests-junit-shard-${{ matrix.shard }} hand-off is in the cache as -r3 (generated)
-        id: nikatru-saved-1-3
-        if: ${{ (!cancelled()) && steps.nikatru-seal-1.outcome == 'success' && steps.nikatru-saved-1-1.outputs.cache-hit != 'true' && steps.nikatru-saved-1-2.outputs.cache-hit != 'true' }}
-        uses: actions/cache/restore@55cc8345863c7cc4c66a329aec7e433d2d1c52a9
-        with:
-          path: .nikatru-handoff/sealed
-          key: nikatru-handoff-guard-tests-junit-shard-${{ matrix.shard }}-${{ github.run_id }}-${{ github.run_attempt }}-r3
-          lookup-only: true
-          enableCrossOsArchive: true
-      - name: Fail when no guard-tests-junit-shard-${{ matrix.shard }} hand-off save was confirmed (generated)
-        id: nikatru-unsaved-1
-        if: ${{ (!cancelled()) && steps.nikatru-seal-1.outcome == 'success' && steps.nikatru-saved-1-1.outputs.cache-hit != 'true' && steps.nikatru-saved-1-2.outputs.cache-hit != 'true' && steps.nikatru-saved-1-3.outputs.cache-hit != 'true' }}
-        shell: bash
-        env:
-          NIKATRU_HANDOFF_KEY: nikatru-handoff-guard-tests-junit-shard-${{ matrix.shard }}-${{ github.run_id }}-${{ github.run_attempt }}
-          GH_TOKEN: ${{ github.token }}
-        run: for t in 0 10 20 30 40 50 60 70 80 90; do [ "$t" = 0 ] || sleep 10; if j="$(curl -fsS --max-time 20 -H "Authorization:Bearer $GH_TOKEN" -H "Accept:application/vnd.github+json" "${GITHUB_API_URL:-https://api.github.com}/repos/$GITHUB_REPOSITORY/actions/caches?key=$NIKATRU_HANDOFF_KEY&per_page=100" | tr -d ' \t\r\n')"; then for x in "$NIKATRU_HANDOFF_KEY" "$NIKATRU_HANDOFF_KEY-r2" "$NIKATRU_HANDOFF_KEY-r3"; do case "$j" in *"\"key\":\"$x\""*) echo "::notice title=hand-off::the save of $x is in the cache, listed by the caches API $t s after the last confirm missed (the cache's read-after-write lag)"; exit 0;; esac; done; fi; done; echo "::error title=hand-off::no save of $NIKATRU_HANDOFF_KEY (nor $NIKATRU_HANDOFF_KEY-r2, $NIKATRU_HANDOFF_KEY-r3) is in the cache, so this run's later jobs cannot restore it; this job fails so a failed-jobs re-run re-runs it" && exit 1
+          if-no-files-found: error
+          retention-days: 1
+          include-hidden-files: true
+          overwrite: true
       - name: Hand this job's red detail to the report job, sealed (generated)
         id: nikatru-handoff
         if: always()
@@ -666,7 +619,6 @@ jobs:
     timeout-minutes: 5
     permissions:
       contents: read
-      actions: read
     strategy:
       fail-fast: false
       matrix:
@@ -794,71 +746,25 @@ jobs:
           NIKATRU_PATHS: ${{ runner.temp }}/guard-tests-pool/guard-tests-junit-shard-${{ matrix.shard }}/
           NIKATRU_IF_NO_FILES: error
         run: node tooling/ci/shell-handoff.mjs stage
-      - name: Seal guard-tests-junit-shard-${{ matrix.shard }} for the public cache (generated)
+      - name: Seal guard-tests-junit-shard-${{ matrix.shard }} for this run's later jobs (generated)
         id: nikatru-seal-2
         if: ${{ (success()) && steps.nikatru-stage-2.outputs.has == 'true' }}
         shell: bash
         working-directory: ${{ github.workspace }}
         env:
           NIKATRU_HANDOFF_KEY_FILE: ${{ github.workspace }}/../.nikatru-shell/handoff.key
-          NIKATRU_HANDOFF_KEY: nikatru-handoff-guard-tests-junit-shard-${{ matrix.shard }}-${{ github.run_id }}-${{ github.run_attempt }}
+          NIKATRU_HANDOFF_KEY: nikatru-handoff-guard-tests-junit-shard-${{ matrix.shard }}-${{ github.run_id }}-run
         run: node tooling/ci/shell-handoff.mjs seal
-      - name: Hand off guard-tests-junit-shard-${{ matrix.shard }} to this run's later jobs (generated)
+      - name: Hand off guard-tests-junit-shard-${{ matrix.shard }} to this run's later jobs, sealed (generated)
         if: ${{ (success()) && steps.nikatru-seal-2.outcome == 'success' }}
-        uses: actions/cache/save@55cc8345863c7cc4c66a329aec7e433d2d1c52a9
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9
         with:
+          name: nikatru-handoff-guard-tests-junit-shard-${{ matrix.shard }}
           path: .nikatru-handoff/sealed
-          key: nikatru-handoff-guard-tests-junit-shard-${{ matrix.shard }}-${{ github.run_id }}-${{ github.run_attempt }}
-          enableCrossOsArchive: true
-      - name: Confirm the guard-tests-junit-shard-${{ matrix.shard }} hand-off is in the cache (generated)
-        id: nikatru-saved-2-1
-        if: ${{ (success()) && steps.nikatru-seal-2.outcome == 'success' }}
-        uses: actions/cache/restore@55cc8345863c7cc4c66a329aec7e433d2d1c52a9
-        with:
-          path: .nikatru-handoff/sealed
-          key: nikatru-handoff-guard-tests-junit-shard-${{ matrix.shard }}-${{ github.run_id }}-${{ github.run_attempt }}
-          lookup-only: true
-          enableCrossOsArchive: true
-      - name: "Hand off guard-tests-junit-shard-${{ matrix.shard }} again, as -r2: no save was confirmed (generated)"
-        if: ${{ (success()) && steps.nikatru-seal-2.outcome == 'success' && steps.nikatru-saved-2-1.outputs.cache-hit != 'true' }}
-        uses: actions/cache/save@55cc8345863c7cc4c66a329aec7e433d2d1c52a9
-        with:
-          path: .nikatru-handoff/sealed
-          key: nikatru-handoff-guard-tests-junit-shard-${{ matrix.shard }}-${{ github.run_id }}-${{ github.run_attempt }}-r2
-          enableCrossOsArchive: true
-      - name: Confirm the guard-tests-junit-shard-${{ matrix.shard }} hand-off is in the cache as -r2 (generated)
-        id: nikatru-saved-2-2
-        if: ${{ (success()) && steps.nikatru-seal-2.outcome == 'success' && steps.nikatru-saved-2-1.outputs.cache-hit != 'true' }}
-        uses: actions/cache/restore@55cc8345863c7cc4c66a329aec7e433d2d1c52a9
-        with:
-          path: .nikatru-handoff/sealed
-          key: nikatru-handoff-guard-tests-junit-shard-${{ matrix.shard }}-${{ github.run_id }}-${{ github.run_attempt }}-r2
-          lookup-only: true
-          enableCrossOsArchive: true
-      - name: "Hand off guard-tests-junit-shard-${{ matrix.shard }} again, as -r3: no save was confirmed (generated)"
-        if: ${{ (success()) && steps.nikatru-seal-2.outcome == 'success' && steps.nikatru-saved-2-1.outputs.cache-hit != 'true' && steps.nikatru-saved-2-2.outputs.cache-hit != 'true' }}
-        uses: actions/cache/save@55cc8345863c7cc4c66a329aec7e433d2d1c52a9
-        with:
-          path: .nikatru-handoff/sealed
-          key: nikatru-handoff-guard-tests-junit-shard-${{ matrix.shard }}-${{ github.run_id }}-${{ github.run_attempt }}-r3
-          enableCrossOsArchive: true
-      - name: Confirm the guard-tests-junit-shard-${{ matrix.shard }} hand-off is in the cache as -r3 (generated)
-        id: nikatru-saved-2-3
-        if: ${{ (success()) && steps.nikatru-seal-2.outcome == 'success' && steps.nikatru-saved-2-1.outputs.cache-hit != 'true' && steps.nikatru-saved-2-2.outputs.cache-hit != 'true' }}
-        uses: actions/cache/restore@55cc8345863c7cc4c66a329aec7e433d2d1c52a9
-        with:
-          path: .nikatru-handoff/sealed
-          key: nikatru-handoff-guard-tests-junit-shard-${{ matrix.shard }}-${{ github.run_id }}-${{ github.run_attempt }}-r3
-          lookup-only: true
-          enableCrossOsArchive: true
-      - name: Fail when no guard-tests-junit-shard-${{ matrix.shard }} hand-off save was confirmed (generated)
-        id: nikatru-unsaved-2
-        if: ${{ (success()) && steps.nikatru-seal-2.outcome == 'success' && steps.nikatru-saved-2-1.outputs.cache-hit != 'true' && steps.nikatru-saved-2-2.outputs.cache-hit != 'true' && steps.nikatru-saved-2-3.outputs.cache-hit != 'true' }}
-        shell: bash
-        env:
-          NIKATRU_HANDOFF_KEY: nikatru-handoff-guard-tests-junit-shard-${{ matrix.shard }}-${{ github.run_id }}-${{ github.run_attempt }}
-          GH_TOKEN: ${{ github.token }}
-        run: for t in 0 10 20 30 40 50 60 70 80 90; do [ "$t" = 0 ] || sleep 10; if j="$(curl -fsS --max-time 20 -H "Authorization:Bearer $GH_TOKEN" -H "Accept:application/vnd.github+json" "${GITHUB_API_URL:-https://api.github.com}/repos/$GITHUB_REPOSITORY/actions/caches?key=$NIKATRU_HANDOFF_KEY&per_page=100" | tr -d ' \t\r\n')"; then for x in "$NIKATRU_HANDOFF_KEY" "$NIKATRU_HANDOFF_KEY-r2" "$NIKATRU_HANDOFF_KEY-r3"; do case "$j" in *"\"key\":\"$x\""*) echo "::notice title=hand-off::the save of $x is in the cache, listed by the caches API $t s after the last confirm missed (the cache's read-after-write lag)"; exit 0;; esac; done; fi; done; echo "::error title=hand-off::no save of $NIKATRU_HANDOFF_KEY (nor $NIKATRU_HANDOFF_KEY-r2, $NIKATRU_HANDOFF_KEY-r3) is in the cache, so this run's later jobs cannot restore it; this job fails so a failed-jobs re-run re-runs it" && exit 1
+          if-no-files-found: error
+          retention-days: 1
+          include-hidden-files: true
+          overwrite: true
       - name: Hand this job's red detail to the report job, sealed (generated)
         id: nikatru-handoff
         if: always()
@@ -962,78 +868,21 @@ jobs:
         working-directory: ${{ github.workspace }}
         run: printf '/.nikatru-trusted/\n' >> "$(git rev-parse --git-path info/exclude)"
       - uses: ./.nikatru-trusted/.github/actions/setup-node
-      - name: Find the guard-tests-junit-shard-1 hand-off's key, downloading nothing (generated)
-        id: nikatru-probe-3
-        uses: actions/cache/restore@55cc8345863c7cc4c66a329aec7e433d2d1c52a9
-        with:
-          path: .nikatru-handoff/sealed
-          key: nikatru-handoff-guard-tests-junit-shard-1-${{ github.run_id }}-${{ github.run_attempt }}
-          restore-keys: nikatru-handoff-guard-tests-junit-shard-1-${{ github.run_id }}-
-          lookup-only: true
-          enableCrossOsArchive: true
-      - name: Hold the guard-tests-junit-shard-1 hand-off's key to this run's (generated)
-        id: nikatru-key-3
-        if: ${{ (success()) && steps.nikatru-probe-3.outputs.cache-matched-key != '' }}
-        shell: bash
-        env:
-          NIKATRU_MATCHED: ${{ steps.nikatru-probe-3.outputs.cache-matched-key }}
-          NIKATRU_HANDOFF_PREFIX: nikatru-handoff-guard-tests-junit-shard-1-${{ github.run_id }}-
-          NIKATRU_ATTEMPT: ${{ github.run_attempt }}
-        run: case "$NIKATRU_MATCHED" in "$NIKATRU_HANDOFF_PREFIX"*) a="${NIKATRU_MATCHED#"$NIKATRU_HANDOFF_PREFIX"}";; *) a=x;; esac; if [ -n "$NIKATRU_MATCHED" ] && [[ "$a" =~ ^([1-9][0-9]{0,3})(-r2|-r3)?$ ]] && [ "${BASH_REMATCH[1]}" -le "$NIKATRU_ATTEMPT" ] && [[ "$NIKATRU_MATCHED" =~ ^[A-Za-z0-9._-]+$ ]]; then echo "key=$NIKATRU_MATCHED" >> "$GITHUB_OUTPUT"; elif [ -n "$NIKATRU_MATCHED" ]; then echo "::warning title=hand-off::the cache matched $NIKATRU_MATCHED, which is not this run's hand-off key (an attempt of this run, at most this one), so it is not restored"; fi
-      - name: Restore the guard-tests-junit-shard-1 hand-off (generated)
+      - name: Restore the guard-tests-junit-shard-1 hand-off from this run (generated)
         id: nikatru-restore-3
-        if: ${{ (success()) && steps.nikatru-key-3.outputs.key != '' }}
-        timeout-minutes: 2
-        continue-on-error: true
-        uses: actions/cache/restore@55cc8345863c7cc4c66a329aec7e433d2d1c52a9
+        timeout-minutes: 6
+        uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333
         with:
+          name: nikatru-handoff-guard-tests-junit-shard-1
           path: .nikatru-handoff/sealed
-          key: ${{ steps.nikatru-key-3.outputs.key }}
-          enableCrossOsArchive: true
-      - name: Wait 20 s before restoring the guard-tests-junit-shard-1 hand-off again (generated)
-        if: ${{ (success()) && steps.nikatru-restore-3.outputs.cache-matched-key == '' && steps.nikatru-key-3.outputs.key != '' }}
-        shell: bash
-        run: sleep 20
-      - name: "Restore the guard-tests-junit-shard-1 hand-off again (attempt 2): the entry is in the cache, its download was refused (generated)"
-        id: nikatru-restore-3-b
-        if: ${{ (success()) && steps.nikatru-restore-3.outputs.cache-matched-key == '' && steps.nikatru-key-3.outputs.key != '' }}
-        timeout-minutes: 2
-        continue-on-error: true
-        uses: actions/cache/restore@55cc8345863c7cc4c66a329aec7e433d2d1c52a9
-        with:
-          path: .nikatru-handoff/sealed
-          key: ${{ steps.nikatru-key-3.outputs.key }}
-          enableCrossOsArchive: true
-      - name: Wait 60 s before restoring the guard-tests-junit-shard-1 hand-off again (generated)
-        if: ${{ (success()) && steps.nikatru-restore-3.outputs.cache-matched-key == '' && steps.nikatru-restore-3-b.outputs.cache-matched-key == '' && steps.nikatru-key-3.outputs.key != '' }}
-        shell: bash
-        run: sleep 60
-      - name: "Restore the guard-tests-junit-shard-1 hand-off again (attempt 3): the entry is in the cache, its download was refused (generated)"
-        id: nikatru-restore-3-c
-        if: ${{ (success()) && steps.nikatru-restore-3.outputs.cache-matched-key == '' && steps.nikatru-restore-3-b.outputs.cache-matched-key == '' && steps.nikatru-key-3.outputs.key != '' }}
-        timeout-minutes: 2
-        continue-on-error: true
-        uses: actions/cache/restore@55cc8345863c7cc4c66a329aec7e433d2d1c52a9
-        with:
-          path: .nikatru-handoff/sealed
-          key: ${{ steps.nikatru-key-3.outputs.key }}
-          enableCrossOsArchive: true
-      - name: Fail when no guard-tests-junit-shard-1 hand-off was restored (generated)
-        id: nikatru-unrestored-3
-        if: ${{ (success()) && steps.nikatru-restore-3.outputs.cache-matched-key == '' && steps.nikatru-restore-3-b.outputs.cache-matched-key == '' && steps.nikatru-restore-3-c.outputs.cache-matched-key == '' }}
-        shell: bash
-        env:
-          NIKATRU_HANDOFF_KEY: nikatru-handoff-guard-tests-junit-shard-1-${{ github.run_id }}-${{ github.run_attempt }}
-          NIKATRU_PROBED: ${{ steps.nikatru-key-3.outputs.key }}
-        run: if [ -n "$NIKATRU_PROBED" ]; then echo "::error title=hand-off::the hand-off $NIKATRU_PROBED is in the cache, but 3 downloads were refused (Egress is over the account limit); a failed-jobs re-run retries it"; else echo "::error title=hand-off::no save of $NIKATRU_HANDOFF_KEY (nor -r2, -r3) is in the cache"; fi; exit 1
       - name: Unseal the guard-tests-junit-shard-1 hand-off (generated)
         id: nikatru-unseal-3
-        if: ${{ (success()) && (steps.nikatru-restore-3.outputs.cache-matched-key || steps.nikatru-restore-3-b.outputs.cache-matched-key || steps.nikatru-restore-3-c.outputs.cache-matched-key) != '' }}
+        if: ${{ (success()) && steps.nikatru-restore-3.outcome == 'success' }}
         shell: bash
         working-directory: ${{ github.workspace }}
         env:
           NIKATRU_HANDOFF_KEY_FILE: ${{ github.workspace }}/../.nikatru-shell/handoff.key
-          NIKATRU_HANDOFF_KEY: ${{ steps.nikatru-restore-3.outputs.cache-matched-key || steps.nikatru-restore-3-b.outputs.cache-matched-key || steps.nikatru-restore-3-c.outputs.cache-matched-key }}
+          NIKATRU_HANDOFF_KEY: nikatru-handoff-guard-tests-junit-shard-1-${{ github.run_id }}-run
           NIKATRU_HANDOFF_PREFIX: nikatru-handoff-guard-tests-junit-shard-1-${{ github.run_id }}-
         run: node tooling/ci/shell-handoff.mjs unseal
       - name: Place the guard-tests-junit-shard-1 hand-off where download-artifact put it (generated)
@@ -1046,78 +895,21 @@ jobs:
           mkdir -p "$NIKATRU_TO"
           cp -a .nikatru-handoff/x/. "$NIKATRU_TO/"
           rm -rf .nikatru-handoff/x
-      - name: Find the guard-tests-junit-shard-2 hand-off's key, downloading nothing (generated)
-        id: nikatru-probe-4
-        uses: actions/cache/restore@55cc8345863c7cc4c66a329aec7e433d2d1c52a9
-        with:
-          path: .nikatru-handoff/sealed
-          key: nikatru-handoff-guard-tests-junit-shard-2-${{ github.run_id }}-${{ github.run_attempt }}
-          restore-keys: nikatru-handoff-guard-tests-junit-shard-2-${{ github.run_id }}-
-          lookup-only: true
-          enableCrossOsArchive: true
-      - name: Hold the guard-tests-junit-shard-2 hand-off's key to this run's (generated)
-        id: nikatru-key-4
-        if: ${{ (success()) && steps.nikatru-probe-4.outputs.cache-matched-key != '' }}
-        shell: bash
-        env:
-          NIKATRU_MATCHED: ${{ steps.nikatru-probe-4.outputs.cache-matched-key }}
-          NIKATRU_HANDOFF_PREFIX: nikatru-handoff-guard-tests-junit-shard-2-${{ github.run_id }}-
-          NIKATRU_ATTEMPT: ${{ github.run_attempt }}
-        run: case "$NIKATRU_MATCHED" in "$NIKATRU_HANDOFF_PREFIX"*) a="${NIKATRU_MATCHED#"$NIKATRU_HANDOFF_PREFIX"}";; *) a=x;; esac; if [ -n "$NIKATRU_MATCHED" ] && [[ "$a" =~ ^([1-9][0-9]{0,3})(-r2|-r3)?$ ]] && [ "${BASH_REMATCH[1]}" -le "$NIKATRU_ATTEMPT" ] && [[ "$NIKATRU_MATCHED" =~ ^[A-Za-z0-9._-]+$ ]]; then echo "key=$NIKATRU_MATCHED" >> "$GITHUB_OUTPUT"; elif [ -n "$NIKATRU_MATCHED" ]; then echo "::warning title=hand-off::the cache matched $NIKATRU_MATCHED, which is not this run's hand-off key (an attempt of this run, at most this one), so it is not restored"; fi
-      - name: Restore the guard-tests-junit-shard-2 hand-off (generated)
+      - name: Restore the guard-tests-junit-shard-2 hand-off from this run (generated)
         id: nikatru-restore-4
-        if: ${{ (success()) && steps.nikatru-key-4.outputs.key != '' }}
-        timeout-minutes: 2
-        continue-on-error: true
-        uses: actions/cache/restore@55cc8345863c7cc4c66a329aec7e433d2d1c52a9
+        timeout-minutes: 6
+        uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333
         with:
+          name: nikatru-handoff-guard-tests-junit-shard-2
           path: .nikatru-handoff/sealed
-          key: ${{ steps.nikatru-key-4.outputs.key }}
-          enableCrossOsArchive: true
-      - name: Wait 20 s before restoring the guard-tests-junit-shard-2 hand-off again (generated)
-        if: ${{ (success()) && steps.nikatru-restore-4.outputs.cache-matched-key == '' && steps.nikatru-key-4.outputs.key != '' }}
-        shell: bash
-        run: sleep 20
-      - name: "Restore the guard-tests-junit-shard-2 hand-off again (attempt 2): the entry is in the cache, its download was refused (generated)"
-        id: nikatru-restore-4-b
-        if: ${{ (success()) && steps.nikatru-restore-4.outputs.cache-matched-key == '' && steps.nikatru-key-4.outputs.key != '' }}
-        timeout-minutes: 2
-        continue-on-error: true
-        uses: actions/cache/restore@55cc8345863c7cc4c66a329aec7e433d2d1c52a9
-        with:
-          path: .nikatru-handoff/sealed
-          key: ${{ steps.nikatru-key-4.outputs.key }}
-          enableCrossOsArchive: true
-      - name: Wait 60 s before restoring the guard-tests-junit-shard-2 hand-off again (generated)
-        if: ${{ (success()) && steps.nikatru-restore-4.outputs.cache-matched-key == '' && steps.nikatru-restore-4-b.outputs.cache-matched-key == '' && steps.nikatru-key-4.outputs.key != '' }}
-        shell: bash
-        run: sleep 60
-      - name: "Restore the guard-tests-junit-shard-2 hand-off again (attempt 3): the entry is in the cache, its download was refused (generated)"
-        id: nikatru-restore-4-c
-        if: ${{ (success()) && steps.nikatru-restore-4.outputs.cache-matched-key == '' && steps.nikatru-restore-4-b.outputs.cache-matched-key == '' && steps.nikatru-key-4.outputs.key != '' }}
-        timeout-minutes: 2
-        continue-on-error: true
-        uses: actions/cache/restore@55cc8345863c7cc4c66a329aec7e433d2d1c52a9
-        with:
-          path: .nikatru-handoff/sealed
-          key: ${{ steps.nikatru-key-4.outputs.key }}
-          enableCrossOsArchive: true
-      - name: Fail when no guard-tests-junit-shard-2 hand-off was restored (generated)
-        id: nikatru-unrestored-4
-        if: ${{ (success()) && steps.nikatru-restore-4.outputs.cache-matched-key == '' && steps.nikatru-restore-4-b.outputs.cache-matched-key == '' && steps.nikatru-restore-4-c.outputs.cache-matched-key == '' }}
-        shell: bash
-        env:
-          NIKATRU_HANDOFF_KEY: nikatru-handoff-guard-tests-junit-shard-2-${{ github.run_id }}-${{ github.run_attempt }}
-          NIKATRU_PROBED: ${{ steps.nikatru-key-4.outputs.key }}
-        run: if [ -n "$NIKATRU_PROBED" ]; then echo "::error title=hand-off::the hand-off $NIKATRU_PROBED is in the cache, but 3 downloads were refused (Egress is over the account limit); a failed-jobs re-run retries it"; else echo "::error title=hand-off::no save of $NIKATRU_HANDOFF_KEY (nor -r2, -r3) is in the cache"; fi; exit 1
       - name: Unseal the guard-tests-junit-shard-2 hand-off (generated)
         id: nikatru-unseal-4
-        if: ${{ (success()) && (steps.nikatru-restore-4.outputs.cache-matched-key || steps.nikatru-restore-4-b.outputs.cache-matched-key || steps.nikatru-restore-4-c.outputs.cache-matched-key) != '' }}
+        if: ${{ (success()) && steps.nikatru-restore-4.outcome == 'success' }}
         shell: bash
         working-directory: ${{ github.workspace }}
         env:
           NIKATRU_HANDOFF_KEY_FILE: ${{ github.workspace }}/../.nikatru-shell/handoff.key
-          NIKATRU_HANDOFF_KEY: ${{ steps.nikatru-restore-4.outputs.cache-matched-key || steps.nikatru-restore-4-b.outputs.cache-matched-key || steps.nikatru-restore-4-c.outputs.cache-matched-key }}
+          NIKATRU_HANDOFF_KEY: nikatru-handoff-guard-tests-junit-shard-2-${{ github.run_id }}-run
           NIKATRU_HANDOFF_PREFIX: nikatru-handoff-guard-tests-junit-shard-2-${{ github.run_id }}-
         run: node tooling/ci/shell-handoff.mjs unseal
       - name: Place the guard-tests-junit-shard-2 hand-off where download-artifact put it (generated)
@@ -1130,78 +922,21 @@ jobs:
           mkdir -p "$NIKATRU_TO"
           cp -a .nikatru-handoff/x/. "$NIKATRU_TO/"
           rm -rf .nikatru-handoff/x
-      - name: Find the guard-tests-junit-shard-3 hand-off's key, downloading nothing (generated)
-        id: nikatru-probe-5
-        uses: actions/cache/restore@55cc8345863c7cc4c66a329aec7e433d2d1c52a9
-        with:
-          path: .nikatru-handoff/sealed
-          key: nikatru-handoff-guard-tests-junit-shard-3-${{ github.run_id }}-${{ github.run_attempt }}
-          restore-keys: nikatru-handoff-guard-tests-junit-shard-3-${{ github.run_id }}-
-          lookup-only: true
-          enableCrossOsArchive: true
-      - name: Hold the guard-tests-junit-shard-3 hand-off's key to this run's (generated)
-        id: nikatru-key-5
-        if: ${{ (success()) && steps.nikatru-probe-5.outputs.cache-matched-key != '' }}
-        shell: bash
-        env:
-          NIKATRU_MATCHED: ${{ steps.nikatru-probe-5.outputs.cache-matched-key }}
-          NIKATRU_HANDOFF_PREFIX: nikatru-handoff-guard-tests-junit-shard-3-${{ github.run_id }}-
-          NIKATRU_ATTEMPT: ${{ github.run_attempt }}
-        run: case "$NIKATRU_MATCHED" in "$NIKATRU_HANDOFF_PREFIX"*) a="${NIKATRU_MATCHED#"$NIKATRU_HANDOFF_PREFIX"}";; *) a=x;; esac; if [ -n "$NIKATRU_MATCHED" ] && [[ "$a" =~ ^([1-9][0-9]{0,3})(-r2|-r3)?$ ]] && [ "${BASH_REMATCH[1]}" -le "$NIKATRU_ATTEMPT" ] && [[ "$NIKATRU_MATCHED" =~ ^[A-Za-z0-9._-]+$ ]]; then echo "key=$NIKATRU_MATCHED" >> "$GITHUB_OUTPUT"; elif [ -n "$NIKATRU_MATCHED" ]; then echo "::warning title=hand-off::the cache matched $NIKATRU_MATCHED, which is not this run's hand-off key (an attempt of this run, at most this one), so it is not restored"; fi
-      - name: Restore the guard-tests-junit-shard-3 hand-off (generated)
+      - name: Restore the guard-tests-junit-shard-3 hand-off from this run (generated)
         id: nikatru-restore-5
-        if: ${{ (success()) && steps.nikatru-key-5.outputs.key != '' }}
-        timeout-minutes: 2
-        continue-on-error: true
-        uses: actions/cache/restore@55cc8345863c7cc4c66a329aec7e433d2d1c52a9
+        timeout-minutes: 6
+        uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333
         with:
+          name: nikatru-handoff-guard-tests-junit-shard-3
           path: .nikatru-handoff/sealed
-          key: ${{ steps.nikatru-key-5.outputs.key }}
-          enableCrossOsArchive: true
-      - name: Wait 20 s before restoring the guard-tests-junit-shard-3 hand-off again (generated)
-        if: ${{ (success()) && steps.nikatru-restore-5.outputs.cache-matched-key == '' && steps.nikatru-key-5.outputs.key != '' }}
-        shell: bash
-        run: sleep 20
-      - name: "Restore the guard-tests-junit-shard-3 hand-off again (attempt 2): the entry is in the cache, its download was refused (generated)"
-        id: nikatru-restore-5-b
-        if: ${{ (success()) && steps.nikatru-restore-5.outputs.cache-matched-key == '' && steps.nikatru-key-5.outputs.key != '' }}
-        timeout-minutes: 2
-        continue-on-error: true
-        uses: actions/cache/restore@55cc8345863c7cc4c66a329aec7e433d2d1c52a9
-        with:
-          path: .nikatru-handoff/sealed
-          key: ${{ steps.nikatru-key-5.outputs.key }}
-          enableCrossOsArchive: true
-      - name: Wait 60 s before restoring the guard-tests-junit-shard-3 hand-off again (generated)
-        if: ${{ (success()) && steps.nikatru-restore-5.outputs.cache-matched-key == '' && steps.nikatru-restore-5-b.outputs.cache-matched-key == '' && steps.nikatru-key-5.outputs.key != '' }}
-        shell: bash
-        run: sleep 60
-      - name: "Restore the guard-tests-junit-shard-3 hand-off again (attempt 3): the entry is in the cache, its download was refused (generated)"
-        id: nikatru-restore-5-c
-        if: ${{ (success()) && steps.nikatru-restore-5.outputs.cache-matched-key == '' && steps.nikatru-restore-5-b.outputs.cache-matched-key == '' && steps.nikatru-key-5.outputs.key != '' }}
-        timeout-minutes: 2
-        continue-on-error: true
-        uses: actions/cache/restore@55cc8345863c7cc4c66a329aec7e433d2d1c52a9
-        with:
-          path: .nikatru-handoff/sealed
-          key: ${{ steps.nikatru-key-5.outputs.key }}
-          enableCrossOsArchive: true
-      - name: Fail when no guard-tests-junit-shard-3 hand-off was restored (generated)
-        id: nikatru-unrestored-5
-        if: ${{ (success()) && steps.nikatru-restore-5.outputs.cache-matched-key == '' && steps.nikatru-restore-5-b.outputs.cache-matched-key == '' && steps.nikatru-restore-5-c.outputs.cache-matched-key == '' }}
-        shell: bash
-        env:
-          NIKATRU_HANDOFF_KEY: nikatru-handoff-guard-tests-junit-shard-3-${{ github.run_id }}-${{ github.run_attempt }}
-          NIKATRU_PROBED: ${{ steps.nikatru-key-5.outputs.key }}
-        run: if [ -n "$NIKATRU_PROBED" ]; then echo "::error title=hand-off::the hand-off $NIKATRU_PROBED is in the cache, but 3 downloads were refused (Egress is over the account limit); a failed-jobs re-run retries it"; else echo "::error title=hand-off::no save of $NIKATRU_HANDOFF_KEY (nor -r2, -r3) is in the cache"; fi; exit 1
       - name: Unseal the guard-tests-junit-shard-3 hand-off (generated)
         id: nikatru-unseal-5
-        if: ${{ (success()) && (steps.nikatru-restore-5.outputs.cache-matched-key || steps.nikatru-restore-5-b.outputs.cache-matched-key || steps.nikatru-restore-5-c.outputs.cache-matched-key) != '' }}
+        if: ${{ (success()) && steps.nikatru-restore-5.outcome == 'success' }}
         shell: bash
         working-directory: ${{ github.workspace }}
         env:
           NIKATRU_HANDOFF_KEY_FILE: ${{ github.workspace }}/../.nikatru-shell/handoff.key
-          NIKATRU_HANDOFF_KEY: ${{ steps.nikatru-restore-5.outputs.cache-matched-key || steps.nikatru-restore-5-b.outputs.cache-matched-key || steps.nikatru-restore-5-c.outputs.cache-matched-key }}
+          NIKATRU_HANDOFF_KEY: nikatru-handoff-guard-tests-junit-shard-3-${{ github.run_id }}-run
           NIKATRU_HANDOFF_PREFIX: nikatru-handoff-guard-tests-junit-shard-3-${{ github.run_id }}-
         run: node tooling/ci/shell-handoff.mjs unseal
       - name: Place the guard-tests-junit-shard-3 hand-off where download-artifact put it (generated)
@@ -1214,78 +949,21 @@ jobs:
           mkdir -p "$NIKATRU_TO"
           cp -a .nikatru-handoff/x/. "$NIKATRU_TO/"
           rm -rf .nikatru-handoff/x
-      - name: Find the guard-tests-junit-shard-4 hand-off's key, downloading nothing (generated)
-        id: nikatru-probe-6
-        uses: actions/cache/restore@55cc8345863c7cc4c66a329aec7e433d2d1c52a9
-        with:
-          path: .nikatru-handoff/sealed
-          key: nikatru-handoff-guard-tests-junit-shard-4-${{ github.run_id }}-${{ github.run_attempt }}
-          restore-keys: nikatru-handoff-guard-tests-junit-shard-4-${{ github.run_id }}-
-          lookup-only: true
-          enableCrossOsArchive: true
-      - name: Hold the guard-tests-junit-shard-4 hand-off's key to this run's (generated)
-        id: nikatru-key-6
-        if: ${{ (success()) && steps.nikatru-probe-6.outputs.cache-matched-key != '' }}
-        shell: bash
-        env:
-          NIKATRU_MATCHED: ${{ steps.nikatru-probe-6.outputs.cache-matched-key }}
-          NIKATRU_HANDOFF_PREFIX: nikatru-handoff-guard-tests-junit-shard-4-${{ github.run_id }}-
-          NIKATRU_ATTEMPT: ${{ github.run_attempt }}
-        run: case "$NIKATRU_MATCHED" in "$NIKATRU_HANDOFF_PREFIX"*) a="${NIKATRU_MATCHED#"$NIKATRU_HANDOFF_PREFIX"}";; *) a=x;; esac; if [ -n "$NIKATRU_MATCHED" ] && [[ "$a" =~ ^([1-9][0-9]{0,3})(-r2|-r3)?$ ]] && [ "${BASH_REMATCH[1]}" -le "$NIKATRU_ATTEMPT" ] && [[ "$NIKATRU_MATCHED" =~ ^[A-Za-z0-9._-]+$ ]]; then echo "key=$NIKATRU_MATCHED" >> "$GITHUB_OUTPUT"; elif [ -n "$NIKATRU_MATCHED" ]; then echo "::warning title=hand-off::the cache matched $NIKATRU_MATCHED, which is not this run's hand-off key (an attempt of this run, at most this one), so it is not restored"; fi
-      - name: Restore the guard-tests-junit-shard-4 hand-off (generated)
+      - name: Restore the guard-tests-junit-shard-4 hand-off from this run (generated)
         id: nikatru-restore-6
-        if: ${{ (success()) && steps.nikatru-key-6.outputs.key != '' }}
-        timeout-minutes: 2
-        continue-on-error: true
-        uses: actions/cache/restore@55cc8345863c7cc4c66a329aec7e433d2d1c52a9
+        timeout-minutes: 6
+        uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333
         with:
+          name: nikatru-handoff-guard-tests-junit-shard-4
           path: .nikatru-handoff/sealed
-          key: ${{ steps.nikatru-key-6.outputs.key }}
-          enableCrossOsArchive: true
-      - name: Wait 20 s before restoring the guard-tests-junit-shard-4 hand-off again (generated)
-        if: ${{ (success()) && steps.nikatru-restore-6.outputs.cache-matched-key == '' && steps.nikatru-key-6.outputs.key != '' }}
-        shell: bash
-        run: sleep 20
-      - name: "Restore the guard-tests-junit-shard-4 hand-off again (attempt 2): the entry is in the cache, its download was refused (generated)"
-        id: nikatru-restore-6-b
-        if: ${{ (success()) && steps.nikatru-restore-6.outputs.cache-matched-key == '' && steps.nikatru-key-6.outputs.key != '' }}
-        timeout-minutes: 2
-        continue-on-error: true
-        uses: actions/cache/restore@55cc8345863c7cc4c66a329aec7e433d2d1c52a9
-        with:
-          path: .nikatru-handoff/sealed
-          key: ${{ steps.nikatru-key-6.outputs.key }}
-          enableCrossOsArchive: true
-      - name: Wait 60 s before restoring the guard-tests-junit-shard-4 hand-off again (generated)
-        if: ${{ (success()) && steps.nikatru-restore-6.outputs.cache-matched-key == '' && steps.nikatru-restore-6-b.outputs.cache-matched-key == '' && steps.nikatru-key-6.outputs.key != '' }}
-        shell: bash
-        run: sleep 60
-      - name: "Restore the guard-tests-junit-shard-4 hand-off again (attempt 3): the entry is in the cache, its download was refused (generated)"
-        id: nikatru-restore-6-c
-        if: ${{ (success()) && steps.nikatru-restore-6.outputs.cache-matched-key == '' && steps.nikatru-restore-6-b.outputs.cache-matched-key == '' && steps.nikatru-key-6.outputs.key != '' }}
-        timeout-minutes: 2
-        continue-on-error: true
-        uses: actions/cache/restore@55cc8345863c7cc4c66a329aec7e433d2d1c52a9
-        with:
-          path: .nikatru-handoff/sealed
-          key: ${{ steps.nikatru-key-6.outputs.key }}
-          enableCrossOsArchive: true
-      - name: Fail when no guard-tests-junit-shard-4 hand-off was restored (generated)
-        id: nikatru-unrestored-6
-        if: ${{ (success()) && steps.nikatru-restore-6.outputs.cache-matched-key == '' && steps.nikatru-restore-6-b.outputs.cache-matched-key == '' && steps.nikatru-restore-6-c.outputs.cache-matched-key == '' }}
-        shell: bash
-        env:
-          NIKATRU_HANDOFF_KEY: nikatru-handoff-guard-tests-junit-shard-4-${{ github.run_id }}-${{ github.run_attempt }}
-          NIKATRU_PROBED: ${{ steps.nikatru-key-6.outputs.key }}
-        run: if [ -n "$NIKATRU_PROBED" ]; then echo "::error title=hand-off::the hand-off $NIKATRU_PROBED is in the cache, but 3 downloads were refused (Egress is over the account limit); a failed-jobs re-run retries it"; else echo "::error title=hand-off::no save of $NIKATRU_HANDOFF_KEY (nor -r2, -r3) is in the cache"; fi; exit 1
       - name: Unseal the guard-tests-junit-shard-4 hand-off (generated)
         id: nikatru-unseal-6
-        if: ${{ (success()) && (steps.nikatru-restore-6.outputs.cache-matched-key || steps.nikatru-restore-6-b.outputs.cache-matched-key || steps.nikatru-restore-6-c.outputs.cache-matched-key) != '' }}
+        if: ${{ (success()) && steps.nikatru-restore-6.outcome == 'success' }}
         shell: bash
         working-directory: ${{ github.workspace }}
         env:
           NIKATRU_HANDOFF_KEY_FILE: ${{ github.workspace }}/../.nikatru-shell/handoff.key
-          NIKATRU_HANDOFF_KEY: ${{ steps.nikatru-restore-6.outputs.cache-matched-key || steps.nikatru-restore-6-b.outputs.cache-matched-key || steps.nikatru-restore-6-c.outputs.cache-matched-key }}
+          NIKATRU_HANDOFF_KEY: nikatru-handoff-guard-tests-junit-shard-4-${{ github.run_id }}-run
           NIKATRU_HANDOFF_PREFIX: nikatru-handoff-guard-tests-junit-shard-4-${{ github.run_id }}-
         run: node tooling/ci/shell-handoff.mjs unseal
       - name: Place the guard-tests-junit-shard-4 hand-off where download-artifact put it (generated)
@@ -1474,6 +1152,14 @@ jobs:
           NIKATRU_QUIET_EOF
           NIKATRU_SHELL="${BASH:-bash}"; if command -v cygpath >/dev/null 2>&1; then NIKATRU_SHELL="$(cygpath -w "$NIKATRU_SHELL")"; fi
           node "$GITHUB_WORKSPACE/../.nikatru-shell/quiet-step.mjs" --name lane-guards.guard-meta.7 -- "$NIKATRU_SHELL" -e "$NIKATRU_QUIET"
+      - name: Every matrix job's fan-out is capped under its ceiling, or allow-listed with a reason (runner-budget limb F)
+        run: |
+          NIKATRU_QUIET="$(mktemp "${RUNNER_TEMP:-/tmp}/nikatru-step.XXXXXX")"
+          cat > "$NIKATRU_QUIET" <<'NIKATRU_QUIET_EOF'
+          node tooling/ci/assert-runner-budget.mjs --fanout
+          NIKATRU_QUIET_EOF
+          NIKATRU_SHELL="${BASH:-bash}"; if command -v cygpath >/dev/null 2>&1; then NIKATRU_SHELL="$(cygpath -w "$NIKATRU_SHELL")"; fi
+          node "$GITHUB_WORKSPACE/../.nikatru-shell/quiet-step.mjs" --name lane-guards.guard-meta.8 -- "$NIKATRU_SHELL" -e "$NIKATRU_QUIET"
       - name: A pool account changes by data alone
         run: |
           NIKATRU_QUIET="$(mktemp "${RUNNER_TEMP:-/tmp}/nikatru-step.XXXXXX")"
@@ -1481,7 +1167,7 @@ jobs:
           node tooling/ci/assert-pool-portable.mjs
           NIKATRU_QUIET_EOF
           NIKATRU_SHELL="${BASH:-bash}"; if command -v cygpath >/dev/null 2>&1; then NIKATRU_SHELL="$(cygpath -w "$NIKATRU_SHELL")"; fi
-          node "$GITHUB_WORKSPACE/../.nikatru-shell/quiet-step.mjs" --name lane-guards.guard-meta.8 -- "$NIKATRU_SHELL" -e "$NIKATRU_QUIET"
+          node "$GITHUB_WORKSPACE/../.nikatru-shell/quiet-step.mjs" --name lane-guards.guard-meta.9 -- "$NIKATRU_SHELL" -e "$NIKATRU_QUIET"
       - name: Every job a pull request runs is run by the parity preflight, or exempt with its reason
         run: |
           NIKATRU_QUIET="$(mktemp "${RUNNER_TEMP:-/tmp}/nikatru-step.XXXXXX")"
@@ -1489,7 +1175,7 @@ jobs:
           node tooling/ci/assert-preflight-parity.mjs
           NIKATRU_QUIET_EOF
           NIKATRU_SHELL="${BASH:-bash}"; if command -v cygpath >/dev/null 2>&1; then NIKATRU_SHELL="$(cygpath -w "$NIKATRU_SHELL")"; fi
-          node "$GITHUB_WORKSPACE/../.nikatru-shell/quiet-step.mjs" --name lane-guards.guard-meta.9 -- "$NIKATRU_SHELL" -e "$NIKATRU_QUIET"
+          node "$GITHUB_WORKSPACE/../.nikatru-shell/quiet-step.mjs" --name lane-guards.guard-meta.10 -- "$NIKATRU_SHELL" -e "$NIKATRU_QUIET"
       - name: No new test case is declared inside a loop, and the loop baseline only shrinks
         run: |
           NIKATRU_QUIET="$(mktemp "${RUNNER_TEMP:-/tmp}/nikatru-step.XXXXXX")"
@@ -1497,7 +1183,7 @@ jobs:
           node tooling/ci/assert-no-loop-cases.mjs
           NIKATRU_QUIET_EOF
           NIKATRU_SHELL="${BASH:-bash}"; if command -v cygpath >/dev/null 2>&1; then NIKATRU_SHELL="$(cygpath -w "$NIKATRU_SHELL")"; fi
-          node "$GITHUB_WORKSPACE/../.nikatru-shell/quiet-step.mjs" --name lane-guards.guard-meta.10 -- "$NIKATRU_SHELL" -e "$NIKATRU_QUIET"
+          node "$GITHUB_WORKSPACE/../.nikatru-shell/quiet-step.mjs" --name lane-guards.guard-meta.11 -- "$NIKATRU_SHELL" -e "$NIKATRU_QUIET"
       - name: A new mechanism claim arrives with its test or a recorded demotion, and the claim backlog only shrinks
         run: |
           NIKATRU_QUIET="$(mktemp "${RUNNER_TEMP:-/tmp}/nikatru-step.XXXXXX")"
@@ -1505,7 +1191,7 @@ jobs:
           node tooling/ci/assert-mechanism-claims.mjs
           NIKATRU_QUIET_EOF
           NIKATRU_SHELL="${BASH:-bash}"; if command -v cygpath >/dev/null 2>&1; then NIKATRU_SHELL="$(cygpath -w "$NIKATRU_SHELL")"; fi
-          node "$GITHUB_WORKSPACE/../.nikatru-shell/quiet-step.mjs" --name lane-guards.guard-meta.11 -- "$NIKATRU_SHELL" -e "$NIKATRU_QUIET"
+          node "$GITHUB_WORKSPACE/../.nikatru-shell/quiet-step.mjs" --name lane-guards.guard-meta.12 -- "$NIKATRU_SHELL" -e "$NIKATRU_QUIET"
       - name: An extension README's ungraded-fixture table says what the fixture-coverage baseline says
         run: |
           NIKATRU_QUIET="$(mktemp "${RUNNER_TEMP:-/tmp}/nikatru-step.XXXXXX")"
@@ -1513,7 +1199,7 @@ jobs:
           node tooling/ci/assert-ungraded-baseline-doc.mjs
           NIKATRU_QUIET_EOF
           NIKATRU_SHELL="${BASH:-bash}"; if command -v cygpath >/dev/null 2>&1; then NIKATRU_SHELL="$(cygpath -w "$NIKATRU_SHELL")"; fi
-          node "$GITHUB_WORKSPACE/../.nikatru-shell/quiet-step.mjs" --name lane-guards.guard-meta.12 -- "$NIKATRU_SHELL" -e "$NIKATRU_QUIET"
+          node "$GITHUB_WORKSPACE/../.nikatru-shell/quiet-step.mjs" --name lane-guards.guard-meta.13 -- "$NIKATRU_SHELL" -e "$NIKATRU_QUIET"
       - name: The enforcement index is what the tree says
         run: |
           NIKATRU_QUIET="$(mktemp "${RUNNER_TEMP:-/tmp}/nikatru-step.XXXXXX")"
@@ -1521,7 +1207,7 @@ jobs:
           node tooling/ci/assert-enforcement-index.mjs
           NIKATRU_QUIET_EOF
           NIKATRU_SHELL="${BASH:-bash}"; if command -v cygpath >/dev/null 2>&1; then NIKATRU_SHELL="$(cygpath -w "$NIKATRU_SHELL")"; fi
-          node "$GITHUB_WORKSPACE/../.nikatru-shell/quiet-step.mjs" --name lane-guards.guard-meta.13 -- "$NIKATRU_SHELL" -e "$NIKATRU_QUIET"
+          node "$GITHUB_WORKSPACE/../.nikatru-shell/quiet-step.mjs" --name lane-guards.guard-meta.14 -- "$NIKATRU_SHELL" -e "$NIKATRU_QUIET"
       - name: Every line of the app template is accounted for
         run: |
           NIKATRU_QUIET="$(mktemp "${RUNNER_TEMP:-/tmp}/nikatru-step.XXXXXX")"
@@ -1529,7 +1215,7 @@ jobs:
           node tooling/ci/assert-chassis-ledger.mjs
           NIKATRU_QUIET_EOF
           NIKATRU_SHELL="${BASH:-bash}"; if command -v cygpath >/dev/null 2>&1; then NIKATRU_SHELL="$(cygpath -w "$NIKATRU_SHELL")"; fi
-          node "$GITHUB_WORKSPACE/../.nikatru-shell/quiet-step.mjs" --name lane-guards.guard-meta.14 -- "$NIKATRU_SHELL" -e "$NIKATRU_QUIET"
+          node "$GITHUB_WORKSPACE/../.nikatru-shell/quiet-step.mjs" --name lane-guards.guard-meta.15 -- "$NIKATRU_SHELL" -e "$NIKATRU_QUIET"
       - name: Guards refuse an empty subject
         run: |
           NIKATRU_QUIET="$(mktemp "${RUNNER_TEMP:-/tmp}/nikatru-step.XXXXXX")"
@@ -1537,7 +1223,7 @@ jobs:
           node tooling/ci/assert-guards-refuse-empty.mjs
           NIKATRU_QUIET_EOF
           NIKATRU_SHELL="${BASH:-bash}"; if command -v cygpath >/dev/null 2>&1; then NIKATRU_SHELL="$(cygpath -w "$NIKATRU_SHELL")"; fi
-          node "$GITHUB_WORKSPACE/../.nikatru-shell/quiet-step.mjs" --name lane-guards.guard-meta.15 -- "$NIKATRU_SHELL" -e "$NIKATRU_QUIET"
+          node "$GITHUB_WORKSPACE/../.nikatru-shell/quiet-step.mjs" --name lane-guards.guard-meta.16 -- "$NIKATRU_SHELL" -e "$NIKATRU_QUIET"
       - name: No dead tracked files
         run: |
           NIKATRU_QUIET="$(mktemp "${RUNNER_TEMP:-/tmp}/nikatru-step.XXXXXX")"
@@ -1545,7 +1231,7 @@ jobs:
           node tooling/scripts/assert-no-dead-files.mjs
           NIKATRU_QUIET_EOF
           NIKATRU_SHELL="${BASH:-bash}"; if command -v cygpath >/dev/null 2>&1; then NIKATRU_SHELL="$(cygpath -w "$NIKATRU_SHELL")"; fi
-          node "$GITHUB_WORKSPACE/../.nikatru-shell/quiet-step.mjs" --name lane-guards.guard-meta.16 -- "$NIKATRU_SHELL" -e "$NIKATRU_QUIET"
+          node "$GITHUB_WORKSPACE/../.nikatru-shell/quiet-step.mjs" --name lane-guards.guard-meta.17 -- "$NIKATRU_SHELL" -e "$NIKATRU_QUIET"
       - name: Every tracked path is placed in the lane map, and every lane glob matches a file
         run: |
           NIKATRU_QUIET="$(mktemp "${RUNNER_TEMP:-/tmp}/nikatru-step.XXXXXX")"
@@ -1553,7 +1239,7 @@ jobs:
           node tooling/ci/lane-detect.mjs --check
           NIKATRU_QUIET_EOF
           NIKATRU_SHELL="${BASH:-bash}"; if command -v cygpath >/dev/null 2>&1; then NIKATRU_SHELL="$(cygpath -w "$NIKATRU_SHELL")"; fi
-          node "$GITHUB_WORKSPACE/../.nikatru-shell/quiet-step.mjs" --name lane-guards.guard-meta.17 -- "$NIKATRU_SHELL" -e "$NIKATRU_QUIET"
+          node "$GITHUB_WORKSPACE/../.nikatru-shell/quiet-step.mjs" --name lane-guards.guard-meta.18 -- "$NIKATRU_SHELL" -e "$NIKATRU_QUIET"
       - name: Main's newest merge carries its Rows line in the squash message
         if: ((github.event.client_payload.event || github.event_name) == 'push' || (github.event.client_payload.event || github.event_name) == 'workflow_dispatch') && (github.event.client_payload.ref || 'refs/heads/main') == 'refs/heads/main'
         run: |
@@ -1562,7 +1248,7 @@ jobs:
           node tooling/ci/assert-main-rows.mjs --ref "$NIKATRU_SHA"
           NIKATRU_QUIET_EOF
           NIKATRU_SHELL="${BASH:-bash}"; if command -v cygpath >/dev/null 2>&1; then NIKATRU_SHELL="$(cygpath -w "$NIKATRU_SHELL")"; fi
-          node "$GITHUB_WORKSPACE/../.nikatru-shell/quiet-step.mjs" --name lane-guards.guard-meta.18 -- "$NIKATRU_SHELL" -e "$NIKATRU_QUIET"
+          node "$GITHUB_WORKSPACE/../.nikatru-shell/quiet-step.mjs" --name lane-guards.guard-meta.19 -- "$NIKATRU_SHELL" -e "$NIKATRU_QUIET"
       - name: The CI docs match the workflows (gen-ci-map --check)
         run: |
           NIKATRU_QUIET="$(mktemp "${RUNNER_TEMP:-/tmp}/nikatru-step.XXXXXX")"
@@ -1570,7 +1256,7 @@ jobs:
           node tooling/ci/gen-ci-map.mjs --check
           NIKATRU_QUIET_EOF
           NIKATRU_SHELL="${BASH:-bash}"; if command -v cygpath >/dev/null 2>&1; then NIKATRU_SHELL="$(cygpath -w "$NIKATRU_SHELL")"; fi
-          node "$GITHUB_WORKSPACE/../.nikatru-shell/quiet-step.mjs" --name lane-guards.guard-meta.19 -- "$NIKATRU_SHELL" -e "$NIKATRU_QUIET"
+          node "$GITHUB_WORKSPACE/../.nikatru-shell/quiet-step.mjs" --name lane-guards.guard-meta.20 -- "$NIKATRU_SHELL" -e "$NIKATRU_QUIET"
       - name: The release runbook's arming lines match the register (channel-arming --check)
         run: |
           NIKATRU_QUIET="$(mktemp "${RUNNER_TEMP:-/tmp}/nikatru-step.XXXXXX")"
@@ -1578,7 +1264,7 @@ jobs:
           node tooling/ci/channel-arming.mjs --check
           NIKATRU_QUIET_EOF
           NIKATRU_SHELL="${BASH:-bash}"; if command -v cygpath >/dev/null 2>&1; then NIKATRU_SHELL="$(cygpath -w "$NIKATRU_SHELL")"; fi
-          node "$GITHUB_WORKSPACE/../.nikatru-shell/quiet-step.mjs" --name lane-guards.guard-meta.20 -- "$NIKATRU_SHELL" -e "$NIKATRU_QUIET"
+          node "$GITHUB_WORKSPACE/../.nikatru-shell/quiet-step.mjs" --name lane-guards.guard-meta.21 -- "$NIKATRU_SHELL" -e "$NIKATRU_QUIET"
       - name: The release runbook's §3 matches what a Release carries (gen-release-carries --check)
         run: |
           NIKATRU_QUIET="$(mktemp "${RUNNER_TEMP:-/tmp}/nikatru-step.XXXXXX")"
@@ -1586,7 +1272,7 @@ jobs:
           node tooling/ci/gen-release-carries.mjs --check
           NIKATRU_QUIET_EOF
           NIKATRU_SHELL="${BASH:-bash}"; if command -v cygpath >/dev/null 2>&1; then NIKATRU_SHELL="$(cygpath -w "$NIKATRU_SHELL")"; fi
-          node "$GITHUB_WORKSPACE/../.nikatru-shell/quiet-step.mjs" --name lane-guards.guard-meta.21 -- "$NIKATRU_SHELL" -e "$NIKATRU_QUIET"
+          node "$GITHUB_WORKSPACE/../.nikatru-shell/quiet-step.mjs" --name lane-guards.guard-meta.22 -- "$NIKATRU_SHELL" -e "$NIKATRU_QUIET"
       - name: The public shell is what the generator writes, and lets no outsider in (assert-public-shell)
         run: |
           NIKATRU_QUIET="$(mktemp "${RUNNER_TEMP:-/tmp}/nikatru-step.XXXXXX")"
@@ -1594,7 +1280,7 @@ jobs:
           node tooling/ci/assert-public-shell.mjs
           NIKATRU_QUIET_EOF
           NIKATRU_SHELL="${BASH:-bash}"; if command -v cygpath >/dev/null 2>&1; then NIKATRU_SHELL="$(cygpath -w "$NIKATRU_SHELL")"; fi
-          node "$GITHUB_WORKSPACE/../.nikatru-shell/quiet-step.mjs" --name lane-guards.guard-meta.22 -- "$NIKATRU_SHELL" -e "$NIKATRU_QUIET"
+          node "$GITHUB_WORKSPACE/../.nikatru-shell/quiet-step.mjs" --name lane-guards.guard-meta.23 -- "$NIKATRU_SHELL" -e "$NIKATRU_QUIET"
       - name: No shell workflow starts on an event that skips every job it has (assert-no-skipped-starts)
         run: |
           NIKATRU_QUIET="$(mktemp "${RUNNER_TEMP:-/tmp}/nikatru-step.XXXXXX")"
@@ -1602,7 +1288,7 @@ jobs:
           node tooling/ci/assert-no-skipped-starts.mjs
           NIKATRU_QUIET_EOF
           NIKATRU_SHELL="${BASH:-bash}"; if command -v cygpath >/dev/null 2>&1; then NIKATRU_SHELL="$(cygpath -w "$NIKATRU_SHELL")"; fi
-          node "$GITHUB_WORKSPACE/../.nikatru-shell/quiet-step.mjs" --name lane-guards.guard-meta.23 -- "$NIKATRU_SHELL" -e "$NIKATRU_QUIET"
+          node "$GITHUB_WORKSPACE/../.nikatru-shell/quiet-step.mjs" --name lane-guards.guard-meta.24 -- "$NIKATRU_SHELL" -e "$NIKATRU_QUIET"
       - name: Every source script reaches the public shell intact, read by a real YAML parser (shell-script-parity)
         run: |
           NIKATRU_QUIET="$(mktemp "${RUNNER_TEMP:-/tmp}/nikatru-step.XXXXXX")"
@@ -1610,7 +1296,7 @@ jobs:
           python3 -I tooling/ci/shell-script-parity.py .
           NIKATRU_QUIET_EOF
           NIKATRU_SHELL="${BASH:-bash}"; if command -v cygpath >/dev/null 2>&1; then NIKATRU_SHELL="$(cygpath -w "$NIKATRU_SHELL")"; fi
-          node "$GITHUB_WORKSPACE/../.nikatru-shell/quiet-step.mjs" --name lane-guards.guard-meta.24 -- "$NIKATRU_SHELL" -e "$NIKATRU_QUIET"
+          node "$GITHUB_WORKSPACE/../.nikatru-shell/quiet-step.mjs" --name lane-guards.guard-meta.25 -- "$NIKATRU_SHELL" -e "$NIKATRU_QUIET"
       - name: Guard headers cite code pinned to a commit, never by a bare line number
         env:
           GUARD_HEADER_CITATIONS_BASE: ${{ github.event.client_payload.base_ref && format('origin/{0}', github.event.client_payload.base_ref) || '' }}
@@ -1620,7 +1306,7 @@ jobs:
           node tooling/ci/assert-guard-header-citations.mjs
           NIKATRU_QUIET_EOF
           NIKATRU_SHELL="${BASH:-bash}"; if command -v cygpath >/dev/null 2>&1; then NIKATRU_SHELL="$(cygpath -w "$NIKATRU_SHELL")"; fi
-          node "$GITHUB_WORKSPACE/../.nikatru-shell/quiet-step.mjs" --name lane-guards.guard-meta.25 -- "$NIKATRU_SHELL" -e "$NIKATRU_QUIET"
+          node "$GITHUB_WORKSPACE/../.nikatru-shell/quiet-step.mjs" --name lane-guards.guard-meta.26 -- "$NIKATRU_SHELL" -e "$NIKATRU_QUIET"
       - name: Every changed path is mapped to a check, or declared ungraded (affected-guards --list)
         if: ${{ !cancelled() }}
         env:
@@ -1631,7 +1317,7 @@ jobs:
           node tooling/scripts/affected-guards.mjs --list --sha HEAD --base "${AFFECTED_BASE:-origin/main}"
           NIKATRU_QUIET_EOF
           NIKATRU_SHELL="${BASH:-bash}"; if command -v cygpath >/dev/null 2>&1; then NIKATRU_SHELL="$(cygpath -w "$NIKATRU_SHELL")"; fi
-          node "$GITHUB_WORKSPACE/../.nikatru-shell/quiet-step.mjs" --name lane-guards.guard-meta.26 -- "$NIKATRU_SHELL" -e "$NIKATRU_QUIET"
+          node "$GITHUB_WORKSPACE/../.nikatru-shell/quiet-step.mjs" --name lane-guards.guard-meta.27 -- "$NIKATRU_SHELL" -e "$NIKATRU_QUIET"
       - name: Hand this job's red detail to the report job, sealed (generated)
         id: nikatru-handoff
         if: always()

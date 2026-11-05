@@ -172,6 +172,7 @@ jobs:
     outputs:
       apps: ${{ steps.workspace.outputs.apps }}
       refusal_anchor: ${{ steps.workspace.outputs.refusal_anchor }}
+      started_at: ${{ steps.workspace.outputs.started_at }}
     steps:
       - name: Check out the private tree (generated)
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
@@ -236,6 +237,7 @@ jobs:
           NIKATRU_QUIET="$(mktemp "${RUNNER_TEMP:-/tmp}/nikatru-step.XXXXXX")"
           cat > "$NIKATRU_QUIET" <<'NIKATRU_QUIET_EOF'
           set -euo pipefail
+          echo "started_at=$(date -u +%Y-%m-%dT%H:%M:%SZ)" >> "$GITHUB_OUTPUT"
           apps="$(node tooling/ci/assert-release-lane-generic.mjs --emit-apps)"
           echo "apps=${apps}" >> "$GITHUB_OUTPUT"
           echo "refusal_anchor=$(( $(date +%s) * 1000 + 240000 ))" >> "$GITHUB_OUTPUT"
@@ -1489,10 +1491,11 @@ jobs:
       - name: Stamp the run on every asserted leg e2e.yml runs
         env:
           RUN_ID: ${{ github.run_id }}
+          STARTED_AT: ${{ needs.prepare.outputs.started_at }}
         run: |
           NIKATRU_QUIET="$(mktemp "${RUNNER_TEMP:-/tmp}/nikatru-step.XXXXXX")"
           cat > "$NIKATRU_QUIET" <<'NIKATRU_QUIET_EOF'
-          node tooling/e2e/leg-last-green.mjs --workflow .github/workflows/e2e.yml --run-id "$RUN_ID"
+          node tooling/e2e/leg-last-green.mjs --workflow .github/workflows/e2e.yml --run-id "$RUN_ID" --as-of "$STARTED_AT"
           NIKATRU_QUIET_EOF
           NIKATRU_SHELL="${BASH:-bash}"; if command -v cygpath >/dev/null 2>&1; then NIKATRU_SHELL="$(cygpath -w "$NIKATRU_SHELL")"; fi
           node "$GITHUB_WORKSPACE/../.nikatru-shell/quiet-step.mjs" --name e2e.last-green.3 -- "$NIKATRU_SHELL" -e "$NIKATRU_QUIET"

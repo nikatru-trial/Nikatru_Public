@@ -141,6 +141,7 @@ jobs:
     outputs:
       instants: ${{ steps.instants.outputs.instants }}
       workers: ${{ steps.workers.outputs.workers }}
+      dart_groups: ${{ steps.dart-groups.outputs.groups }}
     steps:
       - name: Check out the private tree (generated)
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
@@ -245,6 +246,17 @@ jobs:
           NIKATRU_QUIET_EOF
           NIKATRU_SHELL="${BASH:-bash}"; if command -v cygpath >/dev/null 2>&1; then NIKATRU_SHELL="$(cygpath -w "$NIKATRU_SHELL")"; fi
           node "$GITHUB_WORKSPACE/../.nikatru-shell/quiet-step.mjs" --name time-travel.plan.4 -- "$NIKATRU_SHELL" -e "$NIKATRU_QUIET"
+      - id: dart-groups
+        name: The Dart workspace's package groups, refused unless they partition it
+        run: |
+          NIKATRU_QUIET="$(mktemp "${RUNNER_TEMP:-/tmp}/nikatru-step.XXXXXX")"
+          cat > "$NIKATRU_QUIET" <<'NIKATRU_QUIET_EOF'
+          set -euo pipefail
+          groups="$(node tooling/ci/dart-test-groups.mjs --emit)"
+          echo "groups=${groups}" >> "$GITHUB_OUTPUT"
+          NIKATRU_QUIET_EOF
+          NIKATRU_SHELL="${BASH:-bash}"; if command -v cygpath >/dev/null 2>&1; then NIKATRU_SHELL="$(cygpath -w "$NIKATRU_SHELL")"; fi
+          node "$GITHUB_WORKSPACE/../.nikatru-shell/quiet-step.mjs" --name time-travel.plan.5 -- "$NIKATRU_SHELL" -e "$NIKATRU_QUIET"
       - name: Store this job's red detail in the bridge's private home (generated)
         if: always()
         continue-on-error: true
@@ -765,7 +777,7 @@ jobs:
         run: node tooling/ops/bridge-artifact.mjs upload
 
   dart:
-    name: The Dart workspace at ${{ matrix.instant }}
+    name: The Dart workspace (${{ matrix.group }}) at ${{ matrix.instant }}
     needs: [nikatru-pin, plan]
     runs-on: ubuntu-24.04
     timeout-minutes: 30
@@ -777,6 +789,7 @@ jobs:
       max-parallel: 8
       matrix:
         instant: ${{ fromJSON(needs.plan.outputs.instants) }}
+        group: ${{ fromJSON(needs.plan.outputs.dart_groups) }}
     steps:
       - name: Check out the private tree (generated)
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
@@ -862,17 +875,31 @@ jobs:
           NIKATRU_QUIET_EOF
           NIKATRU_SHELL="${BASH:-bash}"; if command -v cygpath >/dev/null 2>&1; then NIKATRU_SHELL="$(cygpath -w "$NIKATRU_SHELL")"; fi
           node "$GITHUB_WORKSPACE/../.nikatru-shell/quiet-step.mjs" --name time-travel.dart.4 -- "$NIKATRU_SHELL" -e "$NIKATRU_QUIET"
-      - name: melos run test, on another day
+      - name: This group's members, from the planner
+        env:
+          GROUP: ${{ matrix.group }}
+        run: |
+          NIKATRU_QUIET="$(mktemp "${RUNNER_TEMP:-/tmp}/nikatru-step.XXXXXX")"
+          cat > "$NIKATRU_QUIET" <<'NIKATRU_QUIET_EOF'
+          set -euo pipefail
+          node tooling/ci/dart-test-groups.mjs --group "$GROUP" > "$RUNNER_TEMP/dart-group.args"
+          cat "$RUNNER_TEMP/dart-group.args"
+          NIKATRU_QUIET_EOF
+          NIKATRU_SHELL="${BASH:-bash}"; if command -v cygpath >/dev/null 2>&1; then NIKATRU_SHELL="$(cygpath -w "$NIKATRU_SHELL")"; fi
+          node "$GITHUB_WORKSPACE/../.nikatru-shell/quiet-step.mjs" --name time-travel.dart.5 -- "$NIKATRU_SHELL" -e "$NIKATRU_QUIET"
+      - name: melos run test's half for this group, on another day
         env:
           NIKATRU_TEST_NOW: ${{ matrix.instant }}
         run: |
           NIKATRU_QUIET="$(mktemp "${RUNNER_TEMP:-/tmp}/nikatru-step.XXXXXX")"
           cat > "$NIKATRU_QUIET" <<'NIKATRU_QUIET_EOF'
+          set -euo pipefail
           export PATH="$PATH:$HOME/.pub-cache/bin"
-          melos run test
+          mapfile -t args < "$RUNNER_TEMP/dart-group.args"
+          melos exec --fail-fast --dir-exists=test "${args[@]}"
           NIKATRU_QUIET_EOF
           NIKATRU_SHELL="${BASH:-bash}"; if command -v cygpath >/dev/null 2>&1; then NIKATRU_SHELL="$(cygpath -w "$NIKATRU_SHELL")"; fi
-          node "$GITHUB_WORKSPACE/../.nikatru-shell/quiet-step.mjs" --name time-travel.dart.5 -- "$NIKATRU_SHELL" -e "$NIKATRU_QUIET"
+          node "$GITHUB_WORKSPACE/../.nikatru-shell/quiet-step.mjs" --name time-travel.dart.6 -- "$NIKATRU_SHELL" -e "$NIKATRU_QUIET"
       - name: Store this job's red detail in the bridge's private home (generated)
         if: always()
         continue-on-error: true
