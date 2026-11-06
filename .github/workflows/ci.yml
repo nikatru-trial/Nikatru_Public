@@ -5,12 +5,18 @@ env:
 
 name: CI
 
-run-name: "CI · ${{ (github.event.client_payload.event == 'pull_request' && startsWith(github.event.client_payload.ref, 'refs/heads/rehearsal/')) && 'REHEARSAL · ' || '' }}${{ github.event.client_payload.sha }}${{ github.event.client_payload.event == 'pull_request' && format(' (PR #{0})', github.event.client_payload.pr) || '' }}"
+run-name: "${{ !(github.event.client_payload.event == 'pull_request') && (startsWith(github.event.client_payload.ref, 'refs/tags/') && '[tag] ' || '[main] ') || startsWith(github.event.client_payload.ref, 'refs/heads/rehearsal/') && '[rehearsal] ' || startsWith(github.event.client_payload.ref, 'refs/heads/club/') && '[club] ' || startsWith(github.event.client_payload.ref, 'refs/heads/train/') && '[club] ' || startsWith(github.event.client_payload.ref, 'refs/heads/integ/') && '[club] ' || startsWith(github.event.client_payload.ref, 'refs/heads/renovate/') && '[bot] ' || startsWith(github.event.client_payload.ref, 'refs/heads/dependabot/') && '[bot] ' || '[single] ' }}CI · ${{ (github.event.client_payload.event == 'pull_request' && startsWith(github.event.client_payload.ref, 'refs/heads/rehearsal/')) && 'REHEARSAL · ' || '' }}${{ github.event.client_payload.sha }}${{ github.event.client_payload.event == 'pull_request' && format(' (PR #{0})', github.event.client_payload.pr) || '' }}"
 
 on:
   repository_dispatch:
     types: [ci, main]
   workflow_dispatch:
+    inputs:
+      scope:
+        description: 'rename-drill: which names to drill (all, app, entity, email, extension)'
+        type: choice
+        options: [all, app, entity, email, extension]
+        default: all
 
 concurrency:
   group: ci-${{ (github.event.client_payload.event || github.event_name) == 'pull_request' && (github.event.client_payload.pr || github.event.client_payload.ref || 'refs/heads/main') || github.run_id }}
@@ -561,6 +567,7 @@ jobs:
     permissions:
       contents: read
       actions: read
+      id-token: write
     secrets:
       GH_POOL_DISPATCH_TOKEN_POOL_A: ${{ secrets.GH_POOL_DISPATCH_TOKEN_POOL_A }}
       GH_POOL_DISPATCH_TOKEN_POOL_B: ${{ secrets.GH_POOL_DISPATCH_TOKEN_POOL_B }}
@@ -568,6 +575,7 @@ jobs:
       NIKATRU_POOL_HANDOFF_KEY: ${{ secrets.NIKATRU_POOL_HANDOFF_KEY }}
       PRIVATE_DEPLOY_KEY: ${{ secrets.PRIVATE_DEPLOY_KEY }}
       NIKATRU_DETAIL_KEY: ${{ secrets.NIKATRU_DETAIL_KEY }}
+      BRIDGE_ARTIFACT_SECRET: ${{ (github.event.client_payload.event || github.event_name) != 'pull_request' && secrets.BRIDGE_ARTIFACT_SECRET || '' }}
     with:
       nikatru_sha: ${{ needs.nikatru-pin.outputs.sha || 'nikatru-pin-did-not-succeed..' }}
       nikatru_tier: ${{ needs.nikatru-pin.outputs.tier }}
@@ -624,11 +632,122 @@ jobs:
       PRIVATE_DEPLOY_KEY: ${{ secrets.PRIVATE_DEPLOY_KEY }}
       NIKATRU_DETAIL_KEY: ${{ secrets.NIKATRU_DETAIL_KEY }}
 
+  as-if-main:
+    name: as-if-main
+    if: (github.event_name != 'repository_dispatch' || (github.event.client_payload.event == 'push' && github.event.client_payload.ref == 'refs/heads/main') || github.event.client_payload.event == 'pull_request') && ((success() || (!cancelled() && (github.event.client_payload.event == 'pull_request' && startsWith(github.event.client_payload.ref, 'refs/heads/rehearsal/')))) && github.event.client_payload.draft != true)
+    needs: [nikatru-pin, first-pass]
+    runs-on: ubuntu-24.04
+    timeout-minutes: 20
+    permissions:
+      contents: read
+    steps:
+      - name: Check out the private tree (generated)
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
+        with:
+          repository: ${{ env.NIKATRU_PRIVATE_REPO }}
+          ref: ${{ needs.nikatru-pin.outputs.sha || 'nikatru-pin-did-not-succeed..' }}
+          ssh-key: ${{ secrets.PRIVATE_DEPLOY_KEY }}
+          persist-credentials: false
+      - name: Name the private commit (generated)
+        shell: bash
+        working-directory: ${{ github.workspace }}
+        env:
+          NIKATRU_P_EVENT: ${{ github.event.client_payload.event || github.event_name }}
+          NIKATRU_P_REF: ${{ github.event.client_payload.ref || 'refs/heads/main' }}
+          NIKATRU_P_BASE_SHA: ${{ github.event.client_payload.base_sha }}
+          NIKATRU_P_BASE_REF: ${{ github.event.client_payload.base_ref }}
+          NIKATRU_P_PR: ${{ github.event.client_payload.pr }}
+          NIKATRU_P_PR_CREATED_AT: ${{ github.event.client_payload.pr_created_at }}
+          NIKATRU_P_DRAFT: ${{ github.event.client_payload.draft }}
+          NIKATRU_P_SHA: ${{ github.event.client_payload.sha }}
+        run: |
+          if [ "$NIKATRU_P_EVENT" = pull_request ]; then
+            set -- $(git cat-file -p HEAD | sed -n '1,/^$/s/^parent //p')
+            if [ "${2:-}" != "$NIKATRU_P_SHA" ]; then
+              echo "::error::the checked-out merge of PR #$NIKATRU_P_PR is not the merge of the dispatched head $NIKATRU_P_SHA (its second parent is ${2:-none}); the nikatru-pin job pins it — re-run the whole workflow, not this job"
+              exit 1
+            fi
+          fi
+          {
+            echo "NIKATRU_SHA=$(git rev-parse HEAD)"
+            echo "NIKATRU_HEAD_SHA=${NIKATRU_P_SHA:-$(git rev-parse HEAD)}"
+            echo "NIKATRU_EVENT_NAME=$NIKATRU_P_EVENT"
+            echo "NIKATRU_REF=$NIKATRU_P_REF"
+            echo "NIKATRU_REF_NAME=${NIKATRU_P_REF#refs/*/}"
+            echo "NIKATRU_BASE_SHA=$NIKATRU_P_BASE_SHA"
+            echo "NIKATRU_BASE_REF=$NIKATRU_P_BASE_REF"
+            echo "NIKATRU_PR=$NIKATRU_P_PR"
+            echo "NIKATRU_PR_CREATED_AT=$NIKATRU_P_PR_CREATED_AT"
+            echo "NIKATRU_DRAFT=$NIKATRU_P_DRAFT"
+          } >> "$GITHUB_ENV"
+      - name: Check out this shell repository's own step wrapper and reporter (generated)
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
+        with:
+          path: .nikatru-shell
+          sparse-checkout: .github/nikatru
+          persist-credentials: false
+      - name: Stage the shell's own copies outside the private checkout (generated)
+        shell: bash
+        working-directory: ${{ github.workspace }}
+        env:
+          NIKATRU_DETAIL_KEY: ${{ secrets.NIKATRU_DETAIL_KEY }}
+          NIKATRU_DETAIL_KEY_FILE: ${{ github.workspace }}/../.nikatru-shell/detail.key
+        run: |
+          rm -rf ../.nikatru-shell
+          mv .nikatru-shell/.github/nikatru ../.nikatru-shell
+          rm -rf .nikatru-shell
+          py=python3; python3 -c '' >/dev/null 2>&1 || py=python
+          "$py" -I "$GITHUB_WORKSPACE/../.nikatru-shell/report.py" derive
+      - name: Check out private main's composite actions (generated)
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
+        with:
+          repository: ${{ env.NIKATRU_PRIVATE_REPO }}
+          ref: refs/heads/main
+          path: .nikatru-trusted
+          sparse-checkout: .github/actions
+          ssh-key: ${{ secrets.PRIVATE_DEPLOY_KEY }}
+          persist-credentials: false
+      - name: Keep private main's composite actions out of the branch's tree (generated)
+        shell: bash
+        working-directory: ${{ github.workspace }}
+        run: printf '/.nikatru-trusted/\n' >> "$(git rev-parse --git-path info/exclude)"
+      - uses: ./.nikatru-trusted/.github/actions/setup-node
+      - name: Every main-only check, as main runs it (a rehearsal runs them; any other run plans them)
+        env:
+          AS_IF_MAIN_MODE: ${{ (github.event.client_payload.event == 'pull_request' && startsWith(github.event.client_payload.ref, 'refs/heads/rehearsal/')) && 'run' || 'plan' }}
+        run: |
+          NIKATRU_QUIET="$(mktemp "${RUNNER_TEMP:-/tmp}/nikatru-step.XXXXXX")"
+          cat > "$NIKATRU_QUIET" <<'NIKATRU_QUIET_EOF'
+          node tooling/scripts/main-only-twins.mjs --as-if-main "--${AS_IF_MAIN_MODE}"
+          NIKATRU_QUIET_EOF
+          NIKATRU_SHELL="${BASH:-bash}"; if command -v cygpath >/dev/null 2>&1; then NIKATRU_SHELL="$(cygpath -w "$NIKATRU_SHELL")"; fi
+          node "$GITHUB_WORKSPACE/../.nikatru-shell/quiet-step.mjs" --name ci.as-if-main.3 -- "$NIKATRU_SHELL" -e "$NIKATRU_QUIET"
+      - name: Hand this job's red detail to the report job, sealed (generated)
+        id: nikatru-handoff
+        if: always()
+        shell: bash
+        working-directory: ${{ github.workspace }}
+        env:
+          NIKATRU_DETAIL_KEY_FILE: ${{ github.workspace }}/../.nikatru-shell/detail.key
+          NIKATRU_HANDOFF: nikatru-detail-${{ github.run_id }}-${{ github.run_attempt }}-ci.as-if-main.${{ strategy.job-index }}
+        run: |
+          if [ -s "$RUNNER_TEMP/report-detail.md" ]; then
+            py=python3; python3 -c '' >/dev/null 2>&1 || py=python
+            "$py" -I "$GITHUB_WORKSPACE/../.nikatru-shell/report.py" handoff
+          fi
+      - name: Save the hand-off (generated)
+        if: always() && steps.nikatru-handoff.outputs.has == 'true'
+        uses: actions/cache/save@55cc8345863c7cc4c66a329aec7e433d2d1c52a9
+        with:
+          path: .nikatru-detail
+          key: nikatru-detail-${{ github.run_id }}-${{ github.run_attempt }}-ci.as-if-main.${{ strategy.job-index }}
+          enableCrossOsArchive: true
+
   ci-gate:
     name: ci-gate
     runs-on: ubuntu-24.04
     timeout-minutes: 5
-    needs: [nikatru-pin, first-pass, lane-workers, lane-guards, lane-sites, lane-apps, lane-build, extensions]
+    needs: [nikatru-pin, first-pass, lane-workers, lane-guards, lane-sites, lane-apps, lane-build, as-if-main, extensions]
     if: (github.event_name != 'repository_dispatch' || (github.event.client_payload.event == 'push' && github.event.client_payload.ref == 'refs/heads/main') || github.event.client_payload.event == 'pull_request') && (always() && github.event.client_payload.draft != true)
     permissions:
       contents: read
@@ -703,6 +822,7 @@ jobs:
           echo "lane-apps=${{ needs.lane-apps.result }}"
           echo "lane-build=${{ needs.lane-build.result }}"
           echo "extensions=${{ needs.extensions.result }}"
+          echo "as-if-main=${{ needs.as-if-main.result }}"
           if [ "${{ contains(needs.*.result, 'failure') }}" = "true" ] || [ "${{ contains(needs.*.result, 'cancelled') }}" = "true" ] || [ "${{ contains(needs.*.result, 'skipped') }}" = "true" ]; then
             echo "::error::One or more CI lanes failed, was cancelled, or never ran — see the verdicts above"; exit 1
           fi
@@ -1262,7 +1382,7 @@ jobs:
 
   nikatru-ran:
     name: Fail this run if it ran nothing (generated)
-    needs: [first-pass, lane-workers, lane-guards, lane-sites, lane-apps, lane-build, extensions, ci-gate, platform-db-migrate, deploy-web, pool-sync, money-plan, sandbox-slot, money-sandbox, money-gate, deploy-workers]
+    needs: [first-pass, lane-workers, lane-guards, lane-sites, lane-apps, lane-build, extensions, as-if-main, ci-gate, platform-db-migrate, deploy-web, pool-sync, money-plan, sandbox-slot, money-sandbox, money-gate, deploy-workers]
     if: (github.event_name != 'repository_dispatch' || (github.event.client_payload.event == 'push' && github.event.client_payload.ref == 'refs/heads/main') || github.event.client_payload.event == 'pull_request') && !cancelled() && github.event_name != 'repository_dispatch'
     runs-on: ubuntu-24.04
     defaults:
@@ -1282,7 +1402,7 @@ jobs:
       - name: Fail when every job of this run was skipped (generated)
         shell: bash
         env:
-          NIKATRU_RESULTS: first-pass=${{ needs.first-pass.result }} lane-workers=${{ needs.lane-workers.result }} lane-guards=${{ needs.lane-guards.result }} lane-sites=${{ needs.lane-sites.result }} lane-apps=${{ needs.lane-apps.result }} lane-build=${{ needs.lane-build.result }} extensions=${{ needs.extensions.result }} ci-gate=${{ needs.ci-gate.result }} platform-db-migrate=${{ needs.platform-db-migrate.result }} deploy-web=${{ needs.deploy-web.result }} pool-sync=${{ needs.pool-sync.result }} money-plan=${{ needs.money-plan.result }} sandbox-slot=${{ needs.sandbox-slot.result }} money-sandbox=${{ needs.money-sandbox.result }} money-gate=${{ needs.money-gate.result }} deploy-workers=${{ needs.deploy-workers.result }}
+          NIKATRU_RESULTS: first-pass=${{ needs.first-pass.result }} lane-workers=${{ needs.lane-workers.result }} lane-guards=${{ needs.lane-guards.result }} lane-sites=${{ needs.lane-sites.result }} lane-apps=${{ needs.lane-apps.result }} lane-build=${{ needs.lane-build.result }} extensions=${{ needs.extensions.result }} as-if-main=${{ needs.as-if-main.result }} ci-gate=${{ needs.ci-gate.result }} platform-db-migrate=${{ needs.platform-db-migrate.result }} deploy-web=${{ needs.deploy-web.result }} pool-sync=${{ needs.pool-sync.result }} money-plan=${{ needs.money-plan.result }} sandbox-slot=${{ needs.sandbox-slot.result }} money-sandbox=${{ needs.money-sandbox.result }} money-gate=${{ needs.money-gate.result }} deploy-workers=${{ needs.deploy-workers.result }}
         run: |
           for r in $NIKATRU_RESULTS; do
             if [ "${r#*=}" != skipped ]; then echo "ran: $NIKATRU_RESULTS"; exit 0; fi
@@ -1292,7 +1412,7 @@ jobs:
 
   nikatru-collect:
     name: Collect the red detail, without the report secret (generated)
-    needs: [first-pass, lane-workers, lane-guards, lane-sites, lane-apps, lane-build, extensions, ci-gate]
+    needs: [first-pass, lane-workers, lane-guards, lane-sites, lane-apps, lane-build, as-if-main, extensions, ci-gate]
     if: always() && (github.event_name == 'repository_dispatch' || github.event_name == 'workflow_dispatch') && (github.event_name != 'repository_dispatch' || (github.event.client_payload.event == 'push' && github.event.client_payload.ref == 'refs/heads/main') || github.event.client_payload.event == 'pull_request')
     runs-on: ubuntu-24.04
     defaults:
@@ -1304,6 +1424,8 @@ jobs:
       actions: read
     outputs:
       detail: ${{ steps.collect.outputs.detail }}
+      detail_2: ${{ steps.collect.outputs.detail_2 }}
+      detail_3: ${{ steps.collect.outputs.detail_3 }}
     steps:
       - name: Check out this shell repository only, no private code (generated)
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
@@ -1565,7 +1687,7 @@ jobs:
 
   nikatru-report:
     name: Report to the private repository (generated)
-    needs: [nikatru-pin, first-pass, lane-workers, lane-guards, lane-sites, lane-apps, lane-build, extensions, ci-gate, nikatru-collect]
+    needs: [nikatru-pin, first-pass, lane-workers, lane-guards, lane-sites, lane-apps, lane-build, as-if-main, extensions, ci-gate, nikatru-collect]
     if: always() && (github.event_name == 'repository_dispatch' || github.event_name == 'workflow_dispatch') && (github.event_name != 'repository_dispatch' || (github.event.client_payload.event == 'push' && github.event.client_payload.ref == 'refs/heads/main') || github.event.client_payload.event == 'pull_request')
     runs-on: ubuntu-24.04
     defaults:
@@ -1587,11 +1709,13 @@ jobs:
           BRIDGE_REPORT_SECRET: ${{ secrets.BRIDGE_REPORT_SECRET }}
           NIKATRU_DETAIL_KEY: ${{ secrets.NIKATRU_DETAIL_KEY }}
           NIKATRU_DETAIL: ${{ needs.nikatru-collect.outputs.detail }}
+          NIKATRU_DETAIL_2: ${{ needs.nikatru-collect.outputs.detail_2 }}
+          NIKATRU_DETAIL_3: ${{ needs.nikatru-collect.outputs.detail_3 }}
           NIKATRU_HEAD_SHA: ${{ github.event.client_payload.sha }}
           NIKATRU_P_EVENT: ${{ github.event.client_payload.event }}
           NIKATRU_P_PR: ${{ github.event.client_payload.pr }}
           NIKATRU_P_REF: ${{ github.event.client_payload.ref }}
-          NIKATRU_RESULTS: '{"first-pass": "${{ needs.first-pass.result }}", "lane-workers": "${{ needs.lane-workers.result }}", "lane-guards": "${{ needs.lane-guards.result }}", "lane-sites": "${{ needs.lane-sites.result }}", "lane-apps": "${{ needs.lane-apps.result }}", "lane-build": "${{ needs.lane-build.result }}", "extensions": "${{ needs.extensions.result }}", "ci-gate": "${{ needs.ci-gate.result }}"}'
+          NIKATRU_RESULTS: '{"first-pass": "${{ needs.first-pass.result }}", "lane-workers": "${{ needs.lane-workers.result }}", "lane-guards": "${{ needs.lane-guards.result }}", "lane-sites": "${{ needs.lane-sites.result }}", "lane-apps": "${{ needs.lane-apps.result }}", "lane-build": "${{ needs.lane-build.result }}", "as-if-main": "${{ needs.as-if-main.result }}", "extensions": "${{ needs.extensions.result }}", "ci-gate": "${{ needs.ci-gate.result }}"}'
           NIKATRU_GATE_META: ${{ needs.ci-gate.outputs.meta }}
           NIKATRU_TIER: ${{ needs.nikatru-pin.outputs.tier }}
         run: /usr/bin/python3 -I .github/nikatru/report.py send .github/nikatru/ci.json
@@ -1603,7 +1727,7 @@ jobs:
           NIKATRU_P_EVENT: ${{ github.event.client_payload.event }}
           NIKATRU_P_PR: ${{ github.event.client_payload.pr }}
           NIKATRU_P_REF: ${{ github.event.client_payload.ref }}
-          NIKATRU_RESULTS: '{"first-pass": "${{ needs.first-pass.result }}", "lane-workers": "${{ needs.lane-workers.result }}", "lane-guards": "${{ needs.lane-guards.result }}", "lane-sites": "${{ needs.lane-sites.result }}", "lane-apps": "${{ needs.lane-apps.result }}", "lane-build": "${{ needs.lane-build.result }}", "extensions": "${{ needs.extensions.result }}", "ci-gate": "${{ needs.ci-gate.result }}"}'
+          NIKATRU_RESULTS: '{"first-pass": "${{ needs.first-pass.result }}", "lane-workers": "${{ needs.lane-workers.result }}", "lane-guards": "${{ needs.lane-guards.result }}", "lane-sites": "${{ needs.lane-sites.result }}", "lane-apps": "${{ needs.lane-apps.result }}", "lane-build": "${{ needs.lane-build.result }}", "as-if-main": "${{ needs.as-if-main.result }}", "extensions": "${{ needs.extensions.result }}", "ci-gate": "${{ needs.ci-gate.result }}"}'
           NIKATRU_GATE_META: ${{ needs.ci-gate.outputs.meta }}
           NIKATRU_TIER: ${{ needs.nikatru-pin.outputs.tier }}
         run: /usr/bin/python3 -I .github/nikatru/report.py send .github/nikatru/ci.json
@@ -1622,6 +1746,8 @@ jobs:
       actions: read
     outputs:
       detail: ${{ steps.collect.outputs.detail }}
+      detail_2: ${{ steps.collect.outputs.detail_2 }}
+      detail_3: ${{ steps.collect.outputs.detail_3 }}
     steps:
       - name: Check out this shell repository only, no private code (generated)
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
@@ -1905,6 +2031,8 @@ jobs:
           BRIDGE_REPORT_SECRET: ${{ secrets.BRIDGE_REPORT_SECRET }}
           NIKATRU_DETAIL_KEY: ${{ secrets.NIKATRU_DETAIL_KEY }}
           NIKATRU_DETAIL: ${{ needs.nikatru-collect-deploys.outputs.detail }}
+          NIKATRU_DETAIL_2: ${{ needs.nikatru-collect-deploys.outputs.detail_2 }}
+          NIKATRU_DETAIL_3: ${{ needs.nikatru-collect-deploys.outputs.detail_3 }}
           NIKATRU_HEAD_SHA: ${{ github.event.client_payload.sha }}
           NIKATRU_P_EVENT: ${{ github.event.client_payload.event }}
           NIKATRU_P_PR: ${{ github.event.client_payload.pr }}
@@ -1924,7 +2052,7 @@ jobs:
 
   nikatru-relay:
     name: Start the workflows that follow this run (generated)
-    needs: [nikatru-pin, first-pass, lane-workers, lane-guards, lane-sites, lane-apps, lane-build, extensions, ci-gate, platform-db-migrate, deploy-web, pool-sync, money-plan, sandbox-slot, money-sandbox, money-gate, deploy-workers, nikatru-ran, nikatru-collect, nikatru-report, nikatru-collect-deploys, nikatru-report-deploys]
+    needs: [nikatru-pin, first-pass, lane-workers, lane-guards, lane-sites, lane-apps, lane-build, extensions, as-if-main, ci-gate, platform-db-migrate, deploy-web, pool-sync, money-plan, sandbox-slot, money-sandbox, money-gate, deploy-workers, nikatru-ran, nikatru-collect, nikatru-report, nikatru-collect-deploys, nikatru-report-deploys]
     if: always() && (github.event_name != 'repository_dispatch' || (github.event.client_payload.event == 'push' && github.event.client_payload.ref == 'refs/heads/main') || github.event.client_payload.event == 'pull_request') && github.event.client_payload.event != 'pull_request'
     runs-on: ubuntu-24.04
     defaults:

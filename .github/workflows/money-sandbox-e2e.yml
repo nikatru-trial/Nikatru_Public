@@ -5,7 +5,7 @@ env:
 
 name: Money sandbox E2E
 
-run-name: "Money sandbox E2E${{ inputs.rail && format(' · rail {0}', inputs.rail) || '' }}${{ inputs.gate_mode && format(' · gate {0}', inputs.gate_mode) || '' }}${{ inputs.worker_slot && format(' [worker slot {0}]', inputs.worker_slot) || '' }}${{ inputs.private_pr && format(' — branch proof {0} (PR #{1})', inputs.private_ref, inputs.private_pr) || '' }}"
+run-name: "${{ !(inputs.private_pr) && (startsWith(inputs.private_ref, 'refs/tags/') && '[tag] ' || '[main] ') || startsWith(inputs.private_ref, 'refs/heads/rehearsal/') && '[rehearsal] ' || startsWith(inputs.private_ref, 'refs/heads/club/') && '[club] ' || startsWith(inputs.private_ref, 'refs/heads/train/') && '[club] ' || startsWith(inputs.private_ref, 'refs/heads/integ/') && '[club] ' || startsWith(inputs.private_ref, 'refs/heads/renovate/') && '[bot] ' || startsWith(inputs.private_ref, 'refs/heads/dependabot/') && '[bot] ' || '[single] ' }}Money sandbox E2E${{ inputs.rail && format(' · rail {0}', inputs.rail) || '' }}${{ inputs.gate_mode && format(' · gate {0}', inputs.gate_mode) || '' }}${{ inputs.worker_slot && format(' [worker slot {0}]', inputs.worker_slot) || '' }}${{ inputs.private_pr && format(' — branch proof {0} (PR #{1})', inputs.private_ref, inputs.private_pr) || '' }}"
 
 on:
   workflow_dispatch:

@@ -6,7 +6,7 @@ env:
 
 name: E2E live
 
-run-name: "E2E live · ${{ github.event.client_payload.sha }}${{ github.event.client_payload.pr && format(' (PR #{0})', github.event.client_payload.pr) || '' }}${{ inputs.worker_slot && format(' [worker slot {0}]', inputs.worker_slot) || '' }}"
+run-name: "${{ !(github.event.client_payload.pr) && (startsWith(github.event.client_payload.ref, 'refs/tags/') && '[tag] ' || '[main] ') || startsWith(github.event.client_payload.ref, 'refs/heads/rehearsal/') && '[rehearsal] ' || startsWith(github.event.client_payload.ref, 'refs/heads/club/') && '[club] ' || startsWith(github.event.client_payload.ref, 'refs/heads/train/') && '[club] ' || startsWith(github.event.client_payload.ref, 'refs/heads/integ/') && '[club] ' || startsWith(github.event.client_payload.ref, 'refs/heads/renovate/') && '[bot] ' || startsWith(github.event.client_payload.ref, 'refs/heads/dependabot/') && '[bot] ' || '[single] ' }}E2E live · ${{ github.event.client_payload.sha }}${{ github.event.client_payload.pr && format(' (PR #{0})', github.event.client_payload.pr) || '' }}${{ inputs.worker_slot && format(' [worker slot {0}]', inputs.worker_slot) || '' }}"
 
 on:
   repository_dispatch:
@@ -1490,12 +1490,22 @@ jobs:
       - uses: ./.nikatru-trusted/.github/actions/setup-node
       - name: Stamp the run on every asserted leg e2e.yml runs
         env:
+          GH_TOKEN: ${{ github.token }}
+          GITHUB_REPOSITORY: ${{ github.repository }}
           RUN_ID: ${{ github.run_id }}
+          RUN_ATTEMPT: ${{ github.run_attempt }}
           STARTED_AT: ${{ needs.prepare.outputs.started_at }}
         run: |
           NIKATRU_QUIET="$(mktemp "${RUNNER_TEMP:-/tmp}/nikatru-step.XXXXXX")"
           cat > "$NIKATRU_QUIET" <<'NIKATRU_QUIET_EOF'
-          node tooling/e2e/leg-last-green.mjs --workflow .github/workflows/e2e.yml --run-id "$RUN_ID" --as-of "$STARTED_AT"
+          set -uo pipefail
+          as_of="$(gh api "repos/${GITHUB_REPOSITORY}/actions/runs/${RUN_ID}/attempts/${RUN_ATTEMPT}" --jq '.run_started_at' 2>/dev/null)" || as_of=''
+          if ! [[ "$as_of" =~ ^[0-9]{4}-[0-9]{2}-[0-9]{2}T[0-9]{2}:[0-9]{2}:[0-9]{2}Z$ ]]; then
+            echo "::warning title=lastGreen asOf from prepare's clock::run ${RUN_ID} attempt ${RUN_ATTEMPT}'s run_started_at did not read (got '${as_of}'), so asOf is prepare's date -u (${STARTED_AT}), up to a minute later than the run started."
+            as_of="$STARTED_AT"
+          fi
+          echo "asOf = ${as_of} (run_started_at of run ${RUN_ID} attempt ${RUN_ATTEMPT})"
+          node tooling/e2e/leg-last-green.mjs --workflow .github/workflows/e2e.yml --run-id "$RUN_ID" --as-of "$as_of"
           NIKATRU_QUIET_EOF
           NIKATRU_SHELL="${BASH:-bash}"; if command -v cygpath >/dev/null 2>&1; then NIKATRU_SHELL="$(cygpath -w "$NIKATRU_SHELL")"; fi
           node "$GITHUB_WORKSPACE/../.nikatru-shell/quiet-step.mjs" --name e2e.last-green.3 -- "$NIKATRU_SHELL" -e "$NIKATRU_QUIET"
@@ -1744,6 +1754,8 @@ jobs:
       actions: read
     outputs:
       detail: ${{ steps.collect.outputs.detail }}
+      detail_2: ${{ steps.collect.outputs.detail_2 }}
+      detail_3: ${{ steps.collect.outputs.detail_3 }}
     steps:
       - name: Check out this shell repository only, no private code (generated)
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
@@ -2027,6 +2039,8 @@ jobs:
           BRIDGE_REPORT_SECRET: ${{ secrets.BRIDGE_REPORT_SECRET }}
           NIKATRU_DETAIL_KEY: ${{ secrets.NIKATRU_DETAIL_KEY }}
           NIKATRU_DETAIL: ${{ needs.nikatru-collect.outputs.detail }}
+          NIKATRU_DETAIL_2: ${{ needs.nikatru-collect.outputs.detail_2 }}
+          NIKATRU_DETAIL_3: ${{ needs.nikatru-collect.outputs.detail_3 }}
           NIKATRU_HEAD_SHA: ${{ github.event.client_payload.sha }}
           NIKATRU_P_EVENT: ${{ github.event.client_payload.event }}
           NIKATRU_P_PR: ${{ github.event.client_payload.pr }}

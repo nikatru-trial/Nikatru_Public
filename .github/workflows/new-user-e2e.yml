@@ -5,9 +5,11 @@ env:
 
 name: New-user journey
 
-run-name: "New-user journey${{ inputs.worker_slot && format(' [worker slot {0}]', inputs.worker_slot) || '' }}"
+run-name: "New-user journey · ${{ github.event.client_payload.sha }}${{ github.event.client_payload.pr && format(' (PR #{0})', github.event.client_payload.pr) || '' }}${{ inputs.worker_slot && format(' [worker slot {0}]', inputs.worker_slot) || '' }}"
 
 on:
+  repository_dispatch:
+    types: [new-user-e2e]
   workflow_dispatch:
     inputs:
       worker_slot:
@@ -24,8 +26,35 @@ concurrency:
   cancel-in-progress: false
 
 jobs:
+  nikatru-approve:
+    name: Wait for a reviewer before unmerged code meets production credentials (generated)
+    if: github.event_name == 'repository_dispatch'
+    runs-on: ubuntu-24.04
+    defaults:
+      run:
+        working-directory: ${{ github.workspace }}
+    timeout-minutes: 5
+    environment: store-publish
+    permissions:
+      contents: read
+    steps:
+      - name: Check out nothing of the private tree but its issue templates (generated)
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
+        with:
+          repository: ${{ env.NIKATRU_PRIVATE_REPO }}
+          sparse-checkout: .github/ISSUE_TEMPLATE
+          ssh-key: ${{ secrets.PRIVATE_DEPLOY_KEY }}
+          persist-credentials: false
+      - name: Name what a reviewer approved (generated)
+        shell: bash
+        env:
+          NIKATRU_P_SHA: ${{ github.event.client_payload.sha }}
+        run: echo "approved a run of unmerged code at ${NIKATRU_P_SHA:-the dispatched ref}"
+
   nikatru-pin:
     name: Pin the private commit this run builds (generated)
+    needs: [nikatru-approve]
+    if: always() && (needs.nikatru-approve.result == 'success' || (needs.nikatru-approve.result == 'skipped' && !(github.event_name == 'repository_dispatch')))
     runs-on: ubuntu-24.04
     defaults:
       run:
@@ -124,11 +153,11 @@ jobs:
   apps:
     needs: [nikatru-pin]
     name: Derive the app set from the pub workspace
+    if: needs.nikatru-pin.result == 'success' && !cancelled() && !failure()
     runs-on: ubuntu-24.04
     timeout-minutes: 5
     permissions:
       contents: read
-      id-token: write
     outputs:
       apps: ${{ steps.workspace.outputs.apps }}
     steps:
@@ -180,10 +209,15 @@ jobs:
       - name: Stage the shell's own copies outside the private checkout (generated)
         shell: bash
         working-directory: ${{ github.workspace }}
+        env:
+          NIKATRU_DETAIL_KEY: ${{ secrets.NIKATRU_DETAIL_KEY }}
+          NIKATRU_DETAIL_KEY_FILE: ${{ github.workspace }}/../.nikatru-shell/detail.key
         run: |
           rm -rf ../.nikatru-shell
           mv .nikatru-shell/.github/nikatru ../.nikatru-shell
           rm -rf .nikatru-shell
+          py=python3; python3 -c '' >/dev/null 2>&1 || py=python
+          "$py" -I "$GITHUB_WORKSPACE/../.nikatru-shell/report.py" derive
       - name: The matrix comes from the workspace, never from this file
         id: workspace
         run: |
@@ -196,27 +230,35 @@ jobs:
           NIKATRU_QUIET_EOF
           NIKATRU_SHELL="${BASH:-bash}"; if command -v cygpath >/dev/null 2>&1; then NIKATRU_SHELL="$(cygpath -w "$NIKATRU_SHELL")"; fi
           node "$GITHUB_WORKSPACE/../.nikatru-shell/quiet-step.mjs" --name new-user-e2e.apps.2 -- "$NIKATRU_SHELL" -e "$NIKATRU_QUIET"
-      - name: Store this job's red detail in the bridge's private home (generated)
+      - name: Hand this job's red detail to the report job, sealed (generated)
+        id: nikatru-handoff
         if: always()
-        continue-on-error: true
         shell: bash
         working-directory: ${{ github.workspace }}
         env:
-          NIKATRU_PATHS: ${{ runner.temp }}/report-detail.md
-          NIKATRU_ARTIFACT_NAME: report-detail-new-user-e2e.apps.${{ strategy.job-index }}
-          NIKATRU_IF_NO_FILES: ignore
-          BRIDGE_ARTIFACT_SECRET: ${{ secrets.BRIDGE_ARTIFACT_SECRET }}
-          NIKATRU_BRIDGE_ARTIFACT_URL: https://gh-bridge.nikatru.workers.dev/artifact
-        run: node tooling/ops/bridge-artifact.mjs upload
+          NIKATRU_DETAIL_KEY_FILE: ${{ github.workspace }}/../.nikatru-shell/detail.key
+          NIKATRU_HANDOFF: nikatru-detail-${{ github.run_id }}-${{ github.run_attempt }}-new-user-e2e.apps.${{ strategy.job-index }}
+        run: |
+          if [ -s "$RUNNER_TEMP/report-detail.md" ]; then
+            py=python3; python3 -c '' >/dev/null 2>&1 || py=python
+            "$py" -I "$GITHUB_WORKSPACE/../.nikatru-shell/report.py" handoff
+          fi
+      - name: Save the hand-off (generated)
+        if: always() && steps.nikatru-handoff.outputs.has == 'true'
+        uses: actions/cache/save@55cc8345863c7cc4c66a329aec7e433d2d1c52a9
+        with:
+          path: .nikatru-detail
+          key: nikatru-detail-${{ github.run_id }}-${{ github.run_attempt }}-new-user-e2e.apps.${{ strategy.job-index }}
+          enableCrossOsArchive: true
 
   prepare:
     needs: [nikatru-pin]
     name: Preflight, the inbox, the orphan sweep and the plan
+    if: needs.nikatru-pin.result == 'success' && !cancelled() && !failure()
     runs-on: ubuntu-24.04
     timeout-minutes: 10
     permissions:
       contents: read
-      id-token: write
     outputs:
       walk: ${{ steps.plan.outputs.walk }}
       date: ${{ steps.date.outputs.date }}
@@ -275,10 +317,15 @@ jobs:
       - name: Stage the shell's own copies outside the private checkout (generated)
         shell: bash
         working-directory: ${{ github.workspace }}
+        env:
+          NIKATRU_DETAIL_KEY: ${{ secrets.NIKATRU_DETAIL_KEY }}
+          NIKATRU_DETAIL_KEY_FILE: ${{ github.workspace }}/../.nikatru-shell/detail.key
         run: |
           rm -rf ../.nikatru-shell
           mv .nikatru-shell/.github/nikatru ../.nikatru-shell
           rm -rf .nikatru-shell
+          py=python3; python3 -c '' >/dev/null 2>&1 || py=python
+          "$py" -I "$GITHUB_WORKSPACE/../.nikatru-shell/report.py" derive
       - name: Check out private main's composite actions (generated)
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
         with:
@@ -378,27 +425,35 @@ jobs:
           NIKATRU_QUIET_EOF
           NIKATRU_SHELL="${BASH:-bash}"; if command -v cygpath >/dev/null 2>&1; then NIKATRU_SHELL="$(cygpath -w "$NIKATRU_SHELL")"; fi
           node "$GITHUB_WORKSPACE/../.nikatru-shell/quiet-step.mjs" --name new-user-e2e.prepare.9 -- "$NIKATRU_SHELL" -e "$NIKATRU_QUIET"
-      - name: Store this job's red detail in the bridge's private home (generated)
+      - name: Hand this job's red detail to the report job, sealed (generated)
+        id: nikatru-handoff
         if: always()
-        continue-on-error: true
         shell: bash
         working-directory: ${{ github.workspace }}
         env:
-          NIKATRU_PATHS: ${{ runner.temp }}/report-detail.md
-          NIKATRU_ARTIFACT_NAME: report-detail-new-user-e2e.prepare.${{ strategy.job-index }}
-          NIKATRU_IF_NO_FILES: ignore
-          BRIDGE_ARTIFACT_SECRET: ${{ secrets.BRIDGE_ARTIFACT_SECRET }}
-          NIKATRU_BRIDGE_ARTIFACT_URL: https://gh-bridge.nikatru.workers.dev/artifact
-        run: node tooling/ops/bridge-artifact.mjs upload
+          NIKATRU_DETAIL_KEY_FILE: ${{ github.workspace }}/../.nikatru-shell/detail.key
+          NIKATRU_HANDOFF: nikatru-detail-${{ github.run_id }}-${{ github.run_attempt }}-new-user-e2e.prepare.${{ strategy.job-index }}
+        run: |
+          if [ -s "$RUNNER_TEMP/report-detail.md" ]; then
+            py=python3; python3 -c '' >/dev/null 2>&1 || py=python
+            "$py" -I "$GITHUB_WORKSPACE/../.nikatru-shell/report.py" handoff
+          fi
+      - name: Save the hand-off (generated)
+        if: always() && steps.nikatru-handoff.outputs.has == 'true'
+        uses: actions/cache/save@55cc8345863c7cc4c66a329aec7e433d2d1c52a9
+        with:
+          path: .nikatru-detail
+          key: nikatru-detail-${{ github.run_id }}-${{ github.run_attempt }}-new-user-e2e.prepare.${{ strategy.job-index }}
+          enableCrossOsArchive: true
 
   account:
     name: A new customer, end to end (production, ${{ matrix.app }}, n=${{ matrix.n }})
+    if: needs.nikatru-pin.result == 'success' && !cancelled() && !failure() && needs.apps.result == 'success' && needs.prepare.result == 'success'
     needs: [nikatru-pin, apps, prepare]
     runs-on: ubuntu-24.04
     timeout-minutes: 45
     permissions:
       contents: read
-      id-token: write
     strategy:
       fail-fast: false
       matrix:
@@ -466,10 +521,15 @@ jobs:
       - name: Stage the shell's own copies outside the private checkout (generated)
         shell: bash
         working-directory: ${{ github.workspace }}
+        env:
+          NIKATRU_DETAIL_KEY: ${{ secrets.NIKATRU_DETAIL_KEY }}
+          NIKATRU_DETAIL_KEY_FILE: ${{ github.workspace }}/../.nikatru-shell/detail.key
         run: |
           rm -rf ../.nikatru-shell
           mv .nikatru-shell/.github/nikatru ../.nikatru-shell
           rm -rf .nikatru-shell
+          py=python3; python3 -c '' >/dev/null 2>&1 || py=python
+          "$py" -I "$GITHUB_WORKSPACE/../.nikatru-shell/report.py" derive
       - name: Check out private main's composite actions (generated)
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
         with:
@@ -637,27 +697,35 @@ jobs:
           NIKATRU_QUIET_EOF
           NIKATRU_SHELL="${BASH:-bash}"; if command -v cygpath >/dev/null 2>&1; then NIKATRU_SHELL="$(cygpath -w "$NIKATRU_SHELL")"; fi
           node "$GITHUB_WORKSPACE/../.nikatru-shell/quiet-step.mjs" --name new-user-e2e.account.12 -- "$NIKATRU_SHELL" -e "$NIKATRU_QUIET"
-      - name: Store this job's red detail in the bridge's private home (generated)
+      - name: Hand this job's red detail to the report job, sealed (generated)
+        id: nikatru-handoff
         if: always()
-        continue-on-error: true
         shell: bash
         working-directory: ${{ github.workspace }}
         env:
-          NIKATRU_PATHS: ${{ runner.temp }}/report-detail.md
-          NIKATRU_ARTIFACT_NAME: report-detail-new-user-e2e.account.${{ strategy.job-index }}
-          NIKATRU_IF_NO_FILES: ignore
-          BRIDGE_ARTIFACT_SECRET: ${{ secrets.BRIDGE_ARTIFACT_SECRET }}
-          NIKATRU_BRIDGE_ARTIFACT_URL: https://gh-bridge.nikatru.workers.dev/artifact
-        run: node tooling/ops/bridge-artifact.mjs upload
+          NIKATRU_DETAIL_KEY_FILE: ${{ github.workspace }}/../.nikatru-shell/detail.key
+          NIKATRU_HANDOFF: nikatru-detail-${{ github.run_id }}-${{ github.run_attempt }}-new-user-e2e.account.${{ strategy.job-index }}
+        run: |
+          if [ -s "$RUNNER_TEMP/report-detail.md" ]; then
+            py=python3; python3 -c '' >/dev/null 2>&1 || py=python
+            "$py" -I "$GITHUB_WORKSPACE/../.nikatru-shell/report.py" handoff
+          fi
+      - name: Save the hand-off (generated)
+        if: always() && steps.nikatru-handoff.outputs.has == 'true'
+        uses: actions/cache/save@55cc8345863c7cc4c66a329aec7e433d2d1c52a9
+        with:
+          path: .nikatru-detail
+          key: nikatru-detail-${{ github.run_id }}-${{ github.run_attempt }}-new-user-e2e.account.${{ strategy.job-index }}
+          enableCrossOsArchive: true
 
   reminder-digest:
     name: The renewal reminder digest (production, ${{ matrix.app }}, read yesterday's, seed today's)
+    if: needs.nikatru-pin.result == 'success' && !cancelled() && !failure() && needs.apps.result == 'success'
     needs: [nikatru-pin, apps]
     runs-on: ubuntu-24.04
     timeout-minutes: 10
     permissions:
       contents: read
-      id-token: write
     strategy:
       fail-fast: false
       matrix:
@@ -715,10 +783,15 @@ jobs:
       - name: Stage the shell's own copies outside the private checkout (generated)
         shell: bash
         working-directory: ${{ github.workspace }}
+        env:
+          NIKATRU_DETAIL_KEY: ${{ secrets.NIKATRU_DETAIL_KEY }}
+          NIKATRU_DETAIL_KEY_FILE: ${{ github.workspace }}/../.nikatru-shell/detail.key
         run: |
           rm -rf ../.nikatru-shell
           mv .nikatru-shell/.github/nikatru ../.nikatru-shell
           rm -rf .nikatru-shell
+          py=python3; python3 -c '' >/dev/null 2>&1 || py=python
+          "$py" -I "$GITHUB_WORKSPACE/../.nikatru-shell/report.py" derive
       - name: Check out private main's composite actions (generated)
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
         with:
@@ -818,27 +891,35 @@ jobs:
           NIKATRU_QUIET_EOF
           NIKATRU_SHELL="${BASH:-bash}"; if command -v cygpath >/dev/null 2>&1; then NIKATRU_SHELL="$(cygpath -w "$NIKATRU_SHELL")"; fi
           node "$GITHUB_WORKSPACE/../.nikatru-shell/quiet-step.mjs" --name new-user-e2e.reminder-digest.8 -- "$NIKATRU_SHELL" -e "$NIKATRU_QUIET"
-      - name: Store this job's red detail in the bridge's private home (generated)
+      - name: Hand this job's red detail to the report job, sealed (generated)
+        id: nikatru-handoff
         if: always()
-        continue-on-error: true
         shell: bash
         working-directory: ${{ github.workspace }}
         env:
-          NIKATRU_PATHS: ${{ runner.temp }}/report-detail.md
-          NIKATRU_ARTIFACT_NAME: report-detail-new-user-e2e.reminder-digest.${{ strategy.job-index }}
-          NIKATRU_IF_NO_FILES: ignore
-          BRIDGE_ARTIFACT_SECRET: ${{ secrets.BRIDGE_ARTIFACT_SECRET }}
-          NIKATRU_BRIDGE_ARTIFACT_URL: https://gh-bridge.nikatru.workers.dev/artifact
-        run: node tooling/ops/bridge-artifact.mjs upload
+          NIKATRU_DETAIL_KEY_FILE: ${{ github.workspace }}/../.nikatru-shell/detail.key
+          NIKATRU_HANDOFF: nikatru-detail-${{ github.run_id }}-${{ github.run_attempt }}-new-user-e2e.reminder-digest.${{ strategy.job-index }}
+        run: |
+          if [ -s "$RUNNER_TEMP/report-detail.md" ]; then
+            py=python3; python3 -c '' >/dev/null 2>&1 || py=python
+            "$py" -I "$GITHUB_WORKSPACE/../.nikatru-shell/report.py" handoff
+          fi
+      - name: Save the hand-off (generated)
+        if: always() && steps.nikatru-handoff.outputs.has == 'true'
+        uses: actions/cache/save@55cc8345863c7cc4c66a329aec7e433d2d1c52a9
+        with:
+          path: .nikatru-detail
+          key: nikatru-detail-${{ github.run_id }}-${{ github.run_attempt }}-new-user-e2e.reminder-digest.${{ strategy.job-index }}
+          enableCrossOsArchive: true
 
   first-sign-in:
     name: Brand-new Google/Apple first sign-in (ephemeral identity, ${{ matrix.app }})
+    if: needs.nikatru-pin.result == 'success' && !cancelled() && !failure() && needs.apps.result == 'success'
     needs: [nikatru-pin, apps]
     runs-on: ubuntu-24.04
     timeout-minutes: 45
     permissions:
       contents: read
-      id-token: write
     strategy:
       fail-fast: false
       matrix:
@@ -898,10 +979,15 @@ jobs:
       - name: Stage the shell's own copies outside the private checkout (generated)
         shell: bash
         working-directory: ${{ github.workspace }}
+        env:
+          NIKATRU_DETAIL_KEY: ${{ secrets.NIKATRU_DETAIL_KEY }}
+          NIKATRU_DETAIL_KEY_FILE: ${{ github.workspace }}/../.nikatru-shell/detail.key
         run: |
           rm -rf ../.nikatru-shell
           mv .nikatru-shell/.github/nikatru ../.nikatru-shell
           rm -rf .nikatru-shell
+          py=python3; python3 -c '' >/dev/null 2>&1 || py=python
+          "$py" -I "$GITHUB_WORKSPACE/../.nikatru-shell/report.py" derive
       - name: The ephemeral stack's directory, under this job's temp
         run: |
           NIKATRU_QUIET="$(mktemp "${RUNNER_TEMP:-/tmp}/nikatru-step.XXXXXX")"
@@ -1091,27 +1177,35 @@ jobs:
           NIKATRU_QUIET_EOF
           NIKATRU_SHELL="${BASH:-bash}"; if command -v cygpath >/dev/null 2>&1; then NIKATRU_SHELL="$(cygpath -w "$NIKATRU_SHELL")"; fi
           node "$GITHUB_WORKSPACE/../.nikatru-shell/quiet-step.mjs" --name new-user-e2e.first-sign-in.17 -- "$NIKATRU_SHELL" -e "$NIKATRU_QUIET"
-      - name: Store this job's red detail in the bridge's private home (generated)
+      - name: Hand this job's red detail to the report job, sealed (generated)
+        id: nikatru-handoff
         if: always()
-        continue-on-error: true
         shell: bash
         working-directory: ${{ github.workspace }}
         env:
-          NIKATRU_PATHS: ${{ runner.temp }}/report-detail.md
-          NIKATRU_ARTIFACT_NAME: report-detail-new-user-e2e.first-sign-in.${{ strategy.job-index }}
-          NIKATRU_IF_NO_FILES: ignore
-          BRIDGE_ARTIFACT_SECRET: ${{ secrets.BRIDGE_ARTIFACT_SECRET }}
-          NIKATRU_BRIDGE_ARTIFACT_URL: https://gh-bridge.nikatru.workers.dev/artifact
-        run: node tooling/ops/bridge-artifact.mjs upload
+          NIKATRU_DETAIL_KEY_FILE: ${{ github.workspace }}/../.nikatru-shell/detail.key
+          NIKATRU_HANDOFF: nikatru-detail-${{ github.run_id }}-${{ github.run_attempt }}-new-user-e2e.first-sign-in.${{ strategy.job-index }}
+        run: |
+          if [ -s "$RUNNER_TEMP/report-detail.md" ]; then
+            py=python3; python3 -c '' >/dev/null 2>&1 || py=python
+            "$py" -I "$GITHUB_WORKSPACE/../.nikatru-shell/report.py" handoff
+          fi
+      - name: Save the hand-off (generated)
+        if: always() && steps.nikatru-handoff.outputs.has == 'true'
+        uses: actions/cache/save@55cc8345863c7cc4c66a329aec7e433d2d1c52a9
+        with:
+          path: .nikatru-detail
+          key: nikatru-detail-${{ github.run_id }}-${{ github.run_attempt }}-new-user-e2e.first-sign-in.${{ strategy.job-index }}
+          enableCrossOsArchive: true
 
   email-sign-up:
     name: A new e-mail customer, end to end (ephemeral identity, ${{ matrix.app }}, n=${{ matrix.n }}, captcha ${{ matrix.captcha }})
+    if: needs.nikatru-pin.result == 'success' && !cancelled() && !failure() && needs.apps.result == 'success'
     needs: [nikatru-pin, apps]
     runs-on: ubuntu-24.04
     timeout-minutes: 50
     permissions:
       contents: read
-      id-token: write
     strategy:
       fail-fast: false
       matrix:
@@ -1181,10 +1275,15 @@ jobs:
       - name: Stage the shell's own copies outside the private checkout (generated)
         shell: bash
         working-directory: ${{ github.workspace }}
+        env:
+          NIKATRU_DETAIL_KEY: ${{ secrets.NIKATRU_DETAIL_KEY }}
+          NIKATRU_DETAIL_KEY_FILE: ${{ github.workspace }}/../.nikatru-shell/detail.key
         run: |
           rm -rf ../.nikatru-shell
           mv .nikatru-shell/.github/nikatru ../.nikatru-shell
           rm -rf .nikatru-shell
+          py=python3; python3 -c '' >/dev/null 2>&1 || py=python
+          "$py" -I "$GITHUB_WORKSPACE/../.nikatru-shell/report.py" derive
       - name: The stack's directory and the run's UTC date
         run: |
           NIKATRU_QUIET="$(mktemp "${RUNNER_TEMP:-/tmp}/nikatru-step.XXXXXX")"
@@ -1424,23 +1523,93 @@ jobs:
           NIKATRU_QUIET_EOF
           NIKATRU_SHELL="${BASH:-bash}"; if command -v cygpath >/dev/null 2>&1; then NIKATRU_SHELL="$(cygpath -w "$NIKATRU_SHELL")"; fi
           node "$GITHUB_WORKSPACE/../.nikatru-shell/quiet-step.mjs" --name new-user-e2e.email-sign-up.19 -- "$NIKATRU_SHELL" -e "$NIKATRU_QUIET"
-      - name: Store this job's red detail in the bridge's private home (generated)
+      - name: Hand this job's red detail to the report job, sealed (generated)
+        id: nikatru-handoff
         if: always()
-        continue-on-error: true
         shell: bash
         working-directory: ${{ github.workspace }}
         env:
-          NIKATRU_PATHS: ${{ runner.temp }}/report-detail.md
-          NIKATRU_ARTIFACT_NAME: report-detail-new-user-e2e.email-sign-up.${{ strategy.job-index }}
-          NIKATRU_IF_NO_FILES: ignore
-          BRIDGE_ARTIFACT_SECRET: ${{ secrets.BRIDGE_ARTIFACT_SECRET }}
-          NIKATRU_BRIDGE_ARTIFACT_URL: https://gh-bridge.nikatru.workers.dev/artifact
-        run: node tooling/ops/bridge-artifact.mjs upload
+          NIKATRU_DETAIL_KEY_FILE: ${{ github.workspace }}/../.nikatru-shell/detail.key
+          NIKATRU_HANDOFF: nikatru-detail-${{ github.run_id }}-${{ github.run_attempt }}-new-user-e2e.email-sign-up.${{ strategy.job-index }}
+        run: |
+          if [ -s "$RUNNER_TEMP/report-detail.md" ]; then
+            py=python3; python3 -c '' >/dev/null 2>&1 || py=python
+            "$py" -I "$GITHUB_WORKSPACE/../.nikatru-shell/report.py" handoff
+          fi
+      - name: Save the hand-off (generated)
+        if: always() && steps.nikatru-handoff.outputs.has == 'true'
+        uses: actions/cache/save@55cc8345863c7cc4c66a329aec7e433d2d1c52a9
+        with:
+          path: .nikatru-detail
+          key: nikatru-detail-${{ github.run_id }}-${{ github.run_attempt }}-new-user-e2e.email-sign-up.${{ strategy.job-index }}
+          enableCrossOsArchive: true
+
+  verdict:
+    name: new-user-e2e
+    needs: [nikatru-pin, apps, prepare, account, reminder-digest, first-sign-in, email-sign-up]
+    if: needs.nikatru-pin.result == 'success' && (always())
+    runs-on: ubuntu-24.04
+    timeout-minutes: 5
+    permissions:
+      contents: read
+    steps:
+      - name: Check out the private tree (generated)
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
+        with:
+          repository: ${{ env.NIKATRU_PRIVATE_REPO }}
+          ref: ${{ needs.nikatru-pin.outputs.sha || 'nikatru-pin-did-not-succeed..' }}
+          fetch-depth: 2
+          ssh-key: ${{ secrets.PRIVATE_DEPLOY_KEY }}
+          persist-credentials: false
+      - name: Name the private commit (generated)
+        shell: bash
+        working-directory: ${{ github.workspace }}
+        env:
+          NIKATRU_P_EVENT: ${{ github.event.client_payload.event || github.event_name }}
+          NIKATRU_P_REF: ${{ github.event.client_payload.ref || 'refs/heads/main' }}
+          NIKATRU_P_BASE_SHA: ${{ github.event.client_payload.base_sha }}
+          NIKATRU_P_BASE_REF: ${{ github.event.client_payload.base_ref }}
+          NIKATRU_P_PR: ${{ github.event.client_payload.pr }}
+          NIKATRU_P_PR_CREATED_AT: ${{ github.event.client_payload.pr_created_at }}
+          NIKATRU_P_DRAFT: ${{ github.event.client_payload.draft }}
+          NIKATRU_P_SHA: ${{ github.event.client_payload.sha }}
+        run: |
+          if [ "$NIKATRU_P_EVENT" = pull_request ]; then
+            set -- $(git cat-file -p HEAD | sed -n '1,/^$/s/^parent //p')
+            if [ "${2:-}" != "$NIKATRU_P_SHA" ]; then
+              echo "::error::the checked-out merge of PR #$NIKATRU_P_PR is not the merge of the dispatched head $NIKATRU_P_SHA (its second parent is ${2:-none}); the nikatru-pin job pins it — re-run the whole workflow, not this job"
+              exit 1
+            fi
+          fi
+          {
+            echo "NIKATRU_SHA=$(git rev-parse HEAD)"
+            echo "NIKATRU_HEAD_SHA=${NIKATRU_P_SHA:-$(git rev-parse HEAD)}"
+            echo "NIKATRU_EVENT_NAME=$NIKATRU_P_EVENT"
+            echo "NIKATRU_REF=$NIKATRU_P_REF"
+            echo "NIKATRU_REF_NAME=${NIKATRU_P_REF#refs/*/}"
+            echo "NIKATRU_BASE_SHA=$NIKATRU_P_BASE_SHA"
+            echo "NIKATRU_BASE_REF=$NIKATRU_P_BASE_REF"
+            echo "NIKATRU_PR=$NIKATRU_P_PR"
+            echo "NIKATRU_PR_CREATED_AT=$NIKATRU_P_PR_CREATED_AT"
+            echo "NIKATRU_DRAFT=$NIKATRU_P_DRAFT"
+          } >> "$GITHUB_ENV"
+      - name: Every journey job concluded green
+        run: |
+          echo "apps=${{ needs.apps.result }}"
+          echo "prepare=${{ needs.prepare.result }}"
+          echo "account=${{ needs.account.result }}"
+          echo "reminder-digest=${{ needs.reminder-digest.result }}"
+          echo "first-sign-in=${{ needs.first-sign-in.result }}"
+          echo "email-sign-up=${{ needs.email-sign-up.result }}"
+          if [ "${{ contains(needs.*.result, 'failure') }}" = "true" ] || [ "${{ contains(needs.*.result, 'cancelled') }}" = "true" ] || [ "${{ contains(needs.*.result, 'skipped') }}" = "true" ]; then
+            echo "::error::A new-user journey job failed, was cancelled, or never ran — see the results above"; exit 1
+          fi
+          echo "Every new-user journey job is green"
 
   nikatru-ran:
     name: Fail this run if it ran nothing (generated)
-    needs: [apps, prepare, account, reminder-digest, first-sign-in, email-sign-up]
-    if: "!cancelled()"
+    needs: [apps, prepare, account, reminder-digest, first-sign-in, email-sign-up, verdict]
+    if: "!cancelled() && github.event_name != 'repository_dispatch'"
     runs-on: ubuntu-24.04
     defaults:
       run:
@@ -1459,10 +1628,328 @@ jobs:
       - name: Fail when every job of this run was skipped (generated)
         shell: bash
         env:
-          NIKATRU_RESULTS: apps=${{ needs.apps.result }} prepare=${{ needs.prepare.result }} account=${{ needs.account.result }} reminder-digest=${{ needs.reminder-digest.result }} first-sign-in=${{ needs.first-sign-in.result }} email-sign-up=${{ needs.email-sign-up.result }}
+          NIKATRU_RESULTS: apps=${{ needs.apps.result }} prepare=${{ needs.prepare.result }} account=${{ needs.account.result }} reminder-digest=${{ needs.reminder-digest.result }} first-sign-in=${{ needs.first-sign-in.result }} email-sign-up=${{ needs.email-sign-up.result }} verdict=${{ needs.verdict.result }}
         run: |
           for r in $NIKATRU_RESULTS; do
             if [ "${r#*=}" != skipped ]; then echo "ran: $NIKATRU_RESULTS"; exit 0; fi
           done
           echo "::error::ran nothing: every job of this $GITHUB_EVENT_NAME run was skipped ($NIKATRU_RESULTS), so a green run would claim work that never ran. If a generated job before them failed, that failure is the cause. A workflow whose no-op run is legitimate is named in tooling/ci/public-shell.json noopRuns."
           exit 1
+
+  nikatru-collect:
+    name: Collect the red detail, without the report secret (generated)
+    needs: [apps, prepare, account, reminder-digest, first-sign-in, email-sign-up, verdict]
+    if: always() && (github.event_name == 'repository_dispatch' || github.event_name == 'workflow_dispatch')
+    runs-on: ubuntu-24.04
+    defaults:
+      run:
+        working-directory: ${{ github.workspace }}
+    timeout-minutes: 15
+    permissions:
+      contents: read
+      actions: read
+    outputs:
+      detail: ${{ steps.collect.outputs.detail }}
+      detail_2: ${{ steps.collect.outputs.detail_2 }}
+      detail_3: ${{ steps.collect.outputs.detail_3 }}
+    steps:
+      - name: Check out this shell repository only, no private code (generated)
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
+        with:
+          persist-credentials: false
+          sparse-checkout: .github/nikatru
+      - name: List the red detail this run handed over (generated)
+        id: plan
+        continue-on-error: true
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: python3 .github/nikatru/report.py plan .github/nikatru/new-user-e2e.json
+      - name: Restore hand-off 0 (generated)
+        id: nikatru-slot-0
+        if: steps.plan.outputs.key_0 != ''
+        timeout-minutes: 1
+        continue-on-error: true
+        uses: actions/cache/restore@55cc8345863c7cc4c66a329aec7e433d2d1c52a9
+        with:
+          path: .nikatru-detail
+          key: ${{ steps.plan.outputs.key_0 }}
+          enableCrossOsArchive: true
+          fail-on-cache-miss: true
+      - name: Wait 20 s before restoring hand-off 0 again (generated)
+        if: steps.plan.outputs.key_0 != '' && steps.nikatru-slot-0.outcome == 'failure'
+        run: sleep 20
+      - name: Restore hand-off 0 again, as its first download failed (generated)
+        if: steps.plan.outputs.key_0 != '' && steps.nikatru-slot-0.outcome == 'failure'
+        timeout-minutes: 1
+        continue-on-error: true
+        uses: actions/cache/restore@55cc8345863c7cc4c66a329aec7e433d2d1c52a9
+        with:
+          path: .nikatru-detail
+          key: ${{ steps.plan.outputs.key_0 }}
+          enableCrossOsArchive: true
+          fail-on-cache-miss: true
+      - name: File hand-off 0 (generated)
+        if: steps.plan.outputs.key_0 != ''
+        continue-on-error: true
+        env:
+          NIKATRU_KEY: ${{ steps.plan.outputs.key_0 }}
+        run: python3 .github/nikatru/report.py place "$NIKATRU_KEY"
+      - name: Restore hand-off 1 (generated)
+        id: nikatru-slot-1
+        if: steps.plan.outputs.key_1 != ''
+        timeout-minutes: 1
+        continue-on-error: true
+        uses: actions/cache/restore@55cc8345863c7cc4c66a329aec7e433d2d1c52a9
+        with:
+          path: .nikatru-detail
+          key: ${{ steps.plan.outputs.key_1 }}
+          enableCrossOsArchive: true
+          fail-on-cache-miss: true
+      - name: Wait 20 s before restoring hand-off 1 again (generated)
+        if: steps.plan.outputs.key_1 != '' && steps.nikatru-slot-1.outcome == 'failure'
+        run: sleep 20
+      - name: Restore hand-off 1 again, as its first download failed (generated)
+        if: steps.plan.outputs.key_1 != '' && steps.nikatru-slot-1.outcome == 'failure'
+        timeout-minutes: 1
+        continue-on-error: true
+        uses: actions/cache/restore@55cc8345863c7cc4c66a329aec7e433d2d1c52a9
+        with:
+          path: .nikatru-detail
+          key: ${{ steps.plan.outputs.key_1 }}
+          enableCrossOsArchive: true
+          fail-on-cache-miss: true
+      - name: File hand-off 1 (generated)
+        if: steps.plan.outputs.key_1 != ''
+        continue-on-error: true
+        env:
+          NIKATRU_KEY: ${{ steps.plan.outputs.key_1 }}
+        run: python3 .github/nikatru/report.py place "$NIKATRU_KEY"
+      - name: Restore hand-off 2 (generated)
+        id: nikatru-slot-2
+        if: steps.plan.outputs.key_2 != ''
+        timeout-minutes: 1
+        continue-on-error: true
+        uses: actions/cache/restore@55cc8345863c7cc4c66a329aec7e433d2d1c52a9
+        with:
+          path: .nikatru-detail
+          key: ${{ steps.plan.outputs.key_2 }}
+          enableCrossOsArchive: true
+          fail-on-cache-miss: true
+      - name: Wait 20 s before restoring hand-off 2 again (generated)
+        if: steps.plan.outputs.key_2 != '' && steps.nikatru-slot-2.outcome == 'failure'
+        run: sleep 20
+      - name: Restore hand-off 2 again, as its first download failed (generated)
+        if: steps.plan.outputs.key_2 != '' && steps.nikatru-slot-2.outcome == 'failure'
+        timeout-minutes: 1
+        continue-on-error: true
+        uses: actions/cache/restore@55cc8345863c7cc4c66a329aec7e433d2d1c52a9
+        with:
+          path: .nikatru-detail
+          key: ${{ steps.plan.outputs.key_2 }}
+          enableCrossOsArchive: true
+          fail-on-cache-miss: true
+      - name: File hand-off 2 (generated)
+        if: steps.plan.outputs.key_2 != ''
+        continue-on-error: true
+        env:
+          NIKATRU_KEY: ${{ steps.plan.outputs.key_2 }}
+        run: python3 .github/nikatru/report.py place "$NIKATRU_KEY"
+      - name: Restore hand-off 3 (generated)
+        id: nikatru-slot-3
+        if: steps.plan.outputs.key_3 != ''
+        timeout-minutes: 1
+        continue-on-error: true
+        uses: actions/cache/restore@55cc8345863c7cc4c66a329aec7e433d2d1c52a9
+        with:
+          path: .nikatru-detail
+          key: ${{ steps.plan.outputs.key_3 }}
+          enableCrossOsArchive: true
+          fail-on-cache-miss: true
+      - name: Wait 20 s before restoring hand-off 3 again (generated)
+        if: steps.plan.outputs.key_3 != '' && steps.nikatru-slot-3.outcome == 'failure'
+        run: sleep 20
+      - name: Restore hand-off 3 again, as its first download failed (generated)
+        if: steps.plan.outputs.key_3 != '' && steps.nikatru-slot-3.outcome == 'failure'
+        timeout-minutes: 1
+        continue-on-error: true
+        uses: actions/cache/restore@55cc8345863c7cc4c66a329aec7e433d2d1c52a9
+        with:
+          path: .nikatru-detail
+          key: ${{ steps.plan.outputs.key_3 }}
+          enableCrossOsArchive: true
+          fail-on-cache-miss: true
+      - name: File hand-off 3 (generated)
+        if: steps.plan.outputs.key_3 != ''
+        continue-on-error: true
+        env:
+          NIKATRU_KEY: ${{ steps.plan.outputs.key_3 }}
+        run: python3 .github/nikatru/report.py place "$NIKATRU_KEY"
+      - name: Restore hand-off 4 (generated)
+        id: nikatru-slot-4
+        if: steps.plan.outputs.key_4 != ''
+        timeout-minutes: 1
+        continue-on-error: true
+        uses: actions/cache/restore@55cc8345863c7cc4c66a329aec7e433d2d1c52a9
+        with:
+          path: .nikatru-detail
+          key: ${{ steps.plan.outputs.key_4 }}
+          enableCrossOsArchive: true
+          fail-on-cache-miss: true
+      - name: Wait 20 s before restoring hand-off 4 again (generated)
+        if: steps.plan.outputs.key_4 != '' && steps.nikatru-slot-4.outcome == 'failure'
+        run: sleep 20
+      - name: Restore hand-off 4 again, as its first download failed (generated)
+        if: steps.plan.outputs.key_4 != '' && steps.nikatru-slot-4.outcome == 'failure'
+        timeout-minutes: 1
+        continue-on-error: true
+        uses: actions/cache/restore@55cc8345863c7cc4c66a329aec7e433d2d1c52a9
+        with:
+          path: .nikatru-detail
+          key: ${{ steps.plan.outputs.key_4 }}
+          enableCrossOsArchive: true
+          fail-on-cache-miss: true
+      - name: File hand-off 4 (generated)
+        if: steps.plan.outputs.key_4 != ''
+        continue-on-error: true
+        env:
+          NIKATRU_KEY: ${{ steps.plan.outputs.key_4 }}
+        run: python3 .github/nikatru/report.py place "$NIKATRU_KEY"
+      - name: Restore hand-off 5 (generated)
+        id: nikatru-slot-5
+        if: steps.plan.outputs.key_5 != ''
+        timeout-minutes: 1
+        continue-on-error: true
+        uses: actions/cache/restore@55cc8345863c7cc4c66a329aec7e433d2d1c52a9
+        with:
+          path: .nikatru-detail
+          key: ${{ steps.plan.outputs.key_5 }}
+          enableCrossOsArchive: true
+          fail-on-cache-miss: true
+      - name: Wait 20 s before restoring hand-off 5 again (generated)
+        if: steps.plan.outputs.key_5 != '' && steps.nikatru-slot-5.outcome == 'failure'
+        run: sleep 20
+      - name: Restore hand-off 5 again, as its first download failed (generated)
+        if: steps.plan.outputs.key_5 != '' && steps.nikatru-slot-5.outcome == 'failure'
+        timeout-minutes: 1
+        continue-on-error: true
+        uses: actions/cache/restore@55cc8345863c7cc4c66a329aec7e433d2d1c52a9
+        with:
+          path: .nikatru-detail
+          key: ${{ steps.plan.outputs.key_5 }}
+          enableCrossOsArchive: true
+          fail-on-cache-miss: true
+      - name: File hand-off 5 (generated)
+        if: steps.plan.outputs.key_5 != ''
+        continue-on-error: true
+        env:
+          NIKATRU_KEY: ${{ steps.plan.outputs.key_5 }}
+        run: python3 .github/nikatru/report.py place "$NIKATRU_KEY"
+      - name: Restore hand-off 6 (generated)
+        id: nikatru-slot-6
+        if: steps.plan.outputs.key_6 != ''
+        timeout-minutes: 1
+        continue-on-error: true
+        uses: actions/cache/restore@55cc8345863c7cc4c66a329aec7e433d2d1c52a9
+        with:
+          path: .nikatru-detail
+          key: ${{ steps.plan.outputs.key_6 }}
+          enableCrossOsArchive: true
+          fail-on-cache-miss: true
+      - name: Wait 20 s before restoring hand-off 6 again (generated)
+        if: steps.plan.outputs.key_6 != '' && steps.nikatru-slot-6.outcome == 'failure'
+        run: sleep 20
+      - name: Restore hand-off 6 again, as its first download failed (generated)
+        if: steps.plan.outputs.key_6 != '' && steps.nikatru-slot-6.outcome == 'failure'
+        timeout-minutes: 1
+        continue-on-error: true
+        uses: actions/cache/restore@55cc8345863c7cc4c66a329aec7e433d2d1c52a9
+        with:
+          path: .nikatru-detail
+          key: ${{ steps.plan.outputs.key_6 }}
+          enableCrossOsArchive: true
+          fail-on-cache-miss: true
+      - name: File hand-off 6 (generated)
+        if: steps.plan.outputs.key_6 != ''
+        continue-on-error: true
+        env:
+          NIKATRU_KEY: ${{ steps.plan.outputs.key_6 }}
+        run: python3 .github/nikatru/report.py place "$NIKATRU_KEY"
+      - name: Restore hand-off 7 (generated)
+        id: nikatru-slot-7
+        if: steps.plan.outputs.key_7 != ''
+        timeout-minutes: 1
+        continue-on-error: true
+        uses: actions/cache/restore@55cc8345863c7cc4c66a329aec7e433d2d1c52a9
+        with:
+          path: .nikatru-detail
+          key: ${{ steps.plan.outputs.key_7 }}
+          enableCrossOsArchive: true
+          fail-on-cache-miss: true
+      - name: Wait 20 s before restoring hand-off 7 again (generated)
+        if: steps.plan.outputs.key_7 != '' && steps.nikatru-slot-7.outcome == 'failure'
+        run: sleep 20
+      - name: Restore hand-off 7 again, as its first download failed (generated)
+        if: steps.plan.outputs.key_7 != '' && steps.nikatru-slot-7.outcome == 'failure'
+        timeout-minutes: 1
+        continue-on-error: true
+        uses: actions/cache/restore@55cc8345863c7cc4c66a329aec7e433d2d1c52a9
+        with:
+          path: .nikatru-detail
+          key: ${{ steps.plan.outputs.key_7 }}
+          enableCrossOsArchive: true
+          fail-on-cache-miss: true
+      - name: File hand-off 7 (generated)
+        if: steps.plan.outputs.key_7 != ''
+        continue-on-error: true
+        env:
+          NIKATRU_KEY: ${{ steps.plan.outputs.key_7 }}
+        run: python3 .github/nikatru/report.py place "$NIKATRU_KEY"
+      - name: Carry the sealed detail to the report job (generated)
+        id: collect
+        if: always()
+        env:
+          NIKATRU_OVERFLOW: ${{ steps.plan.outputs.overflow }}
+        run: python3 .github/nikatru/report.py collect .github/nikatru/new-user-e2e.json
+
+  nikatru-report:
+    name: Report to the private repository (generated)
+    needs: [apps, prepare, account, reminder-digest, first-sign-in, email-sign-up, verdict, nikatru-collect]
+    if: always() && (github.event_name == 'repository_dispatch' || github.event_name == 'workflow_dispatch')
+    runs-on: ubuntu-24.04
+    defaults:
+      run:
+        working-directory: ${{ github.workspace }}
+    timeout-minutes: 15
+    permissions:
+      contents: read
+    steps:
+      - name: Check out this shell repository only, no private code (generated)
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
+        with:
+          persist-credentials: false
+          sparse-checkout: .github/nikatru
+      - name: Report every lane and the gate to the private repository (generated)
+        id: send
+        if: always()
+        env:
+          BRIDGE_REPORT_SECRET: ${{ secrets.BRIDGE_REPORT_SECRET }}
+          NIKATRU_DETAIL_KEY: ${{ secrets.NIKATRU_DETAIL_KEY }}
+          NIKATRU_DETAIL: ${{ needs.nikatru-collect.outputs.detail }}
+          NIKATRU_DETAIL_2: ${{ needs.nikatru-collect.outputs.detail_2 }}
+          NIKATRU_DETAIL_3: ${{ needs.nikatru-collect.outputs.detail_3 }}
+          NIKATRU_HEAD_SHA: ${{ github.event.client_payload.sha }}
+          NIKATRU_P_EVENT: ${{ github.event.client_payload.event }}
+          NIKATRU_P_PR: ${{ github.event.client_payload.pr }}
+          NIKATRU_P_REF: ${{ github.event.client_payload.ref }}
+          NIKATRU_RESULTS: '{"apps": "${{ needs.apps.result }}", "prepare": "${{ needs.prepare.result }}", "account": "${{ needs.account.result }}", "reminder-digest": "${{ needs.reminder-digest.result }}", "first-sign-in": "${{ needs.first-sign-in.result }}", "email-sign-up": "${{ needs.email-sign-up.result }}", "verdict": "${{ needs.verdict.result }}"}'
+        run: /usr/bin/python3 -I .github/nikatru/report.py send .github/nikatru/new-user-e2e.json
+      - name: Report every lane and the gate without detail, as the step above did not run to its end (generated)
+        if: always() && steps.send.outputs.reported != 'true'
+        env:
+          BRIDGE_REPORT_SECRET: ${{ secrets.BRIDGE_REPORT_SECRET }}
+          NIKATRU_HEAD_SHA: ${{ github.event.client_payload.sha }}
+          NIKATRU_P_EVENT: ${{ github.event.client_payload.event }}
+          NIKATRU_P_PR: ${{ github.event.client_payload.pr }}
+          NIKATRU_P_REF: ${{ github.event.client_payload.ref }}
+          NIKATRU_RESULTS: '{"apps": "${{ needs.apps.result }}", "prepare": "${{ needs.prepare.result }}", "account": "${{ needs.account.result }}", "reminder-digest": "${{ needs.reminder-digest.result }}", "first-sign-in": "${{ needs.first-sign-in.result }}", "email-sign-up": "${{ needs.email-sign-up.result }}", "verdict": "${{ needs.verdict.result }}"}'
+        run: /usr/bin/python3 -I .github/nikatru/report.py send .github/nikatru/new-user-e2e.json

@@ -98,7 +98,7 @@ jobs:
             local after="$1" st runs found newest=""
             for st in queued in_progress waiting pending requested; do
               runs=$(gh run list --repo "$GITHUB_REPOSITORY" --workflow "$NIKATRU_ROOT" --status "$st" --limit 100 --json databaseId,displayTitle,status) || unknown "the $NIKATRU_ROOT runs that are $st could not be listed"
-              found=$(jq -r --arg t "$NIKATRU_RUN_NAME · $NIKATRU_P_HEAD_SHA (PR #$NIKATRU_P_PR)" --argjson after "$after" 'try ([.[] | select(.displayTitle == $t and .status != "completed" and (.databaseId | type) == "number" and .databaseId > $after) | .databaseId] | max // "" | tostring) catch "?"' <<<"$runs") || found="?"
+              found=$(jq -r --arg t "$NIKATRU_RUN_NAME · $NIKATRU_P_HEAD_SHA (PR #$NIKATRU_P_PR)" --argjson after "$after" 'try ([.[] | select(((.displayTitle // "") | sub("^\\[[a-z]+\\] "; "")) == $t and .status != "completed" and (.databaseId | type) == "number" and .databaseId > $after) | .databaseId] | max // "" | tostring) catch "?"' <<<"$runs") || found="?"
               [ "$found" != "?" ] || unknown "the $NIKATRU_ROOT runs that are $st are not a run list"
               if [ -n "$found" ] && { [ -z "$newest" ] || [ "$found" -gt "$newest" ]; }; then newest="$found"; fi
             done

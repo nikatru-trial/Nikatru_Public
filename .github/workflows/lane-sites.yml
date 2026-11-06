@@ -31,6 +31,8 @@ on:
         required: true
       NIKATRU_DETAIL_KEY:
         required: true
+      BRIDGE_ARTIFACT_SECRET:
+        required: false
 
 permissions:
   contents: read
@@ -975,6 +977,7 @@ jobs:
     timeout-minutes: 30
     permissions:
       contents: read
+      id-token: write
     steps:
       - name: Check out the private tree (generated)
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
@@ -1079,6 +1082,8 @@ jobs:
           working-directory: _playwright
       - name: The review crawler's real-browser suites
         timeout-minutes: 18
+        env:
+          REVIEW_CRAWL_REACH_DETAIL_DIR: ${{ runner.temp }}/review-crawl-reach-detail
         run: |
           NIKATRU_QUIET="$(mktemp "${RUNNER_TEMP:-/tmp}/nikatru-step.XXXXXX")"
           cat > "$NIKATRU_QUIET" <<'NIKATRU_QUIET_EOF'
@@ -1086,6 +1091,17 @@ jobs:
           NIKATRU_QUIET_EOF
           NIKATRU_SHELL="${BASH:-bash}"; if command -v cygpath >/dev/null 2>&1; then NIKATRU_SHELL="$(cygpath -w "$NIKATRU_SHELL")"; fi
           node "$GITHUB_WORKSPACE/../.nikatru-shell/quiet-step.mjs" --name lane-sites.review-crawl-self-test.5 -- "$NIKATRU_SHELL" -e "$NIKATRU_QUIET"
+      - name: Store review-crawl-reach-detail-${{ github.run_attempt }} in the bridge's private home (generated)
+        if: failure() && (github.event.client_payload.event || github.event_name) != 'pull_request'
+        shell: bash
+        working-directory: ${{ github.workspace }}
+        env:
+          NIKATRU_PATHS: ${{ runner.temp }}/review-crawl-reach-detail/
+          NIKATRU_ARTIFACT_NAME: review-crawl-reach-detail-${{ github.run_attempt }}
+          NIKATRU_IF_NO_FILES: ignore
+          BRIDGE_ARTIFACT_SECRET: ${{ secrets.BRIDGE_ARTIFACT_SECRET }}
+          NIKATRU_BRIDGE_ARTIFACT_URL: https://gh-bridge.nikatru.workers.dev/artifact
+        run: node tooling/ops/bridge-artifact.mjs upload
       - name: Hand this job's red detail to the report job, sealed (generated)
         id: nikatru-handoff
         if: always()

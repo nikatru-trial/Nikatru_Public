@@ -472,7 +472,7 @@ jobs:
     name: StoreKit Testing — ${{ matrix.app }} (simulator)
     needs: [nikatru-pin, generated]
     runs-on: macos-26
-    timeout-minutes: 45
+    timeout-minutes: 50
     strategy:
       fail-fast: false
       matrix:

@@ -57,7 +57,8 @@
 #   report.py collect <cfg> every restored hand-off, carried through UNCHANGED (still
 #                           sealed), as ONE JSON bundle {v, handoffs: {key: sealed},
 #                           unrestored: [key]} within SEALED_MAX_CHARS, written as the
-#                           job output `detail`; one that does not fit is named only
+#                           job output `detail`, spilling into `detail_2` .. (DETAIL_OUTPUTS);
+#                           one that does not fit in any is named only
 #
 #   report.py pr-meta       (the gate job's pre-read, before any private code) the private PR
 #                           as it is now through POST /pr-meta, signed with BRIDGE_READ_SECRET and
@@ -129,7 +130,9 @@
 # attempt 2 went red on ONE `ci/lane-workers success -> HTTP 502 (GitHub call failed)` while
 # 22 other posts of the same job returned 200. post() retries a 502/503/504 and a post that got
 # no answer at all, RETRY_DELAYS seconds apart (2, then 6), then reports the last answer as
-# before. Repeating a report is safe: the bridge's POST /report sets a commit status (the
+# before. ⏱ 2026-11-06 (O-CI-REPORT-STEP-GIVES-UP-ON-502): the 11-05 04:19-04:21Z GitHub 5xx outlasted those 8 s,
+# so the waits now grow, jittered, over a BOUNDED window (RETRY_WINDOW_S) that spans a ~2 min GitHub 5xx; past
+# it the last answer still stands and the step still exits non-zero. Repeating a report is safe: the bridge's POST /report sets a commit status (the
 # newest of a context wins) and edits, never duplicates, its marked comment, and the bridge
 # itself re-reads by that marker before it re-creates one. Nothing else is retried: a 4xx is
 # the bridge's verdict on the report, and a retry cannot change it.
@@ -208,6 +211,7 @@ import hashlib
 import hmac
 import json
 import os
+import random
 import re
 import shutil
 import subprocess
@@ -229,6 +233,15 @@ SEALED_MAX_CHARS = 120 * 1024
 # One hand-off's plain tail: sealed, at least four fit in the collect output; the rest
 # that do not fit are named in the gate's detail.
 HANDOFF_MAX_BYTES = 16 * 1024
+# ⏱ 2026-11-05 · club-1105m-lo-guards (O-REPORT-LOSES-RED-DETAIL-PAST-ITS-SIZE). #1263 and #1264 ended
+# "(12 more red job(s) handed over detail this report could not carry: ...)": the collect output held ONE
+# bundle of SEALED_MAX_CHARS (~5 sealed hand-offs), so restored hand-offs past it were dropped, and each was
+# sealed under its own run key, so nobody could ever read them. collect now spills into DETAIL_OUTPUTS
+# bundles, the job outputs `detail`, `detail_2` .. `detail_<DETAIL_OUTPUTS>` (each one environment string;
+# all of them well inside a job's 1 MB of outputs), and send reads every one. Enough for every restore slot's
+# hand-off at its cap (gen-public-shell.mjs REPORT_SLOTS; shell-report.test.mjs holds it); what is named
+# now is only what no restore slot reached.
+DETAIL_OUTPUTS = 3
 HANDOFF_PREFIX = 'nikatru-detail-'
 DETAIL_FILE = 'report-detail.md'
 SEALED_FILE = 'detail.sealed'
@@ -265,7 +278,14 @@ RETRY_STATUSES = (0, 502, 503, 504)
 # GitHub 500 joins the gateway's: a 500 on one status write turned green runs 37883824894 and 37883613137 red at
 # `x ci/site-tokens success -> HTTP 502 (GitHub call failed)`. The bridge's OWN 500 (a binding unset) is not retried.
 RETRY_UPSTREAMS = (0, 500, 502, 503, 504)
-RETRY_DELAYS = (2, 6)
+# ⏱ 2026-11-06 · O-CI-REPORT-STEP-GIVES-UP-ON-502 (club-next-1106-12): the 11-05 04:19-04:21Z GitHub 5xx (~2 min)
+# outlasted (2, 6), 8 s of waiting, and green runs reported `HTTP 502`. The waits now GROW to 30 s, and every one is
+# JITTERED by ±RETRY_JITTER (a run's 22 posts and a train's runs do not retry in lockstep against a recovering GitHub),
+# and no attempt STARTS past RETRY_WINDOW_S after the first: the last wait is cut to land on the window's end. So one
+# post spans a ~2 min GitHub 5xx, takes at most post_worst_s, and past it the last answer stands (the step exits 1).
+RETRY_DELAYS = (2, 6, 12, 20, 30, 30, 30, 30, 30)
+RETRY_WINDOW_S = 150
+RETRY_JITTER = 0.25
 # ⏱ 2026-10-10 (fix-pr216, independent review of PR #216, finding 1): A 429 IS TRANSIENT TOO. The bridge's /report
 # bucket refills each minute, and one run posts one report per lane plus one for the gate, so a burst of heads in
 # one minute could 429 a green run's statuses (`x … -> HTTP 429`, report.py exit 1). A 429 is retried after
@@ -313,8 +333,9 @@ def is_gate(item, cfg):
 
 
 def post_worst_s(cfg):
-    """The longest one post() can take: every attempt at its timeout, and every pause between them."""
-    return cfg['postTimeoutS'] * (len(RETRY_DELAYS) + 1) + sum(RETRY_DELAYS)
+    """The longest one post() can take: no attempt starts past RETRY_WINDOW_S (attempts and waits together), and the
+    last one may take its whole timeout. (Until 2026-11-06: every attempt at its timeout plus every pause.)"""
+    return RETRY_WINDOW_S + cfg['postTimeoutS']
 
 
 def wanted(key, prefix, cfg):
@@ -932,21 +953,39 @@ def build(context, state, env, detail, gate=False):
     return body
 
 
-def post(url, secret, body, timeout, opener=urllib.request.urlopen, sleep=time.sleep, now=time.time, stamp=False):
-    """(status, why) of the report: a transient answer retried, RETRY_DELAYS apart, then the last.
+def post(url, secret, body, timeout, opener=urllib.request.urlopen, sleep=None, now=None, stamp=False, clock=None, jitter=None):
+    """(status, why) of the report: a transient answer retried, RETRY_DELAYS apart (each jittered by ±RETRY_JITTER,
+    `jitter` a draw in [0, 1)), no attempt starting past RETRY_WINDOW_S after the first (`clock`, monotonic seconds),
+    then the last. A 429 waits RATE_DELAYS instead, unjittered (each must outlast the bridge's bucket), and only
+    len(RATE_DELAYS) times. sleep/now/clock/jitter are resolved at call time, so a test's patch of the module reaches them.
     `timeout` is the config's postTimeoutS: above the bridge's whole budget for one report.
     ⏱ 2026-10-31 · O-BRIDGE-REPORT-REPLAY-WINDOW: with `stamp` (send's /report posts) every attempt carries its own
     `ts` (epoch seconds, `now`) and is signed afresh, so the bridge refuses a captured body outside its window and a replay of it (409), and a retry is
     a new body, never a replay. A 409 is the bridge saying this body was already delivered (send counts it)."""
+    sleep = sleep or time.sleep
+    now = now or time.time
+    clock = clock or time.monotonic
+    jitter = jitter or random.random
+    started, waited = clock(), 0.0
     for attempt in range(len(RETRY_DELAYS) + 1):
         raw = json.dumps({**body, 'ts': int(now())} if stamp else body, ensure_ascii=False).encode('utf-8')
         status, why, upstream = post_once(url, secret, raw, opener, timeout)
         transient = status == 429 or (status in RETRY_STATUSES and (status != 502 or upstream is None or upstream in RETRY_UPSTREAMS))
-        if not transient or attempt == len(RETRY_DELAYS):
+        if not transient or attempt == len(RETRY_DELAYS) or (status == 429 and attempt >= len(RATE_DELAYS)):
             return status, why
-        wait = (RATE_DELAYS if status == 429 else RETRY_DELAYS)[attempt]
+        if status == 429:
+            wait = RATE_DELAYS[attempt]
+        else:
+            wait = round(RETRY_DELAYS[attempt] * (1 + RETRY_JITTER * (2 * jitter() - 1)), 1)
+        # Elapsed by the clock, and never less than what this post itself waited (a clock that does not move with
+        # the waits cannot stretch the window).
+        left = RETRY_WINDOW_S - max(clock() - started, waited)
+        if left <= 0:
+            return status, why
+        wait = min(wait, round(left, 1))
         print(f'-- HTTP {status} is transient; retrying in {wait} s', file=sys.stderr)
         sleep(wait)
+        waited += wait
 
 
 def post_once(url, secret, raw, opener, timeout):
@@ -973,22 +1012,46 @@ def post_once(url, secret, raw, opener, timeout):
         return 0, str(e)[:200], None
 
 
+def detail_output(i):
+    """The collect job's i-th detail output (0-based): `detail`, then `detail_2` .. (gen-public-shell.mjs DETAIL_OUTPUT)."""
+    return 'detail' if i == 0 else f'detail_{i + 1}'
+
+
 def collect(env, cfg):
-    """The sealed hand-offs, carried through unchanged as one bundle within SEALED_MAX_CHARS;
-    the restore slots' overflow and any hand-off that does not fit are named, not carried."""
+    """The sealed hand-offs, carried through unchanged in up to DETAIL_OUTPUTS bundles, each within
+    SEALED_MAX_CHARS; the restore slots' overflow, and a hand-off no bundle has room for, are named
+    (in the first bundle), not carried."""
     prefix = run_prefix(cfg, env)
     handed = collected(prefix)
     unrestored = [k for k in env.get('NIKATRU_OVERFLOW', '').split(',') if k and member_of(k, prefix)]
-    bundle = {'v': BUNDLE_VERSION, 'handoffs': {}, 'unrestored': unrestored}
+    bundles = [{'v': BUNDLE_VERSION, 'handoffs': {}, 'unrestored': unrestored}]
+    fits = lambda b: len(json.dumps(b, separators=(',', ':'))) <= SEALED_MAX_CHARS - 1024
     for key, sealed in handed.items():
-        bundle['handoffs'][key] = sealed
-        if len(json.dumps(bundle, separators=(',', ':'))) > SEALED_MAX_CHARS - 1024:
-            del bundle['handoffs'][key]
-            bundle['unrestored'].append(key)
-    text = json.dumps(bundle, separators=(',', ':'))
+        placed = False
+        for b in bundles:
+            b['handoffs'][key] = sealed
+            if fits(b):
+                placed = True
+                break
+            del b['handoffs'][key]
+        if not placed and len(bundles) < DETAIL_OUTPUTS:
+            b = {'v': BUNDLE_VERSION, 'handoffs': {key: sealed}, 'unrestored': []}
+            if fits(b):
+                bundles.append(b)
+                placed = True
+        if not placed:
+            bundles[0]['unrestored'].append(key)
+            if not fits(bundles[0]):
+                # The names alone overflow the first bundle: make room by naming its last carried hand-off too.
+                last = list(bundles[0]['handoffs'])[-1]
+                del bundles[0]['handoffs'][last]
+                bundles[0]['unrestored'].append(last)
     with open(env['GITHUB_OUTPUT'], 'a', encoding='utf-8') as f:
-        f.write('detail=' + (text if handed or unrestored else '') + '\n')
-    print(f'ok collect: {len(bundle["handoffs"])} sealed hand-off(s) carried, {len(bundle["unrestored"])} named only')
+        f.write(detail_output(0) + '=' + (json.dumps(bundles[0], separators=(',', ':')) if handed or unrestored else '') + '\n')
+        for i, b in enumerate(bundles[1:], start=1):
+            f.write(detail_output(i) + '=' + json.dumps(b, separators=(',', ':')) + '\n')
+    carried = sum(len(b['handoffs']) for b in bundles)
+    print(f'ok collect: {carried} sealed hand-off(s) carried in {len(bundles)} output(s), {len(bundles[0]["unrestored"])} named only')
     return 0
 
 
@@ -999,19 +1062,24 @@ def received_details(env, cfg):
     under its own key and checked. It is data: parsed as JSON, never run, imported or written
     out. `lost` names why a bundle that was handed over could not be read: the reports then
     go out without detail and the send exits 2 (COVERAGE LOST), never an empty pass."""
-    raw = env.get('NIKATRU_DETAIL', '')
-    if not raw:
+    raws = [env.get(detail_env(i), '') for i in range(DETAIL_OUTPUTS)]
+    if not raws[0]:
         print('-- detail: none handed over; the reports go out without detail')
         return {}, None
     try:
-        return read_bundle(raw, env, cfg), None
+        return read_bundle(raws[0], env, cfg, more=[r for r in raws[1:] if r]), None
     except Refused as e:
         return {}, f'the red detail could not be read: {e}; the reports went out without detail'
     except Exception as e:  # whatever a hand-off does, the statuses still go out
         return {}, f'the red detail could not be read ({type(e).__name__}); the reports went out without detail'
 
 
-def read_bundle(raw, env, cfg):
+def detail_env(i):
+    """The send step's environment variable for the collect job's i-th detail output (gen-public-shell.mjs)."""
+    return 'NIKATRU_DETAIL' if i == 0 else f'NIKATRU_DETAIL_{i + 1}'
+
+
+def parse_bundle(raw):
     if len(raw) > SEALED_MAX_CHARS:
         raise Refused(f'{len(raw)} characters, over the {SEALED_MAX_CHARS} cap')
     try:
@@ -1020,6 +1088,21 @@ def read_bundle(raw, env, cfg):
         raise Refused(f'not JSON this reporter can read ({type(e).__name__})')
     if not isinstance(bundle, dict) or bundle.get('v') != BUNDLE_VERSION or not isinstance(bundle.get('handoffs'), dict) or not isinstance(bundle.get('unrestored'), list):
         raise Refused(f'not a version-{BUNDLE_VERSION} hand-off bundle')
+    return bundle
+
+
+def read_bundle(raw, env, cfg, more=()):
+    """The first bundle, and the spilled ones (`more`: collect's detail_2 ..), read as ONE: their hand-offs
+    together, each name at most once; a spilled bundle names nothing unrestored (collect names in the first)."""
+    bundle = parse_bundle(raw)
+    for extra in more:
+        b = parse_bundle(extra)
+        if b['unrestored']:
+            raise Refused('a spilled bundle names unrestored hand-offs (only the first does)')
+        for name, sealed in b['handoffs'].items():
+            if name in bundle['handoffs']:
+                raise Refused(f'{name[:100]!r} is carried twice')
+            bundle['handoffs'][name] = sealed
     master = env.get('NIKATRU_DETAIL_KEY', '')
     if bundle['handoffs'] and not master:
         raise Refused('NIKATRU_DETAIL_KEY is not set')
@@ -1205,11 +1288,13 @@ RUNNER_SOURCES = ('tooling/ci/quiet-step.mjs', 'tooling/ci/shell-report.py', 'to
                   'shell/.github/nikatru/report.py', 'shell/.github/nikatru/quiet-step.mjs',
                   'shell/.github/nikatru/tree-walk.mjs',
                   'tooling/app-yaml/yaml.mjs', 'tooling/ci/app-set.mjs', 'tooling/ci/assert-shell-current.mjs',
-                  'tooling/ci/d1-sql-inventory.mjs', 'tooling/ci/d1-stores.mjs', 'tooling/ci/flutter-release-build.mjs',
+                  'tooling/ci/d1-sql-inventory.mjs', 'tooling/ci/d1-stores.mjs', 'tooling/ci/deployment-record.mjs',
+                  'tooling/ci/flutter-release-build.mjs', 'tooling/ci/gate-verdict.mjs', 'tooling/ci/github-api-base.mjs',
+                  'tooling/ci/previous-ci-history.mjs', 'tooling/ci/record-deployment.mjs',
                   'tooling/ci/run-context.mjs', 'tooling/ci/shell-handoff.mjs', 'tooling/ci/text-reductions.mjs',
                   'tooling/ci/tree-walk.mjs', 'tooling/ci/workflow-scan.mjs', 'tooling/ci/wrangler-environments.mjs',
-                  'tooling/e2e/backend.mjs',
-                  'tooling/ops/actions-oidc.mjs',
+                  'tooling/e2e/backend.mjs', 'tooling/generated/codehost.mjs',
+                  'tooling/ops/actions-oidc.mjs', 'tooling/ops/bounded-retry.mjs', 'tooling/ops/run-jobs.mjs',
                   'tooling/store/capture-backend.mjs')
 # ⏱ 2026-10-09 · PR #213 review finding 5. THE LABEL IS ADVISORY. The bridge returns label NAMES, and every lane and
 # every lead writes to the private repo as the one GitHub identity, so who applied a label proves nothing and an

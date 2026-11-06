@@ -1677,7 +1677,7 @@ jobs:
           # why: in the public shell (NIKATRU_PRIVATE_REPO set by the generated header) a run's head_sha is the
           # SHELL's commit and github.token cannot read the code repository's PRs, so there the one run asked
           # for is ci.yml's, by the title the bridge dispatches it under -- "CI · <full sha>", gate-verdict.mjs
-          # gateRunTitle -- and the merged PR's head is not read (no bridge door serves it: fewer candidates,
+          # gateRunTitle, led since 2026-11-05 by the kind code "[main] " or "[tag] " (O-RUN-NAMES-SAY-THE-KIND) -- and the merged PR's head is not read (no bridge door serves it: fewer candidates,
           # never a weaker grade).
           runs=''
           if [ -n "${NIKATRU_PRIVATE_REPO:-}" ]; then
@@ -1703,7 +1703,7 @@ jobs:
               exit 1
             fi
             if ! r=$(gh api --paginate "repos/$GITHUB_REPOSITORY/$q" \
-                  --jq ".workflow_runs[] | select(.display_title == \"CI · $NIKATRU_SHA\" and .conclusion == \"success\") | .id"); then
+                  --jq ".workflow_runs[] | select((.display_title == \"CI · $NIKATRU_SHA\" or .display_title == \"[main] CI · $NIKATRU_SHA\" or .display_title == \"[tag] CI · $NIKATRU_SHA\") and .conclusion == \"success\") | .id"); then
               echo "::error::could not ask GitHub which ci.yml runs are titled for $NIKATRU_SHA. This step is the only thing between a tag and a gate result nobody produced, so it fails closed rather than assuming."
               exit 1
             fi
@@ -1991,6 +1991,7 @@ jobs:
         working-directory: .
         env:
           GH_TOKEN: ${{ github.token }}
+          GH_REPO: ${{ github.repository }}
           TOOL: ${{ steps.tag.outputs.id }}
           VERSION: ${{ steps.tag.outputs.version }}
         run: |
@@ -3102,6 +3103,8 @@ jobs:
       actions: read
     outputs:
       detail: ${{ steps.collect.outputs.detail }}
+      detail_2: ${{ steps.collect.outputs.detail_2 }}
+      detail_3: ${{ steps.collect.outputs.detail_3 }}
     steps:
       - name: Check out this shell repository only, no private code (generated)
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
@@ -3385,6 +3388,8 @@ jobs:
           BRIDGE_REPORT_SECRET: ${{ secrets.BRIDGE_REPORT_SECRET }}
           NIKATRU_DETAIL_KEY: ${{ secrets.NIKATRU_DETAIL_KEY }}
           NIKATRU_DETAIL: ${{ needs.nikatru-collect.outputs.detail }}
+          NIKATRU_DETAIL_2: ${{ needs.nikatru-collect.outputs.detail_2 }}
+          NIKATRU_DETAIL_3: ${{ needs.nikatru-collect.outputs.detail_3 }}
           NIKATRU_HEAD_SHA: ${{ github.event.client_payload.sha }}
           NIKATRU_P_EVENT: ${{ github.event.client_payload.event }}
           NIKATRU_P_PR: ${{ github.event.client_payload.pr }}

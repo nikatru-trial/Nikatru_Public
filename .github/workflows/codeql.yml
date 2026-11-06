@@ -709,6 +709,8 @@ jobs:
       actions: read
     outputs:
       detail: ${{ steps.collect.outputs.detail }}
+      detail_2: ${{ steps.collect.outputs.detail_2 }}
+      detail_3: ${{ steps.collect.outputs.detail_3 }}
     steps:
       - name: Check out this shell repository only, no private code (generated)
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
@@ -992,6 +994,8 @@ jobs:
           BRIDGE_REPORT_SECRET: ${{ secrets.BRIDGE_REPORT_SECRET }}
           NIKATRU_DETAIL_KEY: ${{ secrets.NIKATRU_DETAIL_KEY }}
           NIKATRU_DETAIL: ${{ needs.nikatru-collect.outputs.detail }}
+          NIKATRU_DETAIL_2: ${{ needs.nikatru-collect.outputs.detail_2 }}
+          NIKATRU_DETAIL_3: ${{ needs.nikatru-collect.outputs.detail_3 }}
           NIKATRU_HEAD_SHA: ${{ github.event.client_payload.sha }}
           NIKATRU_P_EVENT: ${{ github.event.client_payload.event }}
           NIKATRU_P_PR: ${{ github.event.client_payload.pr }}

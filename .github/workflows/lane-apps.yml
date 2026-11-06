@@ -316,6 +316,7 @@ jobs:
           node tooling/release-notes/render.mjs
           node tooling/sites/generate-ask.mjs
           node tooling/sites/generate-checkout-strings.mjs
+          node tooling/sites/generate-site-identity.mjs
           node tooling/sites/locale-landings.mjs --write
           node tooling/sites/gen-legal-summaries.mjs
           node tooling/sites/generate-discovery.mjs
@@ -986,7 +987,7 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        part: [analyze, packages, apps-1, apps-2, apps-3]
+        part: [analyze, packages, apps-1, apps-2, apps-3, apps-4, apps-5, apps-6]
     steps:
       - name: Check out the private tree (generated)
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
@@ -1203,7 +1204,7 @@ jobs:
         env:
           PART: ${{ matrix.part }}
           MEMBERS_GLOB: 'nikatru_*'
-          APPS_SHARDS: '3'
+          APPS_SHARDS: '6'
         run: |
           NIKATRU_QUIET="$(mktemp "${RUNNER_TEMP:-/tmp}/nikatru-step.XXXXXX")"
           cat > "$NIKATRU_QUIET" <<'NIKATRU_QUIET_EOF'

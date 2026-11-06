@@ -5,7 +5,7 @@ env:
 
 name: "Store submit: Snap Store"
 
-run-name: "Store submit: Snap Store · ${{ inputs.app }}${{ inputs.confirm == 'SUBMIT-TO-SNAP-STORE' && ' · SUBMIT' || inputs.promote_confirm == 'PROMOTE-SNAP-TO-STABLE' && ' · PROMOTE candidate to stable' || ' · dry run' }}${{ inputs.worker_slot && format(' [worker slot {0}]', inputs.worker_slot) || '' }}"
+run-name: "Store submit: Snap Store · ${{ inputs.app }}${{ inputs.confirm == 'SUBMIT-TO-SNAP-STORE' && ' · SUBMIT' || inputs.promote_confirm == 'PROMOTE-SNAP-TO-STABLE' && ' · PROMOTE candidate to stable' || ' · dry run' }}${{ inputs.release_tag && format(' · tag {0}', inputs.release_tag) || '' }}${{ inputs.worker_slot && format(' [worker slot {0}]', inputs.worker_slot) || '' }}"
 
 on:
   workflow_dispatch:
@@ -26,6 +26,11 @@ on:
         type: string
       promote_confirm:
         description: 'Type PROMOTE-SNAP-TO-STABLE to run the promote job (snapcraft promote, latest/candidate to latest/stable). Refused in the same dispatch as an upload. Anything else promotes nothing.'
+        required: false
+        default: ''
+        type: string
+      release_tag:
+        description: 'The release tag whose bytes the store receives, e.g. <app>-v1.2.3. Empty ships the dry-run job''s bytes as the named fallback (a warning says so); ignored by the dry run.'
         required: false
         default: ''
         type: string
@@ -451,6 +456,7 @@ jobs:
           cp -a .nikatru-handoff/x/. "$NIKATRU_TO/"
           rm -rf .nikatru-handoff/x
       - name: Upload the native debug symbols to GlitchTip
+        timeout-minutes: 12
         env:
           SENTRY_AUTH_TOKEN: ${{ secrets.GLITCHTIP_TOKEN }}
           GLITCHTIP_DSN: ${{ secrets.GLITCHTIP_DSN }}
@@ -1480,9 +1486,14 @@ jobs:
           GITHUB_TOKEN: ${{ github.token }}
           GITHUB_REPOSITORY: ${{ github.repository }}
           CONFIRM: ${{ inputs.confirm }}
+          RELEASE_TAG: ${{ inputs.release_tag }}
+          GH_TOKEN: ${{ github.token }}
+          CLOUDFLARE_ACCOUNT_ID: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
+          R2_RELEASE_ACCESS_KEY_ID: ${{ secrets.R2_RELEASE_ACCESS_KEY_ID }}
+          R2_RELEASE_SECRET_ACCESS_KEY: ${{ secrets.R2_RELEASE_SECRET_ACCESS_KEY }}
         run: >
           node tooling/release/submit-snap.mjs --submit --app "$APP"
-          --confirm "$CONFIRM"
+          --confirm "$CONFIRM" --release-tag "$RELEASE_TAG"
       - name: Record the submission in the [10]D-9 ledger
         if: always() && steps.upload.outcome == 'success'
         env:

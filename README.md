@@ -8,6 +8,7 @@ verdict back to that repository. It is generated: a pull request here is not how
 - **Triggers**: `repository_dispatch` (types `ci`, `main` and `tag`, sent by the bridge Worker for a
   pull request, a push of main or a push of a tag in the private repository), plus `workflow_dispatch` and `schedule`.
   `e2e.yml` also runs on `e2e`, against the head of a private pull request (sent by the bridge on a `run-e2e` label of the pull request, or the maintainer).
+  `new-user-e2e.yml` also runs on `new-user-e2e`, against the head of a private pull request (sent by the bridge on a `run-new-user-e2e` label of the pull request, or the maintainer).
   `pr-recheck.yml` runs on the bridge's `nikatru-pr-recheck` (a pull request body or base
   edit, or a draft conversion) and re-runs only the gate job of the ONE run named by the newest
   gate status on the pull request's current head (read live through the bridge); nothing when the
@@ -51,7 +52,7 @@ verdict back to that repository. It is generated: a pull request here is not how
   `BRIDGE_ARTIFACT_SECRET` (signs a private artifact upload; held only by the private-artifact
   steps), plus what each workflow reads.
 
-## Workflows (52)
+## Workflows (53)
 
 - `apple-expiry-write.yml`
 - `autopilot-watch.yml`
@@ -68,6 +69,7 @@ verdict back to that repository. It is generated: a pull request here is not how
 - `extensions-ci.yml`
 - `extensions.yml` — reports `extensions`
 - `first-pass.yml`
+- `guards-only.yml`
 - `kill-switch.yml`
 - `lane-apps.yml`
 - `lane-build.yml`
@@ -82,7 +84,7 @@ verdict back to that repository. It is generated: a pull request here is not how
 - `mutation-proofs.yml`
 - `name-clearance.yml`
 - `native-auth-proof.yml`
-- `new-user-e2e.yml`
+- `new-user-e2e.yml` — reports `new-user-e2e`
 - `ops-watch.yml` — reports `ops-watch`
 - `owner-page-watch.yml`
 - `pr-recheck.yml`

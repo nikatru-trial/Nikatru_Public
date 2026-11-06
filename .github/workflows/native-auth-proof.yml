@@ -58,6 +58,11 @@ on:
         options:
           - play
           - sideload
+      delete_reprove:
+        description: 'true: run ONLY the delete-reprove job — a desktop password account deleted through the browser re-proof, on each desktop target asked (macos, windows, linux).'
+        required: false
+        default: false
+        type: boolean
       private_ref:
         description: The PRIVATE ref this run builds, refs/heads/<branch> (generated; empty is the private main).
         required: false
@@ -210,7 +215,9 @@ jobs:
     outputs:
       apps: ${{ steps.app.outputs.apps }}
       darwin: ${{ steps.darwin.outputs.darwin }}
-      targets: ${{ steps.targets.outputs.targets }}
+      targets: ${{ inputs.delete_reprove == true && 'none' || steps.targets.outputs.targets }}
+      desktop_legs: ${{ steps.desktop_legs.outputs.legs }}
+      sha: ${{ steps.commit.outputs.sha }}
     steps:
       - name: Check out the private tree (generated)
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
@@ -395,10 +402,18 @@ jobs:
           EVENT: ${{ (github.event.client_payload.event || github.event_name) }}
           WORKER_SLOT: ${{ inputs.worker_slot }}
           TARGETS: ${{ steps.targets.outputs.targets }}
+          DELETE_REPROVE: ${{ inputs.delete_reprove == true }}
         run: |
           NIKATRU_QUIET="$(mktemp "${RUNNER_TEMP:-/tmp}/nikatru-step.XXXXXX")"
           cat > "$NIKATRU_QUIET" <<'NIKATRU_QUIET_EOF'
           set -euo pipefail
+          # why: ⏱ 2026-11-05 · a delete_reprove run runs no ios or macos job (their `if:`), so it must never print
+          # `darwin-inputs: proven head`: a green one would become the next Darwin base and a later run would skip them.
+          if [ "${DELETE_REPROVE:-}" = true ]; then
+            echo "darwin=false" >> "$GITHUB_OUTPUT"
+            echo "::nikatru-public::::notice title=DARWIN NOT RUN::delete_reprove runs the delete-reprove job only; this run is no Darwin proof and no darwin-inputs base"
+            exit 0
+          fi
           # why: ⏱ 2026-10-29 · fold L303. darwin-inputs.mjs publishes `darwin-inputs: proven head <sha>`, and
           # --since-green takes the newest green run whose gate printed it as the next Darwin BASE. So a run that
           # does not run BOTH Darwin legs never runs it: with neither asked, darwin=false; with one, darwin=true
@@ -458,6 +473,50 @@ jobs:
           NIKATRU_QUIET_EOF
           NIKATRU_SHELL="${BASH:-bash}"; if command -v cygpath >/dev/null 2>&1; then NIKATRU_SHELL="$(cygpath -w "$NIKATRU_SHELL")"; fi
           node "$GITHUB_WORKSPACE/../.nikatru-shell/quiet-step.mjs" --name native-auth-proof.gate.7 --public -- "$NIKATRU_SHELL" -e "$NIKATRU_QUIET"
+      - name: The delete-reprove legs (desktop targets asked)
+        id: desktop_legs
+        env:
+          TARGETS: ${{ steps.targets.outputs.targets }}
+          DELETE_REPROVE: ${{ inputs.delete_reprove == true }}
+          OBSERVED_WINDOW: ${{ inputs.observed_window }}
+        run: |
+          NIKATRU_QUIET="$(mktemp "${RUNNER_TEMP:-/tmp}/nikatru-step.XXXXXX")"
+          cat > "$NIKATRU_QUIET" <<'NIKATRU_QUIET_EOF'
+          set -euo pipefail
+          legs=""
+          for pair in macos:macos-26 windows:windows-2025 linux:ubuntu-24.04; do
+            t="${pair%%:*}"; os="${pair#*:}"
+            case ",${TARGETS}," in
+              ,all,|*,"${t}",*) legs="${legs:+${legs},}{\"target\":\"${t}\",\"os\":\"${os}\"}" ;;
+            esac
+          done
+          if [ "$DELETE_REPROVE" = true ]; then
+            if [ -z "$legs" ]; then
+              echo "::error title=Targets::delete_reprove needs a desktop target (macos, windows or linux); targets=${TARGETS}"
+              exit 1
+            fi
+            if [ -n "${OBSERVED_WINDOW:-}" ]; then
+              echo "::error title=Targets::delete_reprove is its own proof: it takes no observed_window"
+              exit 1
+            fi
+          fi
+          echo "legs=[${legs}]"
+          echo "legs=[${legs}]" >> "$GITHUB_OUTPUT"
+          NIKATRU_QUIET_EOF
+          NIKATRU_SHELL="${BASH:-bash}"; if command -v cygpath >/dev/null 2>&1; then NIKATRU_SHELL="$(cygpath -w "$NIKATRU_SHELL")"; fi
+          node "$GITHUB_WORKSPACE/../.nikatru-shell/quiet-step.mjs" --name native-auth-proof.gate.8 -- "$NIKATRU_SHELL" -e "$NIKATRU_QUIET"
+      - name: The private commit this run proves
+        id: commit
+        run: |
+          NIKATRU_QUIET="$(mktemp "${RUNNER_TEMP:-/tmp}/nikatru-step.XXXXXX")"
+          cat > "$NIKATRU_QUIET" <<'NIKATRU_QUIET_EOF'
+          set -euo pipefail
+          sha="$(git rev-parse HEAD)"
+          echo "sha=${sha}"
+          echo "sha=${sha}" >> "$GITHUB_OUTPUT"
+          NIKATRU_QUIET_EOF
+          NIKATRU_SHELL="${BASH:-bash}"; if command -v cygpath >/dev/null 2>&1; then NIKATRU_SHELL="$(cygpath -w "$NIKATRU_SHELL")"; fi
+          node "$GITHUB_WORKSPACE/../.nikatru-shell/quiet-step.mjs" --name native-auth-proof.gate.9 -- "$NIKATRU_SHELL" -e "$NIKATRU_QUIET"
       - name: Store this job's red detail in the bridge's private home (generated)
         if: always()
         continue-on-error: true
@@ -472,7 +531,7 @@ jobs:
         run: node tooling/ops/bridge-artifact.mjs upload
 
   android:
-    name: Android — emulator, form to Home, adb opens the callback
+    name: Android — emulator, form to Home, adb opens the callback · private commit ${{ needs.gate.outputs.sha }}
     needs: [nikatru-pin, nikatru-approve, gate]
     if: needs.nikatru-pin.result == 'success' && (needs.nikatru-approve.result == 'success' || (needs.nikatru-approve.result == 'skipped' && !((inputs.private_ref || '') != ''))) && !cancelled() && !failure() && needs.gate.result == 'success' && (inputs.observed_window == '' && (needs.gate.outputs.targets == 'all' || contains(format(',{0},', needs.gate.outputs.targets), ',android,')))
     strategy:
@@ -713,7 +772,7 @@ jobs:
         run: node tooling/ops/bridge-artifact.mjs upload
 
   android-observed:
-    name: Android — observed, a store-delivered build signs in at the Worker
+    name: Android — observed, a store-delivered build signs in at the Worker · private commit ${{ needs.gate.outputs.sha }}
     needs: [nikatru-pin, nikatru-approve, gate]
     if: needs.nikatru-pin.result == 'success' && (needs.nikatru-approve.result == 'success' || (needs.nikatru-approve.result == 'skipped' && !((inputs.private_ref || '') != ''))) && !cancelled() && !failure() && needs.gate.result == 'success' && (inputs.sign_in == 'form' && inputs.observed_window != '' && (needs.gate.outputs.targets == 'all' || contains(format(',{0},', needs.gate.outputs.targets), ',android,')))
     strategy:
@@ -1713,8 +1772,272 @@ jobs:
           NIKATRU_BRIDGE_ARTIFACT_URL: https://gh-bridge.nikatru.workers.dev/artifact
         run: node tooling/ops/bridge-artifact.mjs upload
 
+  delete-reprove:
+    name: Delete re-proof — ${{ matrix.leg.target }}, a password account deleted through the browser hand-off
+    needs: [nikatru-pin, nikatru-approve, gate]
+    if: needs.nikatru-pin.result == 'success' && (needs.nikatru-approve.result == 'success' || (needs.nikatru-approve.result == 'skipped' && !((inputs.private_ref || '') != ''))) && !cancelled() && !failure() && needs.gate.result == 'success' && (inputs.delete_reprove == true && needs.gate.outputs.desktop_legs != '[]')
+    strategy:
+      fail-fast: false
+      max-parallel: 3
+      matrix:
+        app: ${{ fromJSON(needs.gate.outputs.apps) }}
+        leg: ${{ fromJSON(needs.gate.outputs.desktop_legs) }}
+    runs-on: ${{ matrix.leg.os }}
+    timeout-minutes: 45
+    permissions:
+      contents: read
+      id-token: write
+    defaults:
+      run:
+        shell: bash
+    env:
+      APP: ${{ matrix.app }}
+      TARGET: ${{ matrix.leg.target }}
+      PROOF_NEEDS_DEVICE: 'true'
+      E2E_PROOF_LOG: native-auth-proof.log
+    steps:
+      - name: Check out the private tree (generated)
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
+        with:
+          repository: ${{ env.NIKATRU_PRIVATE_REPO }}
+          ref: ${{ needs.nikatru-pin.outputs.sha || 'nikatru-pin-did-not-succeed..' }}
+          ssh-key: ${{ secrets.PRIVATE_DEPLOY_KEY }}
+          persist-credentials: false
+      - name: Name the private commit (generated)
+        shell: bash
+        working-directory: ${{ github.workspace }}
+        env:
+          NIKATRU_P_EVENT: ${{ github.event.client_payload.event || github.event_name }}
+          NIKATRU_P_REF: ${{ github.event.client_payload.ref || inputs.private_ref || 'refs/heads/main' }}
+          NIKATRU_P_BASE_SHA: ${{ github.event.client_payload.base_sha }}
+          NIKATRU_P_BASE_REF: ${{ github.event.client_payload.base_ref }}
+          NIKATRU_P_PR: ${{ github.event.client_payload.pr }}
+          NIKATRU_P_PR_CREATED_AT: ${{ github.event.client_payload.pr_created_at }}
+          NIKATRU_P_DRAFT: ${{ github.event.client_payload.draft }}
+          NIKATRU_P_SHA: ${{ github.event.client_payload.sha }}
+        run: |
+          if [ "$NIKATRU_P_EVENT" = pull_request ]; then
+            set -- $(git cat-file -p HEAD | sed -n '1,/^$/s/^parent //p')
+            if [ "${2:-}" != "$NIKATRU_P_SHA" ]; then
+              echo "::error::the checked-out merge of PR #$NIKATRU_P_PR is not the merge of the dispatched head $NIKATRU_P_SHA (its second parent is ${2:-none}); the nikatru-pin job pins it — re-run the whole workflow, not this job"
+              exit 1
+            fi
+          fi
+          {
+            echo "NIKATRU_SHA=$(git rev-parse HEAD)"
+            echo "NIKATRU_HEAD_SHA=${NIKATRU_P_SHA:-$(git rev-parse HEAD)}"
+            echo "NIKATRU_EVENT_NAME=$NIKATRU_P_EVENT"
+            echo "NIKATRU_REF=$NIKATRU_P_REF"
+            echo "NIKATRU_REF_NAME=${NIKATRU_P_REF#refs/*/}"
+            echo "NIKATRU_BASE_SHA=$NIKATRU_P_BASE_SHA"
+            echo "NIKATRU_BASE_REF=$NIKATRU_P_BASE_REF"
+            echo "NIKATRU_PR=$NIKATRU_P_PR"
+            echo "NIKATRU_PR_CREATED_AT=$NIKATRU_P_PR_CREATED_AT"
+            echo "NIKATRU_DRAFT=$NIKATRU_P_DRAFT"
+          } >> "$GITHUB_ENV"
+      - name: Check out this shell repository's own step wrapper and reporter (generated)
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
+        with:
+          path: .nikatru-shell
+          sparse-checkout: .github/nikatru
+          persist-credentials: false
+      - name: Stage the shell's own copies outside the private checkout (generated)
+        shell: bash
+        working-directory: ${{ github.workspace }}
+        run: |
+          rm -rf ../.nikatru-shell
+          mv .nikatru-shell/.github/nikatru ../.nikatru-shell
+          rm -rf .nikatru-shell
+      - name: Check out private main's composite actions (generated)
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
+        with:
+          repository: ${{ env.NIKATRU_PRIVATE_REPO }}
+          ref: refs/heads/main
+          path: .nikatru-trusted
+          sparse-checkout: .github/actions
+          ssh-key: ${{ secrets.PRIVATE_DEPLOY_KEY }}
+          persist-credentials: false
+      - name: Keep private main's composite actions out of the branch's tree (generated)
+        shell: bash
+        working-directory: ${{ github.workspace }}
+        run: printf '/.nikatru-trusted/\n' >> "$(git rev-parse --git-path info/exclude)"
+      - uses: ./.nikatru-trusted/.github/actions/setup-node
+      - name: Check out private main's composite actions (generated)
+        if: env.PROOF_NEEDS_DEVICE == 'true'
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
+        with:
+          repository: ${{ env.NIKATRU_PRIVATE_REPO }}
+          ref: refs/heads/main
+          path: .nikatru-trusted
+          sparse-checkout: .github/actions
+          ssh-key: ${{ secrets.PRIVATE_DEPLOY_KEY }}
+          persist-credentials: false
+      - name: Keep private main's composite actions out of the branch's tree (generated)
+        if: env.PROOF_NEEDS_DEVICE == 'true'
+        shell: bash
+        working-directory: ${{ github.workspace }}
+        run: printf '/.nikatru-trusted/\n' >> "$(git rev-parse --git-path info/exclude)"
+      - uses: ./.nikatru-trusted/.github/actions/setup-flutter
+        if: env.PROOF_NEEDS_DEVICE == 'true'
+        with:
+          cache: 'false'
+      - name: Git may write paths past MAX_PATH
+        if: env.PROOF_NEEDS_DEVICE == 'true' && matrix.leg.target == 'windows'
+        run: |
+          NIKATRU_QUIET="$(mktemp "${RUNNER_TEMP:-/tmp}/nikatru-step.XXXXXX")"
+          cat > "$NIKATRU_QUIET" <<'NIKATRU_QUIET_EOF'
+          git config --global core.longpaths true
+          git config --global --get core.longpaths
+          NIKATRU_QUIET_EOF
+          NIKATRU_SHELL="${BASH:-bash}"; if command -v cygpath >/dev/null 2>&1; then NIKATRU_SHELL="$(cygpath -w "$NIKATRU_SHELL")"; fi
+          node "$GITHUB_WORKSPACE/../.nikatru-shell/quiet-step.mjs" --name native-auth-proof.delete-reprove.4 -- "$NIKATRU_SHELL" --noprofile --norc -eo pipefail "$NIKATRU_QUIET"
+      - name: Linux build and session deps
+        if: env.PROOF_NEEDS_DEVICE == 'true' && matrix.leg.target == 'linux'
+        timeout-minutes: 9
+        run: |
+          NIKATRU_QUIET="$(mktemp "${RUNNER_TEMP:-/tmp}/nikatru-step.XXXXXX")"
+          cat > "$NIKATRU_QUIET" <<'NIKATRU_QUIET_EOF'
+          # why the guard: the linux job's — a branch run may build a checkout that predates tooling/ops/ci-install-cache.mjs.
+          cached_install() {
+            if [ -f "$GITHUB_WORKSPACE/tooling/ops/ci-install-cache.mjs" ]; then
+              node "$GITHUB_WORKSPACE/tooling/ops/ci-install-cache.mjs" run --cache-dir "${DEBS_DIR:-$RUNNER_TEMP/ci-install-debs}" --attempt-minutes "${ATTEMPT_MINUTES:-4}" -- "$@"
+              return
+            fi
+            bound="$(awk -v m="${ATTEMPT_MINUTES:-4}" 'BEGIN { print int(m * 120) + 1 }')"
+            echo "::warning title=Install uncached::this checkout has no tooling/ops/ci-install-cache.mjs (it predates #981): $* runs uncached, bounded at ${bound} s"
+            if [ "$1" = sudo ]; then timeout -k 15 "$bound" sudo apt-get update; fi
+            timeout -k 15 "$bound" "$@"
+          }
+          cached_install \
+            sudo apt-get install -y \
+            clang cmake ninja-build pkg-config libgtk-3-dev liblzma-dev \
+            libsecret-1-dev libjsoncpp-dev libcurl4-openssl-dev \
+            xvfb gnome-keyring dbus-x11 desktop-file-utils xdg-utils
+          NIKATRU_QUIET_EOF
+          NIKATRU_SHELL="${BASH:-bash}"; if command -v cygpath >/dev/null 2>&1; then NIKATRU_SHELL="$(cygpath -w "$NIKATRU_SHELL")"; fi
+          node "$GITHUB_WORKSPACE/../.nikatru-shell/quiet-step.mjs" --name native-auth-proof.delete-reprove.5 -- "$NIKATRU_SHELL" --noprofile --norc -eo pipefail "$NIKATRU_QUIET"
+      - name: Enable the desktop target
+        if: env.PROOF_NEEDS_DEVICE == 'true'
+        run: |
+          NIKATRU_QUIET="$(mktemp "${RUNNER_TEMP:-/tmp}/nikatru-step.XXXXXX")"
+          cat > "$NIKATRU_QUIET" <<'NIKATRU_QUIET_EOF'
+          flutter config "--enable-${TARGET}-desktop"
+          NIKATRU_QUIET_EOF
+          NIKATRU_SHELL="${BASH:-bash}"; if command -v cygpath >/dev/null 2>&1; then NIKATRU_SHELL="$(cygpath -w "$NIKATRU_SHELL")"; fi
+          node "$GITHUB_WORKSPACE/../.nikatru-shell/quiet-step.mjs" --name native-auth-proof.delete-reprove.6 -- "$NIKATRU_SHELL" --noprofile --norc -eo pipefail "$NIKATRU_QUIET"
+      - name: flutter pub get
+        if: env.PROOF_NEEDS_DEVICE == 'true'
+        working-directory: apps/${{ matrix.app }}
+        run: |
+          NIKATRU_QUIET="$(mktemp "${RUNNER_TEMP:-/tmp}/nikatru-step.XXXXXX")"
+          cat > "$NIKATRU_QUIET" <<'NIKATRU_QUIET_EOF'
+          flutter pub get --enforce-lockfile
+          NIKATRU_QUIET_EOF
+          NIKATRU_SHELL="${BASH:-bash}"; if command -v cygpath >/dev/null 2>&1; then NIKATRU_SHELL="$(cygpath -w "$NIKATRU_SHELL")"; fi
+          node "$GITHUB_WORKSPACE/../.nikatru-shell/quiet-step.mjs" --name native-auth-proof.delete-reprove.7 -- "$NIKATRU_SHELL" --noprofile --norc -eo pipefail "$NIKATRU_QUIET"
+      - name: Resolve this app's databases from its Worker's wrangler file
+        id: backend
+        run: |
+          NIKATRU_QUIET="$(mktemp "${RUNNER_TEMP:-/tmp}/nikatru-step.XXXXXX")"
+          cat > "$NIKATRU_QUIET" <<'NIKATRU_QUIET_EOF'
+          node tooling/e2e/backend.mjs --app "$APP" --emit-output
+          NIKATRU_QUIET_EOF
+          NIKATRU_SHELL="${BASH:-bash}"; if command -v cygpath >/dev/null 2>&1; then NIKATRU_SHELL="$(cygpath -w "$NIKATRU_SHELL")"; fi
+          node "$GITHUB_WORKSPACE/../.nikatru-shell/quiet-step.mjs" --name native-auth-proof.delete-reprove.8 -- "$NIKATRU_SHELL" --noprofile --norc -eo pipefail "$NIKATRU_QUIET"
+      - name: The app's API base, from the composer's rule
+        run: |
+          NIKATRU_QUIET="$(mktemp "${RUNNER_TEMP:-/tmp}/nikatru-step.XXXXXX")"
+          cat > "$NIKATRU_QUIET" <<'NIKATRU_QUIET_EOF'
+          node tooling/ci/flutter-release-build.mjs --emit-env API_BASE_URL "$APP" >> "$GITHUB_ENV"
+          NIKATRU_QUIET_EOF
+          NIKATRU_SHELL="${BASH:-bash}"; if command -v cygpath >/dev/null 2>&1; then NIKATRU_SHELL="$(cygpath -w "$NIKATRU_SHELL")"; fi
+          node "$GITHUB_WORKSPACE/../.nikatru-shell/quiet-step.mjs" --name native-auth-proof.delete-reprove.9 -- "$NIKATRU_SHELL" --noprofile --norc -eo pipefail "$NIKATRU_QUIET"
+      - name: Provision throwaway confirmed user
+        id: user
+        env:
+          SUPABASE_URL: ${{ secrets.SUPABASE_URL }}
+          SUPABASE_SERVICE_ROLE_KEY: ${{ secrets.SUPABASE_SERVICE_ROLE_KEY }}
+        run: |
+          NIKATRU_QUIET="$(mktemp "${RUNNER_TEMP:-/tmp}/nikatru-step.XXXXXX")"
+          cat > "$NIKATRU_QUIET" <<'NIKATRU_QUIET_EOF'
+          node tooling/e2e/provision_user.mjs --defer-token
+          NIKATRU_QUIET_EOF
+          NIKATRU_SHELL="${BASH:-bash}"; if command -v cygpath >/dev/null 2>&1; then NIKATRU_SHELL="$(cygpath -w "$NIKATRU_SHELL")"; fi
+          node "$GITHUB_WORKSPACE/../.nikatru-shell/quiet-step.mjs" --name native-auth-proof.delete-reprove.10 -- "$NIKATRU_SHELL" --noprofile --norc -eo pipefail "$NIKATRU_QUIET"
+      - name: The proof — Delete, the browser hand-off answered, the account read gone
+        id: proof
+        env:
+          SUPABASE_URL: ${{ secrets.SUPABASE_URL }}
+          SUPABASE_ANON_KEY: ${{ secrets.SUPABASE_ANON_KEY }}
+          SUPABASE_SERVICE_ROLE_KEY: ${{ secrets.SUPABASE_SERVICE_ROLE_KEY }}
+          E2E_USER_ID: ${{ steps.user.outputs.user_id }}
+          E2E_TOKEN_URL: ${{ steps.user.outputs.token_url }}
+        run: |
+          NIKATRU_QUIET="$(mktemp "${RUNNER_TEMP:-/tmp}/nikatru-step.XXXXXX")"
+          cat > "$NIKATRU_QUIET" <<'NIKATRU_QUIET_EOF'
+          set -euo pipefail
+          if [ "$TARGET" = linux ]; then
+            # why: the linux job's one D-Bus session and unlocked keyring (libsecret stores the session).
+            dbus-run-session -- bash -c '
+              set -euo pipefail
+              eval "$(head -c 24 /dev/urandom | base64 | gnome-keyring-daemon --unlock --components=secrets)"
+              export GNOME_KEYRING_CONTROL
+              xvfb-run -a -s "-screen 0 1920x1200x24" \
+                node tooling/e2e/native_auth_proof.mjs --app "$APP" --target "$TARGET" --device "$TARGET" --log "$E2E_PROOF_LOG" --delete-reprove
+            '
+          else
+            node tooling/e2e/native_auth_proof.mjs --app "$APP" --target "$TARGET" --device "$TARGET" --log "$E2E_PROOF_LOG" --delete-reprove
+          fi
+          NIKATRU_QUIET_EOF
+          NIKATRU_SHELL="${BASH:-bash}"; if command -v cygpath >/dev/null 2>&1; then NIKATRU_SHELL="$(cygpath -w "$NIKATRU_SHELL")"; fi
+          node "$GITHUB_WORKSPACE/../.nikatru-shell/quiet-step.mjs" --name native-auth-proof.delete-reprove.11 -- "$NIKATRU_SHELL" --noprofile --norc -eo pipefail "$NIKATRU_QUIET"
+      - name: Publish the delete re-proof verdict line
+        if: always() && steps.proof.outcome != 'skipped'
+        run: |
+          NIKATRU_QUIET="$(mktemp "${RUNNER_TEMP:-/tmp}/nikatru-step.XXXXXX")"
+          cat > "$NIKATRU_QUIET" <<'NIKATRU_QUIET_EOF'
+          set -euo pipefail
+          if ! grep -E '^NK_PROOF_DELETE_REPROVE ' "$E2E_PROOF_LOG" > "$RUNNER_TEMP/verdict.txt"; then
+            echo "::error title=Delete re-proof::the proof log carries no NK_PROOF_DELETE_REPROVE line"
+            exit 1
+          fi
+          sed 's/^/::nikatru-public::/' "$RUNNER_TEMP/verdict.txt"
+          NIKATRU_QUIET_EOF
+          NIKATRU_SHELL="${BASH:-bash}"; if command -v cygpath >/dev/null 2>&1; then NIKATRU_SHELL="$(cygpath -w "$NIKATRU_SHELL")"; fi
+          node "$GITHUB_WORKSPACE/../.nikatru-shell/quiet-step.mjs" --name native-auth-proof.delete-reprove.12 -- "$NIKATRU_SHELL" --noprofile --norc -eo pipefail "$NIKATRU_QUIET"
+      - name: Purge the throwaway user
+        if: always() && steps.user.outcome != 'skipped'
+        env:
+          SUPABASE_URL: ${{ secrets.SUPABASE_URL }}
+          SUPABASE_SERVICE_ROLE_KEY: ${{ secrets.SUPABASE_SERVICE_ROLE_KEY }}
+          CLOUDFLARE_ACCOUNT_ID: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
+          CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_D1_TOKEN }}
+          E2E_USER_ID: ${{ steps.user.outputs.user_id }}
+          E2E_APP_ID: ${{ matrix.app }}
+          PLATFORM_D1_DATABASE_ID: ${{ steps.backend.outputs.platform_db }}
+          E2E_PROOF_RAN: ${{ steps.proof.outcome != 'skipped' }}
+        run: |
+          NIKATRU_QUIET="$(mktemp "${RUNNER_TEMP:-/tmp}/nikatru-step.XXXXXX")"
+          cat > "$NIKATRU_QUIET" <<'NIKATRU_QUIET_EOF'
+          node tooling/e2e/purge.mjs
+          NIKATRU_QUIET_EOF
+          NIKATRU_SHELL="${BASH:-bash}"; if command -v cygpath >/dev/null 2>&1; then NIKATRU_SHELL="$(cygpath -w "$NIKATRU_SHELL")"; fi
+          node "$GITHUB_WORKSPACE/../.nikatru-shell/quiet-step.mjs" --name native-auth-proof.delete-reprove.13 -- "$NIKATRU_SHELL" --noprofile --norc -eo pipefail "$NIKATRU_QUIET"
+      - name: Store this job's red detail in the bridge's private home (generated)
+        if: always()
+        continue-on-error: true
+        shell: bash
+        working-directory: ${{ github.workspace }}
+        env:
+          NIKATRU_PATHS: ${{ runner.temp }}/report-detail.md
+          NIKATRU_ARTIFACT_NAME: report-detail-native-auth-proof.delete-reprove.${{ strategy.job-index }}
+          NIKATRU_IF_NO_FILES: ignore
+          BRIDGE_ARTIFACT_SECRET: ${{ secrets.BRIDGE_ARTIFACT_SECRET }}
+          NIKATRU_BRIDGE_ARTIFACT_URL: https://gh-bridge.nikatru.workers.dev/artifact
+        run: node tooling/ops/bridge-artifact.mjs upload
+
   android-oauth-return:
-    name: Android — emulator, adb hands the app an OAuth return
+    name: Android — emulator, adb hands the app an OAuth return · private commit ${{ needs.gate.outputs.sha }}
     needs: [nikatru-pin, nikatru-approve, gate]
     if: needs.nikatru-pin.result == 'success' && (needs.nikatru-approve.result == 'success' || (needs.nikatru-approve.result == 'skipped' && !((inputs.private_ref || '') != ''))) && !cancelled() && !failure() && needs.gate.result == 'success' && (needs.gate.outputs.targets == 'all' || contains(format(',{0},', needs.gate.outputs.targets), ',android,'))
     strategy:
@@ -2567,7 +2890,7 @@ jobs:
 
   nikatru-ran:
     name: Fail this run if it ran nothing (generated)
-    needs: [gate, android, android-observed, ios, macos, windows, linux, android-oauth-return, ios-oauth-return, macos-oauth-return, windows-oauth-return, linux-oauth-return]
+    needs: [gate, android, android-observed, ios, macos, windows, linux, delete-reprove, android-oauth-return, ios-oauth-return, macos-oauth-return, windows-oauth-return, linux-oauth-return]
     if: "!cancelled()"
     runs-on: ubuntu-24.04
     defaults:
@@ -2587,7 +2910,7 @@ jobs:
       - name: Fail when every job of this run was skipped (generated)
         shell: bash
         env:
-          NIKATRU_RESULTS: gate=${{ needs.gate.result }} android=${{ needs.android.result }} android-observed=${{ needs.android-observed.result }} ios=${{ needs.ios.result }} macos=${{ needs.macos.result }} windows=${{ needs.windows.result }} linux=${{ needs.linux.result }} android-oauth-return=${{ needs.android-oauth-return.result }} ios-oauth-return=${{ needs.ios-oauth-return.result }} macos-oauth-return=${{ needs.macos-oauth-return.result }} windows-oauth-return=${{ needs.windows-oauth-return.result }} linux-oauth-return=${{ needs.linux-oauth-return.result }}
+          NIKATRU_RESULTS: gate=${{ needs.gate.result }} android=${{ needs.android.result }} android-observed=${{ needs.android-observed.result }} ios=${{ needs.ios.result }} macos=${{ needs.macos.result }} windows=${{ needs.windows.result }} linux=${{ needs.linux.result }} delete-reprove=${{ needs.delete-reprove.result }} android-oauth-return=${{ needs.android-oauth-return.result }} ios-oauth-return=${{ needs.ios-oauth-return.result }} macos-oauth-return=${{ needs.macos-oauth-return.result }} windows-oauth-return=${{ needs.windows-oauth-return.result }} linux-oauth-return=${{ needs.linux-oauth-return.result }}
         run: |
           for r in $NIKATRU_RESULTS; do
             if [ "${r#*=}" != skipped ]; then echo "ran: $NIKATRU_RESULTS"; exit 0; fi

@@ -3,9 +3,9 @@
 env:
   NIKATRU_PRIVATE_REPO: com-nikatru/Nikatru_Private
 
-name: App
+name: 'App #2 rehearsal (dry run)'
 
-run-name: "App${{ inputs.worker_slot && format(' [worker slot {0}]', inputs.worker_slot) || '' }}"
+run-name: "App #2 rehearsal (dry run)${{ inputs.worker_slot && format(' [worker slot {0}]', inputs.worker_slot) || '' }}"
 
 on:
   workflow_dispatch:

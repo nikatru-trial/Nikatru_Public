@@ -912,6 +912,7 @@ jobs:
           NIKATRU_SHELL="${BASH:-bash}"; if command -v cygpath >/dev/null 2>&1; then NIKATRU_SHELL="$(cygpath -w "$NIKATRU_SHELL")"; fi
           node "$GITHUB_WORKSPACE/../.nikatru-shell/quiet-step.mjs" --name build-platforms.linux_web_android.33 -- "$NIKATRU_SHELL" -e "$NIKATRU_QUIET"
       - name: Upload the native debug symbols to GlitchTip
+        timeout-minutes: 12
         env:
           SENTRY_AUTH_TOKEN: ${{ secrets.GLITCHTIP_TOKEN }}
           GLITCHTIP_DSN: ${{ secrets.GLITCHTIP_DSN }}
@@ -1235,6 +1236,7 @@ jobs:
         shell: node ../.nikatru-shell/quiet-step.mjs --name build-platforms.windows.13 --default-shell {0}
         run: node tooling/ci/install-pinned-tool.mjs glitchtip-cli --out "$env:RUNNER_TEMP"
       - name: Upload the native debug symbols to GlitchTip
+        timeout-minutes: 12
         env:
           SENTRY_AUTH_TOKEN: ${{ secrets.GLITCHTIP_TOKEN }}
           GLITCHTIP_DSN: ${{ secrets.GLITCHTIP_DSN }}
@@ -1931,7 +1933,7 @@ jobs:
     if: (github.event_name != 'repository_dispatch' || (github.event.client_payload.event == 'push' && startsWith(github.event.client_payload.ref, 'refs/tags/subscriptiontracker-v')))
     runs-on: macos-26
     environment: signing
-    timeout-minutes: 30
+    timeout-minutes: 35
     needs: [nikatru-pin, prepare]
     strategy:
       fail-fast: false
@@ -2077,6 +2079,8 @@ jobs:
       - name: Point the Xcode projects at the imported identity
         if: env.APPLE_SIGNING_POSTURE == 'release-signed'
         working-directory: apps/${{ matrix.app }}
+        env:
+          APP: ${{ matrix.app }}
         run: |
           NIKATRU_QUIET="$(mktemp "${RUNNER_TEMP:-/tmp}/nikatru-step.XXXXXX")"
           cat > "$NIKATRU_QUIET" <<'NIKATRU_QUIET_EOF'
@@ -2089,19 +2093,21 @@ jobs:
           # simply not consulted for a device build. Both spellings are written.
           {
             echo ""
-            echo "CODE_SIGN_STYLE = Manual"
             echo "DEVELOPMENT_TEAM = ${APPLE_TEAM_ID}"
             echo "CODE_SIGN_IDENTITY = ${APPLE_DIST_IDENTITY}"
             echo "CODE_SIGN_IDENTITY[sdk=iphoneos*] = ${APPLE_DIST_IDENTITY}"
-            echo "PROVISIONING_PROFILE_SPECIFIER = ${APPLE_IOS_PROFILE_NAME}"
           } >> ios/Flutter/Release.xcconfig
           {
             echo ""
-            echo "CODE_SIGN_STYLE = Manual"
             echo "DEVELOPMENT_TEAM = ${APPLE_TEAM_ID}"
             echo "CODE_SIGN_IDENTITY = ${APPLE_DIST_IDENTITY}"
-            echo "PROVISIONING_PROFILE_SPECIFIER = ${APPLE_MACOS_PROFILE_NAME}"
           } >> macos/Runner/Configs/Release.xcconfig
+          # ⏱ 2026-11-05 (run 41983234703): CODE_SIGN_STYLE and the profile are written PER TARGET, never into the
+          # shared xcconfig: each target's own `CODE_SIGN_STYLE = Automatic` in project.pbxproj outranks an xcconfig,
+          # so the extensions got the app's profile beside Automatic. Each target gets ITS OWN installed profile.
+          BUNDLE_ID="$(node -p "require('$GITHUB_WORKSPACE/tooling/apple-provisioning.json').apps[process.argv[1]].bundleId" "$APP")"
+          node "$GITHUB_WORKSPACE/tooling/ci/apple-target-signing.mjs" --project ios/Runner.xcodeproj/project.pbxproj --platform ios --app-bundle-id "$BUNDLE_ID"
+          node "$GITHUB_WORKSPACE/tooling/ci/apple-target-signing.mjs" --project macos/Runner.xcodeproj/project.pbxproj --platform macos --app-bundle-id "$BUNDLE_ID"
           echo "::group::the appended iOS settings"
           tail -5 ios/Flutter/Release.xcconfig
           echo "::endgroup::"
@@ -2409,6 +2415,7 @@ jobs:
           NIKATRU_SHELL="${BASH:-bash}"; if command -v cygpath >/dev/null 2>&1; then NIKATRU_SHELL="$(cygpath -w "$NIKATRU_SHELL")"; fi
           node "$GITHUB_WORKSPACE/../.nikatru-shell/quiet-step.mjs" --name build-platforms.apple.30 -- "$NIKATRU_SHELL" -e "$NIKATRU_QUIET"
       - name: Upload the native debug symbols to GlitchTip
+        timeout-minutes: 12
         env:
           SENTRY_AUTH_TOKEN: ${{ secrets.GLITCHTIP_TOKEN }}
           GLITCHTIP_DSN: ${{ secrets.GLITCHTIP_DSN }}
@@ -3192,6 +3199,8 @@ jobs:
       actions: read
     outputs:
       detail: ${{ steps.collect.outputs.detail }}
+      detail_2: ${{ steps.collect.outputs.detail_2 }}
+      detail_3: ${{ steps.collect.outputs.detail_3 }}
     steps:
       - name: Check out this shell repository only, no private code (generated)
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
@@ -3475,6 +3484,8 @@ jobs:
           BRIDGE_REPORT_SECRET: ${{ secrets.BRIDGE_REPORT_SECRET }}
           NIKATRU_DETAIL_KEY: ${{ secrets.NIKATRU_DETAIL_KEY }}
           NIKATRU_DETAIL: ${{ needs.nikatru-collect.outputs.detail }}
+          NIKATRU_DETAIL_2: ${{ needs.nikatru-collect.outputs.detail_2 }}
+          NIKATRU_DETAIL_3: ${{ needs.nikatru-collect.outputs.detail_3 }}
           NIKATRU_HEAD_SHA: ${{ github.event.client_payload.sha }}
           NIKATRU_P_EVENT: ${{ github.event.client_payload.event }}
           NIKATRU_P_PR: ${{ github.event.client_payload.pr }}

@@ -642,7 +642,7 @@ jobs:
     name: The tooling suites at ${{ matrix.instant }} (shard ${{ matrix.shard }})
     needs: [nikatru-pin, plan]
     runs-on: ubuntu-24.04
-    timeout-minutes: 30
+    timeout-minutes: 35
     permissions:
       contents: read
       id-token: write
@@ -918,7 +918,7 @@ jobs:
     name: The clock-reading guards on the real tree at now+${{ matrix.days }}d
     if: ${{ (github.event.client_payload.event || github.event_name) == 'schedule' || inputs.instant == '' }}
     runs-on: ubuntu-24.04
-    timeout-minutes: 20
+    timeout-minutes: 32
     permissions:
       contents: read
       issues: read

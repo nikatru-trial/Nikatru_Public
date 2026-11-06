@@ -15,7 +15,7 @@ on:
         required: true
         type: string
       confirm:
-        description: 'Type SUBMIT-TO-PLAY to authorise a real upload, or PROMOTE-ON-PLAY to move a production staged rollout (with promote). Anything else runs the dry run only.'
+        description: 'Type SUBMIT-TO-PLAY to authorise a real upload, PROMOTE-ON-PLAY to move a production staged rollout (with promote), or REHEARSE-ON-PLAY to open and delete an uncommitted Play edit with the publish key (store-publish). Anything else runs the offline dry run only.'
         required: true
         default: 'dry-run-only'
         type: string
@@ -475,6 +475,7 @@ jobs:
           NIKATRU_SHELL="${BASH:-bash}"; if command -v cygpath >/dev/null 2>&1; then NIKATRU_SHELL="$(cygpath -w "$NIKATRU_SHELL")"; fi
           node "$GITHUB_WORKSPACE/../.nikatru-shell/quiet-step.mjs" --name submit-play.dry-run.11 -- "$NIKATRU_SHELL" -e "$NIKATRU_QUIET"
       - name: Upload the native debug symbols to GlitchTip
+        timeout-minutes: 12
         env:
           SENTRY_AUTH_TOKEN: ${{ secrets.GLITCHTIP_TOKEN }}
           GLITCHTIP_DSN: ${{ secrets.GLITCHTIP_DSN }}
@@ -507,14 +508,13 @@ jobs:
           NIKATRU_QUIET_EOF
           NIKATRU_SHELL="${BASH:-bash}"; if command -v cygpath >/dev/null 2>&1; then NIKATRU_SHELL="$(cygpath -w "$NIKATRU_SHELL")"; fi
           node "$GITHUB_WORKSPACE/../.nikatru-shell/quiet-step.mjs" --name submit-play.dry-run.14 -- "$NIKATRU_SHELL" -e "$NIKATRU_QUIET"
-      - name: Dry-run the Google Play submission (opens and deletes an uncommitted edit)
+      - name: Dry-run the Google Play submission offline (no Play key, no store call)
         env:
-          PLAY_SERVICE_ACCOUNT_JSON: ${{ secrets.PLAY_READONLY_SERVICE_ACCOUNT_JSON || secrets.PLAY_SERVICE_ACCOUNT_JSON }}
           PLAY_TRACK: ${{ inputs.track || 'internal' }}
         run: |
           NIKATRU_QUIET="$(mktemp "${RUNNER_TEMP:-/tmp}/nikatru-step.XXXXXX")"
           cat > "$NIKATRU_QUIET" <<'NIKATRU_QUIET_EOF'
-          node tooling/release/submit-play.mjs --dry-run --touch-store --app "$APP"
+          node tooling/release/submit-play.mjs --dry-run --app "$APP"
           NIKATRU_QUIET_EOF
           NIKATRU_SHELL="${BASH:-bash}"; if command -v cygpath >/dev/null 2>&1; then NIKATRU_SHELL="$(cygpath -w "$NIKATRU_SHELL")"; fi
           node "$GITHUB_WORKSPACE/../.nikatru-shell/quiet-step.mjs" --name submit-play.dry-run.15 -- "$NIKATRU_SHELL" -e "$NIKATRU_QUIET"
@@ -662,6 +662,7 @@ jobs:
       contents: read
       checks: read
       deployments: write
+      actions: read
       id-token: write
     env:
       APP: ${{ needs.gate.outputs.app }}
@@ -768,6 +769,12 @@ jobs:
         env:
           PLAY_TRACK: ${{ inputs.track || 'internal' }}
         run: node tooling/ci/assert-channel-register.mjs --for-submission=android-play --real-submission
+      - name: A production release has a green native-auth proof (android) at its sha
+        env:
+          PLAY_TRACK: ${{ inputs.track || 'internal' }}
+          RELEASE_SHA: ${{ needs.gate.outputs.sha }}
+          GITHUB_TOKEN: ${{ github.token }}
+        run: node tooling/ci/assert-native-auth-proof-at-sha.mjs --sha "$RELEASE_SHA" --target android --track "$PLAY_TRACK"
       - name: Every target this channel ships to has its golden-path legs graded (android-play)
         run: node tooling/ci/assert-e2e-legs.mjs --for-submission=android-play
       - name: The versionCode lies above what Play consumed
@@ -1100,9 +1107,112 @@ jobs:
           VERSION_CODE: ${{ steps.promote.outputs.version_code }}
         run: node tooling/ci/record-deployment.mjs "${APP}-android-play" --state rollout_moved --listing-url "$LISTING_URL" --version-code "$VERSION_CODE" --mode production
 
+  rehearse:
+    name: Rehearse the Play edit (${{ needs.gate.outputs.app }}, store-publish)
+    runs-on: ubuntu-24.04
+    timeout-minutes: 15
+    needs: [nikatru-pin, dry-run, gate]
+    if: (github.event.client_payload.event || github.event_name) == 'workflow_dispatch' && inputs.confirm == 'REHEARSE-ON-PLAY'
+    environment: store-publish
+    permissions:
+      contents: read
+      deployments: write
+    env:
+      APP: ${{ needs.gate.outputs.app }}
+    steps:
+      - name: Check out the private tree (generated)
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
+        with:
+          repository: ${{ env.NIKATRU_PRIVATE_REPO }}
+          ref: ${{ needs.nikatru-pin.outputs.sha || 'nikatru-pin-did-not-succeed..' }}
+          ssh-key: ${{ secrets.PRIVATE_DEPLOY_KEY }}
+          persist-credentials: false
+      - name: Name the private commit (generated)
+        shell: bash
+        working-directory: ${{ github.workspace }}
+        env:
+          NIKATRU_P_EVENT: ${{ github.event.client_payload.event || github.event_name }}
+          NIKATRU_P_REF: ${{ github.event.client_payload.ref || 'refs/heads/main' }}
+          NIKATRU_P_BASE_SHA: ${{ github.event.client_payload.base_sha }}
+          NIKATRU_P_BASE_REF: ${{ github.event.client_payload.base_ref }}
+          NIKATRU_P_PR: ${{ github.event.client_payload.pr }}
+          NIKATRU_P_PR_CREATED_AT: ${{ github.event.client_payload.pr_created_at }}
+          NIKATRU_P_DRAFT: ${{ github.event.client_payload.draft }}
+          NIKATRU_P_SHA: ${{ github.event.client_payload.sha }}
+        run: |
+          if [ "$NIKATRU_P_EVENT" = pull_request ]; then
+            set -- $(git cat-file -p HEAD | sed -n '1,/^$/s/^parent //p')
+            if [ "${2:-}" != "$NIKATRU_P_SHA" ]; then
+              echo "::error::the checked-out merge of PR #$NIKATRU_P_PR is not the merge of the dispatched head $NIKATRU_P_SHA (its second parent is ${2:-none}); the nikatru-pin job pins it — re-run the whole workflow, not this job"
+              exit 1
+            fi
+          fi
+          {
+            echo "NIKATRU_SHA=$(git rev-parse HEAD)"
+            echo "NIKATRU_HEAD_SHA=${NIKATRU_P_SHA:-$(git rev-parse HEAD)}"
+            echo "NIKATRU_EVENT_NAME=$NIKATRU_P_EVENT"
+            echo "NIKATRU_REF=$NIKATRU_P_REF"
+            echo "NIKATRU_REF_NAME=${NIKATRU_P_REF#refs/*/}"
+            echo "NIKATRU_BASE_SHA=$NIKATRU_P_BASE_SHA"
+            echo "NIKATRU_BASE_REF=$NIKATRU_P_BASE_REF"
+            echo "NIKATRU_PR=$NIKATRU_P_PR"
+            echo "NIKATRU_PR_CREATED_AT=$NIKATRU_P_PR_CREATED_AT"
+            echo "NIKATRU_DRAFT=$NIKATRU_P_DRAFT"
+          } >> "$GITHUB_ENV"
+      - name: Refuse any ref but main
+        run: node tooling/ci/assert-deploy-ref.mjs --allow main
+      - name: Restore the ${{ needs.dry-run.outputs.artifact }} hand-off from this run (generated)
+        id: nikatru-restore-5
+        timeout-minutes: 6
+        uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333
+        with:
+          name: nikatru-handoff-${{ needs.dry-run.outputs.artifact }}
+          path: .nikatru-handoff/sealed
+      - name: Unseal the ${{ needs.dry-run.outputs.artifact }} hand-off (generated)
+        id: nikatru-unseal-5
+        if: ${{ (success()) && steps.nikatru-restore-5.outcome == 'success' }}
+        shell: bash
+        working-directory: ${{ github.workspace }}
+        env:
+          NIKATRU_DETAIL_KEY: ${{ secrets.NIKATRU_DETAIL_KEY }}
+          NIKATRU_HANDOFF_KEY: nikatru-handoff-${{ needs.dry-run.outputs.artifact }}-${{ github.run_id }}-run
+          NIKATRU_HANDOFF_PREFIX: nikatru-handoff-${{ needs.dry-run.outputs.artifact }}-${{ github.run_id }}-
+        run: node tooling/ci/shell-handoff.mjs unseal
+      - name: Place the ${{ needs.dry-run.outputs.artifact }} hand-off where download-artifact put it (generated)
+        if: ${{ (success()) && steps.nikatru-unseal-5.outcome == 'success' }}
+        shell: bash
+        working-directory: ${{ github.workspace }}
+        env:
+          NIKATRU_TO: apps/${{ needs.gate.outputs.app }}/build/app/outputs/bundle/release
+        run: |
+          mkdir -p "$NIKATRU_TO"
+          cp -a .nikatru-handoff/x/. "$NIKATRU_TO/"
+          rm -rf .nikatru-handoff/x
+      - name: The bundle is the one the dry-run job hashed (sha256)
+        env:
+          DRY_RUN_SHA256: ${{ needs.dry-run.outputs.sha256 }}
+          BUNDLE: apps/${{ needs.gate.outputs.app }}/build/app/outputs/bundle/release/app-release.aab
+        run: |
+          set -euo pipefail
+          if ! [[ "$DRY_RUN_SHA256" =~ ^[0-9a-f]{64}$ ]]; then
+            echo "FAIL the dry-run job's sha256 output is '${DRY_RUN_SHA256}', not 64 hex digits: nothing to check the download against." >&2
+            exit 1
+          fi
+          printf '%s  %s\n' "$DRY_RUN_SHA256" "$BUNDLE" | sha256sum --check --strict -
+      - name: Dry-run the Google Play submission (opens and deletes an uncommitted edit)
+        env:
+          PLAY_SERVICE_ACCOUNT_JSON: ${{ secrets.PLAY_SERVICE_ACCOUNT_JSON }}
+          PLAY_TRACK: ${{ inputs.track || 'internal' }}
+        run: node tooling/release/submit-play.mjs --dry-run --touch-store --app "$APP"
+      - name: Record the store rehearsal in the [10]D-9 ledger (mode dry-run)
+        env:
+          GH_TOKEN: ${{ github.token }}
+          GITHUB_REPOSITORY: ${{ github.repository }}
+        run: node tooling/ci/record-deployment.mjs "${APP}-android-play" --mode dry-run
+
   nikatru-ran:
     name: Fail this run if it ran nothing (generated)
-    needs: [gate, dry-run, submit, promote]
+    needs: [gate, dry-run, submit, promote, rehearse]
     if: "!cancelled()"
     runs-on: ubuntu-24.04
     defaults:
@@ -1122,7 +1232,7 @@ jobs:
       - name: Fail when every job of this run was skipped (generated)
         shell: bash
         env:
-          NIKATRU_RESULTS: gate=${{ needs.gate.result }} dry-run=${{ needs.dry-run.result }} submit=${{ needs.submit.result }} promote=${{ needs.promote.result }}
+          NIKATRU_RESULTS: gate=${{ needs.gate.result }} dry-run=${{ needs.dry-run.result }} submit=${{ needs.submit.result }} promote=${{ needs.promote.result }} rehearse=${{ needs.rehearse.result }}
         run: |
           for r in $NIKATRU_RESULTS; do
             if [ "${r#*=}" != skipped ]; then echo "ran: $NIKATRU_RESULTS"; exit 0; fi

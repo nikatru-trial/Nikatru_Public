@@ -5,7 +5,7 @@ env:
 
 name: "Store submit: Microsoft Store"
 
-run-name: "Store submit: Microsoft Store · ${{ inputs.app }}${{ inputs.confirm == 'SUBMIT-TO-MICROSOFT-STORE' && ' · SUBMIT' || inputs.promote_confirm == 'ROLLOUT-MICROSOFT-STORE' && ' · PROMOTE' || ' · dry run' }}${{ inputs.rollout_percentage && inputs.confirm == 'SUBMIT-TO-MICROSOFT-STORE' && format(' · rollout {0}%', inputs.rollout_percentage) || '' }}${{ inputs.promote && inputs.promote != 'none' && format(' · promote {0}', inputs.promote) || '' }}${{ inputs.worker_slot && format(' [worker slot {0}]', inputs.worker_slot) || '' }}"
+run-name: "Store submit: Microsoft Store · ${{ inputs.app }}${{ inputs.confirm == 'SUBMIT-TO-MICROSOFT-STORE' && ' · SUBMIT' || inputs.promote_confirm == 'ROLLOUT-MICROSOFT-STORE' && ' · PROMOTE' || ' · dry run' }}${{ inputs.rollout_percentage && inputs.confirm == 'SUBMIT-TO-MICROSOFT-STORE' && format(' · rollout {0}%', inputs.rollout_percentage) || '' }}${{ inputs.promote && inputs.promote != 'none' && format(' · promote {0}', inputs.promote) || '' }}${{ inputs.release_tag && format(' · tag {0}', inputs.release_tag) || '' }}${{ inputs.worker_slot && format(' [worker slot {0}]', inputs.worker_slot) || '' }}"
 
 on:
   workflow_dispatch:
@@ -41,6 +41,11 @@ on:
           - halt
       promote_confirm:
         description: 'Type ROLLOUT-MICROSOFT-STORE to run the promote job. Refused in the same dispatch as a submission. Anything else moves nothing.'
+        required: false
+        default: ''
+        type: string
+      release_tag:
+        description: 'The release tag whose bytes the store receives, e.g. <app>-v1.2.3. Empty ships the dry-run job''s bytes as the named fallback (a warning says so); ignored by the dry run.'
         required: false
         default: ''
         type: string
@@ -483,6 +488,7 @@ jobs:
         shell: node ../.nikatru-shell/quiet-step.mjs --name submit-windows-store.build-arm64.9 --default-shell {0}
         run: node tooling/ci/install-pinned-tool.mjs glitchtip-cli --out "$env:RUNNER_TEMP"
       - name: Upload the native debug symbols to GlitchTip
+        timeout-minutes: 12
         env:
           SENTRY_AUTH_TOKEN: ${{ secrets.GLITCHTIP_TOKEN }}
           GLITCHTIP_DSN: ${{ secrets.GLITCHTIP_DSN }}
@@ -755,6 +761,7 @@ jobs:
         shell: node ../.nikatru-shell/quiet-step.mjs --name submit-windows-store.dry-run.9 --default-shell {0}
         run: node tooling/ci/install-pinned-tool.mjs glitchtip-cli --out "$env:RUNNER_TEMP"
       - name: Upload the native debug symbols to GlitchTip
+        timeout-minutes: 12
         env:
           SENTRY_AUTH_TOKEN: ${{ secrets.GLITCHTIP_TOKEN }}
           GLITCHTIP_DSN: ${{ secrets.GLITCHTIP_DSN }}
@@ -1215,12 +1222,17 @@ jobs:
           GITHUB_REPOSITORY: ${{ github.repository }}
           CONFIRM: ${{ inputs.confirm }}
           ROLLOUT_PERCENTAGE: ${{ inputs.rollout_percentage }}
+          RELEASE_TAG: ${{ inputs.release_tag }}
+          GH_TOKEN: ${{ github.token }}
+          CLOUDFLARE_ACCOUNT_ID: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
+          R2_RELEASE_ACCESS_KEY_ID: ${{ secrets.R2_RELEASE_ACCESS_KEY_ID }}
+          R2_RELEASE_SECRET_ACCESS_KEY: ${{ secrets.R2_RELEASE_SECRET_ACCESS_KEY }}
         run: |
           if ($env:GITHUB_ACTIONS -ne 'true' -or [string]::IsNullOrWhiteSpace($env:GITHUB_REPOSITORY)) {
             Write-Error 'FAIL a Microsoft Store submission runs only inside GitHub Actions (GITHUB_ACTIONS=true and GITHUB_REPOSITORY set). The publish gate is the store-publish environment, whose approval exists nowhere else.'
             exit 1
           }
-          node tooling/release/submit-windows-store.mjs --submit --app "${env:APP}" --confirm "$env:CONFIRM" --rollout-percentage "$env:ROLLOUT_PERCENTAGE"
+          node tooling/release/submit-windows-store.mjs --submit --app "${env:APP}" --confirm "$env:CONFIRM" --rollout-percentage "$env:ROLLOUT_PERCENTAGE" --release-tag "$env:RELEASE_TAG"
           exit $LASTEXITCODE
       - name: Record the submission in the [10]D-9 ledger
         if: always() && steps.submit.outcome == 'success'

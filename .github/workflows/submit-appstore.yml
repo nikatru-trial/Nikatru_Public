@@ -5,7 +5,7 @@ env:
 
 name: "Store submit: Apple App Store"
 
-run-name: "Store submit: Apple App Store · ${{ inputs.app }} · ${{ inputs.confirm_ios }} · ${{ inputs.confirm_macos }}${{ inputs.worker_slot && format(' [worker slot {0}]', inputs.worker_slot) || '' }}"
+run-name: "Store submit: Apple App Store · ${{ inputs.app }} · ${{ inputs.confirm_ios }} · ${{ inputs.confirm_macos }}${{ inputs.release_tag && format(' · tag {0}', inputs.release_tag) || '' }}${{ inputs.worker_slot && format(' [worker slot {0}]', inputs.worker_slot) || '' }}"
 
 on:
   workflow_dispatch:
@@ -26,6 +26,11 @@ on:
         type: string
       listing_url:
         description: 'The App Store listing the upload is recorded against, https://apps.apple.com/app/id<the app.yaml recordId>. Required for an upload; ignored by the dry run.'
+        required: false
+        default: ''
+        type: string
+      release_tag:
+        description: 'The release tag whose bytes the store receives, e.g. <app>-v1.2.3. Empty ships the dry-run job''s bytes as the named fallback (a warning says so); ignored by the dry run.'
         required: false
         default: ''
         type: string
@@ -397,6 +402,8 @@ jobs:
           APPLE_PROVISIONING_PROFILES_BASE64: ${{ secrets.APPLE_PROVISIONING_PROFILES_BASE64 }}
           APPLE_TEAM_ID: ${{ secrets.APPLE_TEAM_ID }}
           APPLE_INSTALLER_CERT_P12_BASE64: ${{ secrets.APPLE_INSTALLER_CERT_P12_BASE64 }}
+          APPLE_PROVISIONING_PROFILES_WIDGET_BASE64: ${{ secrets.APPLE_PROVISIONING_PROFILES_WIDGET_BASE64 }}
+          APPLE_PROVISIONING_PROFILES_SHARE_BASE64: ${{ secrets.APPLE_PROVISIONING_PROFILES_SHARE_BASE64 }}
         run: |
           NIKATRU_QUIET="$(mktemp "${RUNNER_TEMP:-/tmp}/nikatru-step.XXXXXX")"
           cat > "$NIKATRU_QUIET" <<'NIKATRU_QUIET_EOF'
@@ -424,19 +431,18 @@ jobs:
           set -euo pipefail
           {
             echo ""
-            echo "CODE_SIGN_STYLE = Manual"
             echo "DEVELOPMENT_TEAM = ${APPLE_TEAM_ID}"
             echo "CODE_SIGN_IDENTITY = ${APPLE_DIST_IDENTITY}"
             echo "CODE_SIGN_IDENTITY[sdk=iphoneos*] = ${APPLE_DIST_IDENTITY}"
-            echo "PROVISIONING_PROFILE_SPECIFIER = ${APPLE_IOS_PROFILE_NAME}"
           } >> ios/Flutter/Release.xcconfig
           {
             echo ""
-            echo "CODE_SIGN_STYLE = Manual"
             echo "DEVELOPMENT_TEAM = ${APPLE_TEAM_ID}"
             echo "CODE_SIGN_IDENTITY = ${APPLE_DIST_IDENTITY}"
-            echo "PROVISIONING_PROFILE_SPECIFIER = ${APPLE_MACOS_PROFILE_NAME}"
           } >> macos/Runner/Configs/Release.xcconfig
+          BUNDLE_ID="$(node -p "require('$GITHUB_WORKSPACE/tooling/apple-provisioning.json').apps[process.argv[1]].bundleId" "$APP")"
+          node "$GITHUB_WORKSPACE/tooling/ci/apple-target-signing.mjs" --project ios/Runner.xcodeproj/project.pbxproj --platform ios --app-bundle-id "$BUNDLE_ID"
+          node "$GITHUB_WORKSPACE/tooling/ci/apple-target-signing.mjs" --project macos/Runner.xcodeproj/project.pbxproj --platform macos --app-bundle-id "$BUNDLE_ID"
           NIKATRU_QUIET_EOF
           NIKATRU_SHELL="${BASH:-bash}"; if command -v cygpath >/dev/null 2>&1; then NIKATRU_SHELL="$(cygpath -w "$NIKATRU_SHELL")"; fi
           node "$GITHUB_WORKSPACE/../.nikatru-shell/quiet-step.mjs" --name submit-appstore.dry-run.10 -- "$NIKATRU_SHELL" -e "$NIKATRU_QUIET"
@@ -566,6 +572,7 @@ jobs:
           NIKATRU_SHELL="${BASH:-bash}"; if command -v cygpath >/dev/null 2>&1; then NIKATRU_SHELL="$(cygpath -w "$NIKATRU_SHELL")"; fi
           node "$GITHUB_WORKSPACE/../.nikatru-shell/quiet-step.mjs" --name submit-appstore.dry-run.18 -- "$NIKATRU_SHELL" -e "$NIKATRU_QUIET"
       - name: Upload the native debug symbols to GlitchTip
+        timeout-minutes: 12
         env:
           SENTRY_AUTH_TOKEN: ${{ secrets.GLITCHTIP_TOKEN }}
           GLITCHTIP_DSN: ${{ secrets.GLITCHTIP_DSN }}
@@ -968,6 +975,8 @@ jobs:
           APPLE_PROVISIONING_PROFILES_BASE64: ${{ secrets.APPLE_PROVISIONING_PROFILES_BASE64 }}
           APPLE_TEAM_ID: ${{ secrets.APPLE_TEAM_ID }}
           APPLE_INSTALLER_CERT_P12_BASE64: ${{ secrets.APPLE_INSTALLER_CERT_P12_BASE64 }}
+          APPLE_PROVISIONING_PROFILES_WIDGET_BASE64: ${{ secrets.APPLE_PROVISIONING_PROFILES_WIDGET_BASE64 }}
+          APPLE_PROVISIONING_PROFILES_SHARE_BASE64: ${{ secrets.APPLE_PROVISIONING_PROFILES_SHARE_BASE64 }}
         run: node tooling/ci/apple-signing.mjs --app "$APP" --channel ios-appstore --channel macos-appstore
       - name: Name clearance holds for ios-appstore (owner HELD or PROVEN-FREE)
         run: node tooling/ci/assert-name-clearance.mjs --for-submission=ios-appstore
@@ -1144,10 +1153,15 @@ jobs:
           SHORT_VERSION: ${{ needs.dry-run.outputs.short_version }}
           BUNDLE_VERSION: ${{ needs.dry-run.outputs.bundle_version }}
           LISTING_URL: ${{ inputs.listing_url }}
+          RELEASE_TAG: ${{ inputs.release_tag }}
+          GH_TOKEN: ${{ github.token }}
+          CLOUDFLARE_ACCOUNT_ID: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
+          R2_RELEASE_ACCESS_KEY_ID: ${{ secrets.R2_RELEASE_ACCESS_KEY_ID }}
+          R2_RELEASE_SECRET_ACCESS_KEY: ${{ secrets.R2_RELEASE_SECRET_ACCESS_KEY }}
         run: >
           node tooling/release/submit-appstore.mjs --submit --channel ios-appstore --app "$APP"
           --confirm "$CONFIRM" --bundle-short-version "$SHORT_VERSION" --bundle-version "$BUNDLE_VERSION"
-          --listing-url "$LISTING_URL"
+          --listing-url "$LISTING_URL" --release-tag "$RELEASE_TAG"
       - name: Upload the macOS build to App Store Connect (TestFlight processing; never submitted for review)
         id: upload_macos
         if: (github.event.client_payload.event || github.event_name) == 'workflow_dispatch' && inputs.confirm_macos == 'UPLOAD-MACOS-TO-TESTFLIGHT'
@@ -1161,10 +1175,15 @@ jobs:
           SHORT_VERSION: ${{ needs.dry-run.outputs.short_version }}
           BUNDLE_VERSION: ${{ needs.dry-run.outputs.bundle_version }}
           LISTING_URL: ${{ inputs.listing_url }}
+          RELEASE_TAG: ${{ inputs.release_tag }}
+          GH_TOKEN: ${{ github.token }}
+          CLOUDFLARE_ACCOUNT_ID: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
+          R2_RELEASE_ACCESS_KEY_ID: ${{ secrets.R2_RELEASE_ACCESS_KEY_ID }}
+          R2_RELEASE_SECRET_ACCESS_KEY: ${{ secrets.R2_RELEASE_SECRET_ACCESS_KEY }}
         run: >
           node tooling/release/submit-appstore.mjs --submit --channel macos-appstore --app "$APP"
           --confirm "$CONFIRM" --bundle-short-version "$SHORT_VERSION" --bundle-version "$BUNDLE_VERSION"
-          --listing-url "$LISTING_URL"
+          --listing-url "$LISTING_URL" --release-tag "$RELEASE_TAG"
       - name: Record the iOS upload in the [10]D-9 ledger
         if: always() && steps.upload_ios.outcome == 'success'
         env:

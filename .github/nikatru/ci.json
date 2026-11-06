@@ -56,6 +56,13 @@
       ]
     },
     {
+      "job": "as-if-main",
+      "context": "ci/as-if-main",
+      "members": [
+        "ci.as-if-main."
+      ]
+    },
+    {
       "job": "extensions",
       "context": "ci/extensions",
       "members": [

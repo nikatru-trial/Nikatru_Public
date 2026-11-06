@@ -5,7 +5,7 @@ env:
 
 name: Review crawl
 
-run-name: "Review crawl${{ inputs.target && format(' · {0}', inputs.target) || '' }}${{ inputs.phase && format(' · phase {0}', inputs.phase) || '' }}${{ inputs.matrix && format(' · matrix {0}', inputs.matrix) || '' }}${{ inputs.worker_slot && format(' [worker slot {0}]', inputs.worker_slot) || '' }}${{ inputs.private_pr && format(' — branch proof {0} (PR #{1})', inputs.private_ref, inputs.private_pr) || '' }}"
+run-name: "Review crawl${{ inputs.target && format(' · {0}', inputs.target) || '' }}${{ inputs.phase && format(' · phase {0}', inputs.phase) || '' }}${{ inputs.matrix && format(' · matrix {0}', inputs.matrix) || '' }}${{ inputs.cells && ' · named cells' || '' }}${{ inputs.worker_slot && format(' [worker slot {0}]', inputs.worker_slot) || '' }}${{ inputs.private_pr && format(' — branch proof {0} (PR #{1})', inputs.private_ref, inputs.private_pr) || '' }}"
 
 on:
   workflow_dispatch:
@@ -23,6 +23,10 @@ on:
         description: 'all | smoke | viewport:scheme:locale,... (viewport desktop|phone|tablet, scheme light|dark, locale en|<a served code>|long|rtl|posix; * for any)'
         type: string
         default: smoke
+      cells:
+        description: 'A hand run of named cells only: comma-separated cell ids as the job titles print them (Demo · <id>, Public live · <id>), from this week''s weekly plan. phase and matrix are not read. Empty plans as usual.'
+        type: string
+        default: ''
       private_pr:
         description: 'A private_ref branch run only: the number of the private pull request whose head that branch is (its CI run is the gate). Empty for main.'
         type: string
@@ -229,12 +233,13 @@ jobs:
           TARGET: ${{ inputs.target }}
           PHASE: ${{ inputs.phase }}
           MATRIX: ${{ inputs.worker_slot == '' && inputs.matrix || '' }}
+          CELLS: ${{ inputs.worker_slot == '' && inputs.cells || '' }}
           STATUS_PAGE_LIVE: ${{ vars.STATUS_PAGE_LIVE }}
         run: |
           NIKATRU_QUIET="$(mktemp "${RUNNER_TEMP:-/tmp}/nikatru-step.XXXXXX")"
           cat > "$NIKATRU_QUIET" <<'NIKATRU_QUIET_EOF'
           set -euo pipefail
-          node tooling/e2e/review-crawl/plan.mjs --event "$EVENT" --target "${TARGET:-}" --phase "${PHASE:-all}" --matrix "${MATRIX:-}" --live false >> "$GITHUB_OUTPUT"
+          node tooling/e2e/review-crawl/plan.mjs --event "$EVENT" --target "${TARGET:-}" --phase "${PHASE:-all}" --matrix "${MATRIX:-}" --cells "${CELLS:-}" --live false >> "$GITHUB_OUTPUT"
           NIKATRU_QUIET_EOF
           NIKATRU_SHELL="${BASH:-bash}"; if command -v cygpath >/dev/null 2>&1; then NIKATRU_SHELL="$(cygpath -w "$NIKATRU_SHELL")"; fi
           node "$GITHUB_WORKSPACE/../.nikatru-shell/quiet-step.mjs" --name review-crawl.plan.3 -- "$NIKATRU_SHELL" -e "$NIKATRU_QUIET"
@@ -688,7 +693,7 @@ jobs:
   web-engines:
     name: Web engines · ${{ matrix.app }} · s${{ matrix.shard }}
     needs: [nikatru-pin, plan, build-demo]
-    if: needs.plan.outputs.apps != '[]' && needs.build-demo.result == 'success' && (github.event.client_payload.ref || inputs.private_ref || 'refs/heads/main') == 'refs/heads/main'
+    if: needs.plan.outputs.apps != '[]' && needs.build-demo.result == 'success' && inputs.cells == '' && (github.event.client_payload.ref || inputs.private_ref || 'refs/heads/main') == 'refs/heads/main'
     runs-on: ubuntu-24.04
     timeout-minutes: 45
     permissions:
@@ -896,7 +901,7 @@ jobs:
       id-token: write
     strategy:
       fail-fast: false
-      max-parallel: 16
+      max-parallel: 39
       matrix:
         cell: ${{ fromJSON(needs.plan.outputs.demo) }}
     steps:
@@ -1296,7 +1301,7 @@ jobs:
       id-token: write
     strategy:
       fail-fast: false
-      max-parallel: 4
+      max-parallel: 8
       matrix:
         cell: ${{ fromJSON(needs.plan.outputs.public) }}
     steps:

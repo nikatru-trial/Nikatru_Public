@@ -1,0 +1,61 @@
+{
+  "_generated": "by tooling/ci/gen-public-shell.mjs; read by report.py beside it. Do not edit.",
+  "bridgeUrl": "https://gh-bridge.nikatru.workers.dev/report",
+  "postTimeoutS": 30,
+  "prefix": "nikatru-detail-",
+  "slots": 8,
+  "sendBudgetS": 360,
+  "gate": {
+    "job": "verdict",
+    "context": "new-user-e2e",
+    "members": [
+      "new-user-e2e.verdict."
+    ]
+  },
+  "lanes": [
+    {
+      "job": "apps",
+      "context": "new-user-e2e/apps",
+      "members": [
+        "new-user-e2e.apps."
+      ]
+    },
+    {
+      "job": "prepare",
+      "context": "new-user-e2e/prepare",
+      "members": [
+        "new-user-e2e.prepare."
+      ]
+    },
+    {
+      "job": "account",
+      "context": "new-user-e2e/account",
+      "members": [
+        "new-user-e2e.account."
+      ]
+    },
+    {
+      "job": "reminder-digest",
+      "context": "new-user-e2e/reminder-digest",
+      "members": [
+        "new-user-e2e.reminder-digest."
+      ]
+    },
+    {
+      "job": "first-sign-in",
+      "context": "new-user-e2e/first-sign-in",
+      "members": [
+        "new-user-e2e.first-sign-in."
+      ]
+    },
+    {
+      "job": "email-sign-up",
+      "context": "new-user-e2e/email-sign-up",
+      "members": [
+        "new-user-e2e.email-sign-up."
+      ]
+    }
+  ],
+  "leadDispatch": true,
+  "dispatchDetailUrl": "https://gh-bridge.nikatru.workers.dev/dispatch-detail"
+}

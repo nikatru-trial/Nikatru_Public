@@ -5,7 +5,7 @@ env:
 
 name: Ops watch
 
-run-name: "Ops watch${{ inputs.failure_ledger && ' · failure ledger' || '' }}${{ inputs.renovate_backlog && ' · Renovate backlog' || '' }}${{ inputs.code_scanning_age && ' · code-scanning age' || '' }}${{ inputs.tech_currency && ' · tech currency' || '' }}${{ inputs.dependency_advisories && ' · dependency advisories' || '' }}${{ inputs.self_review && ' · self-review' || '' }}${{ inputs.unattended && ' · unattended' || '' }}${{ inputs.digest && ' · digest' || '' }}${{ inputs.worker_slot && format(' [worker slot {0}]', inputs.worker_slot) || '' }}"
+run-name: "Ops watch${{ inputs.failure_ledger && ' · failure ledger' || '' }}${{ inputs.renovate_backlog && ' · Renovate backlog' || '' }}${{ inputs.code_scanning_age && ' · code-scanning age' || '' }}${{ inputs.tech_currency && ' · tech currency' || '' }}${{ inputs.dependency_advisories && ' · dependency advisories' || '' }}${{ inputs.self_review && ' · self-review' || '' }}${{ inputs.unattended && ' · unattended' || '' }}${{ inputs.digest && ' · digest' || '' }}${{ inputs.prune_trains && ' · prune trains' || '' }}${{ inputs.worker_slot && format(' [worker slot {0}]', inputs.worker_slot) || '' }}"
 
 on:
   workflow_dispatch:
@@ -47,6 +47,10 @@ on:
         required: false
         default: ''
         type: string
+      prune_trains:
+        description: 'The owner only (R49): also DELETE the train/* branches the bridge judges merged (their pull requests and bodies stay). Off on every other run.'
+        type: boolean
+        default: false
 
 permissions:
   contents: read
@@ -238,6 +242,7 @@ jobs:
           CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_READ_TOKEN }}
           CLOUDFLARE_ACCOUNT_ID: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
           OPS_HOST_RUN_NEEDS: ${{ toJSON(needs) }}
+          NIKATRU_DUTY_LAST_GREEN_OUT: ${{ runner.temp }}/duty-last-green.json
           BRIDGE_READ_SECRET: ${{ (github.event.client_payload.event || github.event_name) != 'pull_request' && secrets.BRIDGE_READ_SECRET || '' }}
           BRIDGE_OPS_SECRET: ${{ (github.event.client_payload.event || github.event_name) != 'pull_request' && secrets.BRIDGE_OPS_SECRET || '' }}
           NIKATRU_BRIDGE_OPS_URL: ${{ (github.event.client_payload.event || github.event_name) != 'pull_request' && 'https://gh-bridge.nikatru.workers.dev/ops' || '' }}
@@ -248,6 +253,49 @@ jobs:
           NIKATRU_QUIET_EOF
           NIKATRU_SHELL="${BASH:-bash}"; if command -v cygpath >/dev/null 2>&1; then NIKATRU_SHELL="$(cygpath -w "$NIKATRU_SHELL")"; fi
           node "$GITHUB_WORKSPACE/../.nikatru-shell/quiet-step.mjs" --name ops-watch.heartbeats.3 -- "$NIKATRU_SHELL" -e "$NIKATRU_QUIET"
+      - name: Stamp each duty's newer green run on its register row
+        id: duty-last-green
+        if: ${{ !cancelled() && (github.event.client_payload.ref || 'refs/heads/main') == 'refs/heads/main' }}
+        env:
+          OUT: ${{ runner.temp }}/duty-last-green.json
+        run: |
+          NIKATRU_QUIET="$(mktemp "${RUNNER_TEMP:-/tmp}/nikatru-step.XXXXXX")"
+          cat > "$NIKATRU_QUIET" <<'NIKATRU_QUIET_EOF'
+          if [ ! -s "$OUT" ]; then
+            echo "::notice title=No duty lastGreen handed on::the register step wrote no history this run; nothing to write"
+            exit 0
+          fi
+          node tooling/ops/duty-last-green.mjs --from "$OUT"
+          NIKATRU_QUIET_EOF
+          NIKATRU_SHELL="${BASH:-bash}"; if command -v cygpath >/dev/null 2>&1; then NIKATRU_SHELL="$(cygpath -w "$NIKATRU_SHELL")"; fi
+          node "$GITHUB_WORKSPACE/../.nikatru-shell/quiet-step.mjs" --name ops-watch.heartbeats.4 -- "$NIKATRU_SHELL" -e "$NIKATRU_QUIET"
+      - name: Propose the duties' last green into main (pull request)
+        if: ${{ !cancelled() && (github.event.client_payload.ref || 'refs/heads/main') == 'refs/heads/main' && steps.duty-last-green.outcome == 'success' }}
+        env:
+          NIKATRU_PROPOSE_PATHS: tooling/ops/register.json
+          NIKATRU_PROPOSE_BRANCH: chore/duty-last-green-${{ github.run_id }}
+          NIKATRU_PROPOSE_BASE: main
+          NIKATRU_PROPOSE_TITLE: 'ops: the duties last green runs, written by ops-watch'
+          NIKATRU_PROPOSE_MESSAGE: |
+            ops: the duties' last green runs, written by ops-watch
+
+            Machine-written by ops-watch.yml run ${{ github.run_id }}, by tooling/ops/duty-last-green.mjs:
+            lastGreen of every duty row whose run history holds a newer green run.
+          NIKATRU_PROPOSE_BODY: |
+            Rows: none - machine-written lastGreen of the duty rows; checkDutyLastGreen grades it.
+
+            Written by `ops-watch.yml` run `${{ github.run_id }}` from the run history its register step read (`tooling/ops/duty-last-green.mjs`). Merge it into main once ci-gate is green.
+          NIKATRU_PROPOSE_ARTIFACT: proposal-ops-watch.heartbeats
+          BRIDGE_ARTIFACT_SECRET: ${{ secrets.BRIDGE_ARTIFACT_SECRET }}
+          NIKATRU_BRIDGE_ARTIFACT_URL: https://gh-bridge.nikatru.workers.dev/artifact
+          NIKATRU_BRIDGE_PROPOSE_URL: https://gh-bridge.nikatru.workers.dev/propose
+        run: |
+          NIKATRU_QUIET="$(mktemp "${RUNNER_TEMP:-/tmp}/nikatru-step.XXXXXX")"
+          cat > "$NIKATRU_QUIET" <<'NIKATRU_QUIET_EOF'
+          node tooling/ops/bridge-propose.mjs
+          NIKATRU_QUIET_EOF
+          NIKATRU_SHELL="${BASH:-bash}"; if command -v cygpath >/dev/null 2>&1; then NIKATRU_SHELL="$(cygpath -w "$NIKATRU_SHELL")"; fi
+          node "$GITHUB_WORKSPACE/../.nikatru-shell/quiet-step.mjs" --name ops-watch.heartbeats.5 -- "$NIKATRU_SHELL" -e "$NIKATRU_QUIET"
       - name: Read the heartbeat table from OUTSIDE Cloudflare
         if: ${{ !cancelled() }}
         env:
@@ -270,7 +318,7 @@ jobs:
           exit "$code"
           NIKATRU_QUIET_EOF
           NIKATRU_SHELL="${BASH:-bash}"; if command -v cygpath >/dev/null 2>&1; then NIKATRU_SHELL="$(cygpath -w "$NIKATRU_SHELL")"; fi
-          node "$GITHUB_WORKSPACE/../.nikatru-shell/quiet-step.mjs" --name ops-watch.heartbeats.4 -- "$NIKATRU_SHELL" -e "$NIKATRU_QUIET"
+          node "$GITHUB_WORKSPACE/../.nikatru-shell/quiet-step.mjs" --name ops-watch.heartbeats.6 -- "$NIKATRU_SHELL" -e "$NIKATRU_QUIET"
       - name: Live D1 still runs every statement the Workers send it
         if: ${{ !cancelled() }}
         env:
@@ -294,7 +342,7 @@ jobs:
           exit "$code"
           NIKATRU_QUIET_EOF
           NIKATRU_SHELL="${BASH:-bash}"; if command -v cygpath >/dev/null 2>&1; then NIKATRU_SHELL="$(cygpath -w "$NIKATRU_SHELL")"; fi
-          node "$GITHUB_WORKSPACE/../.nikatru-shell/quiet-step.mjs" --name ops-watch.heartbeats.5 -- "$NIKATRU_SHELL" -e "$NIKATRU_QUIET"
+          node "$GITHUB_WORKSPACE/../.nikatru-shell/quiet-step.mjs" --name ops-watch.heartbeats.7 -- "$NIKATRU_SHELL" -e "$NIKATRU_QUIET"
       - name: Judge whether the analytics rail's silence is a FAULT
         if: ${{ !cancelled() }}
         env:
@@ -318,7 +366,7 @@ jobs:
           exit "$code"
           NIKATRU_QUIET_EOF
           NIKATRU_SHELL="${BASH:-bash}"; if command -v cygpath >/dev/null 2>&1; then NIKATRU_SHELL="$(cygpath -w "$NIKATRU_SHELL")"; fi
-          node "$GITHUB_WORKSPACE/../.nikatru-shell/quiet-step.mjs" --name ops-watch.heartbeats.6 -- "$NIKATRU_SHELL" -e "$NIKATRU_QUIET"
+          node "$GITHUB_WORKSPACE/../.nikatru-shell/quiet-step.mjs" --name ops-watch.heartbeats.8 -- "$NIKATRU_SHELL" -e "$NIKATRU_QUIET"
       - name: Each box's live config is the vendored config
         if: ${{ !cancelled() }}
         env:
@@ -340,7 +388,7 @@ jobs:
           exit "$code"
           NIKATRU_QUIET_EOF
           NIKATRU_SHELL="${BASH:-bash}"; if command -v cygpath >/dev/null 2>&1; then NIKATRU_SHELL="$(cygpath -w "$NIKATRU_SHELL")"; fi
-          node "$GITHUB_WORKSPACE/../.nikatru-shell/quiet-step.mjs" --name ops-watch.heartbeats.7 -- "$NIKATRU_SHELL" -e "$NIKATRU_QUIET"
+          node "$GITHUB_WORKSPACE/../.nikatru-shell/quiet-step.mjs" --name ops-watch.heartbeats.9 -- "$NIKATRU_SHELL" -e "$NIKATRU_QUIET"
       - name: Every name-clearance record is inside its 30-day ceiling
         if: ${{ !cancelled() }}
         run: |
@@ -358,7 +406,7 @@ jobs:
           exit "$code"
           NIKATRU_QUIET_EOF
           NIKATRU_SHELL="${BASH:-bash}"; if command -v cygpath >/dev/null 2>&1; then NIKATRU_SHELL="$(cygpath -w "$NIKATRU_SHELL")"; fi
-          node "$GITHUB_WORKSPACE/../.nikatru-shell/quiet-step.mjs" --name ops-watch.heartbeats.8 -- "$NIKATRU_SHELL" -e "$NIKATRU_QUIET"
+          node "$GITHUB_WORKSPACE/../.nikatru-shell/quiet-step.mjs" --name ops-watch.heartbeats.10 -- "$NIKATRU_SHELL" -e "$NIKATRU_QUIET"
       - name: Is the daily OSV scan of main due on this run
         id: osvdue
         if: ${{ !cancelled() && ((github.event.client_payload.event || github.event_name) == 'schedule' || inputs.worker_slot != '') }}
@@ -371,7 +419,7 @@ jobs:
           node tooling/ops/osv-scan-due.mjs
           NIKATRU_QUIET_EOF
           NIKATRU_SHELL="${BASH:-bash}"; if command -v cygpath >/dev/null 2>&1; then NIKATRU_SHELL="$(cygpath -w "$NIKATRU_SHELL")"; fi
-          node "$GITHUB_WORKSPACE/../.nikatru-shell/quiet-step.mjs" --name ops-watch.heartbeats.9 -- "$NIKATRU_SHELL" -e "$NIKATRU_QUIET"
+          node "$GITHUB_WORKSPACE/../.nikatru-shell/quiet-step.mjs" --name ops-watch.heartbeats.11 -- "$NIKATRU_SHELL" -e "$NIKATRU_QUIET"
       - name: Install OSV-Scanner (version and digest from tooling/versions.json)
         id: osv
         if: ${{ !cancelled() && (steps.osvdue.outputs.due == 'true' || inputs.dependency_advisories) }}
@@ -382,7 +430,7 @@ jobs:
           node tooling/ci/install-pinned-tool.mjs osv-scanner --out "${RUNNER_TEMP}"
           NIKATRU_QUIET_EOF
           NIKATRU_SHELL="${BASH:-bash}"; if command -v cygpath >/dev/null 2>&1; then NIKATRU_SHELL="$(cygpath -w "$NIKATRU_SHELL")"; fi
-          node "$GITHUB_WORKSPACE/../.nikatru-shell/quiet-step.mjs" --name ops-watch.heartbeats.10 -- "$NIKATRU_SHELL" -e "$NIKATRU_QUIET"
+          node "$GITHUB_WORKSPACE/../.nikatru-shell/quiet-step.mjs" --name ops-watch.heartbeats.12 -- "$NIKATRU_SHELL" -e "$NIKATRU_QUIET"
       - name: Known-vulnerable dependencies on main (canary, floor, then the tree)
         if: ${{ !cancelled() && steps.osv.outcome == 'success' }}
         timeout-minutes: 5
@@ -401,7 +449,7 @@ jobs:
           exit "$code"
           NIKATRU_QUIET_EOF
           NIKATRU_SHELL="${BASH:-bash}"; if command -v cygpath >/dev/null 2>&1; then NIKATRU_SHELL="$(cygpath -w "$NIKATRU_SHELL")"; fi
-          node "$GITHUB_WORKSPACE/../.nikatru-shell/quiet-step.mjs" --name ops-watch.heartbeats.11 -- "$NIKATRU_SHELL" -e "$NIKATRU_QUIET"
+          node "$GITHUB_WORKSPACE/../.nikatru-shell/quiet-step.mjs" --name ops-watch.heartbeats.13 -- "$NIKATRU_SHELL" -e "$NIKATRU_QUIET"
       - name: Each box runs what its declaration says
         if: ${{ !cancelled() }}
         env:
@@ -423,7 +471,7 @@ jobs:
           exit "$code"
           NIKATRU_QUIET_EOF
           NIKATRU_SHELL="${BASH:-bash}"; if command -v cygpath >/dev/null 2>&1; then NIKATRU_SHELL="$(cygpath -w "$NIKATRU_SHELL")"; fi
-          node "$GITHUB_WORKSPACE/../.nikatru-shell/quiet-step.mjs" --name ops-watch.heartbeats.12 -- "$NIKATRU_SHELL" -e "$NIKATRU_QUIET"
+          node "$GITHUB_WORKSPACE/../.nikatru-shell/quiet-step.mjs" --name ops-watch.heartbeats.14 -- "$NIKATRU_SHELL" -e "$NIKATRU_QUIET"
       - name: No box image is floating, superseded 90 days, or behind a security fix
         if: ${{ !cancelled() }}
         env:
@@ -446,7 +494,7 @@ jobs:
           exit "$code"
           NIKATRU_QUIET_EOF
           NIKATRU_SHELL="${BASH:-bash}"; if command -v cygpath >/dev/null 2>&1; then NIKATRU_SHELL="$(cygpath -w "$NIKATRU_SHELL")"; fi
-          node "$GITHUB_WORKSPACE/../.nikatru-shell/quiet-step.mjs" --name ops-watch.heartbeats.13 -- "$NIKATRU_SHELL" -e "$NIKATRU_QUIET"
+          node "$GITHUB_WORKSPACE/../.nikatru-shell/quiet-step.mjs" --name ops-watch.heartbeats.15 -- "$NIKATRU_SHELL" -e "$NIKATRU_QUIET"
       - name: Every Paddle payout has its e-FIRC inside 30 days
         if: ${{ !cancelled() }}
         run: |
@@ -465,7 +513,7 @@ jobs:
           exit "$code"
           NIKATRU_QUIET_EOF
           NIKATRU_SHELL="${BASH:-bash}"; if command -v cygpath >/dev/null 2>&1; then NIKATRU_SHELL="$(cygpath -w "$NIKATRU_SHELL")"; fi
-          node "$GITHUB_WORKSPACE/../.nikatru-shell/quiet-step.mjs" --name ops-watch.heartbeats.14 -- "$NIKATRU_SHELL" -e "$NIKATRU_QUIET"
+          node "$GITHUB_WORKSPACE/../.nikatru-shell/quiet-step.mjs" --name ops-watch.heartbeats.16 -- "$NIKATRU_SHELL" -e "$NIKATRU_QUIET"
       - name: The DigiLocker audit log is still being written
         if: ${{ !cancelled() }}
         env:
@@ -486,7 +534,7 @@ jobs:
           exit "$code"
           NIKATRU_QUIET_EOF
           NIKATRU_SHELL="${BASH:-bash}"; if command -v cygpath >/dev/null 2>&1; then NIKATRU_SHELL="$(cygpath -w "$NIKATRU_SHELL")"; fi
-          node "$GITHUB_WORKSPACE/../.nikatru-shell/quiet-step.mjs" --name ops-watch.heartbeats.15 -- "$NIKATRU_SHELL" -e "$NIKATRU_QUIET"
+          node "$GITHUB_WORKSPACE/../.nikatru-shell/quiet-step.mjs" --name ops-watch.heartbeats.17 -- "$NIKATRU_SHELL" -e "$NIKATRU_QUIET"
       - name: Every Worker cron slot fired on its own cadence and its newest vouched run is green
         if: ${{ !cancelled() }}
         timeout-minutes: 5
@@ -500,7 +548,7 @@ jobs:
           node tooling/ops/check-schedule-truth.mjs
           NIKATRU_QUIET_EOF
           NIKATRU_SHELL="${BASH:-bash}"; if command -v cygpath >/dev/null 2>&1; then NIKATRU_SHELL="$(cygpath -w "$NIKATRU_SHELL")"; fi
-          node "$GITHUB_WORKSPACE/../.nikatru-shell/quiet-step.mjs" --name ops-watch.heartbeats.16 -- "$NIKATRU_SHELL" -e "$NIKATRU_QUIET"
+          node "$GITHUB_WORKSPACE/../.nikatru-shell/quiet-step.mjs" --name ops-watch.heartbeats.18 -- "$NIKATRU_SHELL" -e "$NIKATRU_QUIET"
       - name: No workflow is red run after run on main without an owner named (red streak)
         if: ${{ !cancelled() }}
         env:
@@ -512,7 +560,7 @@ jobs:
           node tooling/ops/check-red-streak.mjs --advisory
           NIKATRU_QUIET_EOF
           NIKATRU_SHELL="${BASH:-bash}"; if command -v cygpath >/dev/null 2>&1; then NIKATRU_SHELL="$(cygpath -w "$NIKATRU_SHELL")"; fi
-          node "$GITHUB_WORKSPACE/../.nikatru-shell/quiet-step.mjs" --name ops-watch.heartbeats.17 -- "$NIKATRU_SHELL" -e "$NIKATRU_QUIET"
+          node "$GITHUB_WORKSPACE/../.nikatru-shell/quiet-step.mjs" --name ops-watch.heartbeats.19 -- "$NIKATRU_SHELL" -e "$NIKATRU_QUIET"
       - name: A live-user, money, security or monthly workflow red on main pages its owner (red streak, page class)
         if: ${{ !cancelled() }}
         timeout-minutes: 5
@@ -532,7 +580,20 @@ jobs:
           exit "$code"
           NIKATRU_QUIET_EOF
           NIKATRU_SHELL="${BASH:-bash}"; if command -v cygpath >/dev/null 2>&1; then NIKATRU_SHELL="$(cygpath -w "$NIKATRU_SHELL")"; fi
-          node "$GITHUB_WORKSPACE/../.nikatru-shell/quiet-step.mjs" --name ops-watch.heartbeats.18 -- "$NIKATRU_SHELL" -e "$NIKATRU_QUIET"
+          node "$GITHUB_WORKSPACE/../.nikatru-shell/quiet-step.mjs" --name ops-watch.heartbeats.20 -- "$NIKATRU_SHELL" -e "$NIKATRU_QUIET"
+      - name: Main walked the money path in the last 24 h (money walk page)
+        if: ${{ !cancelled() }}
+        timeout-minutes: 5
+        env:
+          GH_TOKEN: ${{ github.token }}
+          NIKATRU_PAGE_OUT: ${{ runner.temp }}/pipeline-pages.md
+        run: |
+          NIKATRU_QUIET="$(mktemp "${RUNNER_TEMP:-/tmp}/nikatru-step.XXXXXX")"
+          cat > "$NIKATRU_QUIET" <<'NIKATRU_QUIET_EOF'
+          node tooling/e2e/money/walked.mjs --main
+          NIKATRU_QUIET_EOF
+          NIKATRU_SHELL="${BASH:-bash}"; if command -v cygpath >/dev/null 2>&1; then NIKATRU_SHELL="$(cygpath -w "$NIKATRU_SHELL")"; fi
+          node "$GITHUB_WORKSPACE/../.nikatru-shell/quiet-step.mjs" --name ops-watch.heartbeats.21 -- "$NIKATRU_SHELL" -e "$NIKATRU_QUIET"
       - name: No date that flips a gate arrives unannounced (deadline register)
         if: ${{ !cancelled() }}
         env:
@@ -543,7 +604,7 @@ jobs:
           node tooling/ci/assert-deadline-register.mjs --warn --advisory
           NIKATRU_QUIET_EOF
           NIKATRU_SHELL="${BASH:-bash}"; if command -v cygpath >/dev/null 2>&1; then NIKATRU_SHELL="$(cygpath -w "$NIKATRU_SHELL")"; fi
-          node "$GITHUB_WORKSPACE/../.nikatru-shell/quiet-step.mjs" --name ops-watch.heartbeats.19 -- "$NIKATRU_SHELL" -e "$NIKATRU_QUIET"
+          node "$GITHUB_WORKSPACE/../.nikatru-shell/quiet-step.mjs" --name ops-watch.heartbeats.22 -- "$NIKATRU_SHELL" -e "$NIKATRU_QUIET"
       - name: No register date expires unseen within 72 h (expiry forecast)
         if: ${{ !cancelled() }}
         env:
@@ -554,7 +615,45 @@ jobs:
           node tooling/ops/expiry-forecast.mjs --advisory
           NIKATRU_QUIET_EOF
           NIKATRU_SHELL="${BASH:-bash}"; if command -v cygpath >/dev/null 2>&1; then NIKATRU_SHELL="$(cygpath -w "$NIKATRU_SHELL")"; fi
-          node "$GITHUB_WORKSPACE/../.nikatru-shell/quiet-step.mjs" --name ops-watch.heartbeats.20 -- "$NIKATRU_SHELL" -e "$NIKATRU_QUIET"
+          node "$GITHUB_WORKSPACE/../.nikatru-shell/quiet-step.mjs" --name ops-watch.heartbeats.23 -- "$NIKATRU_SHELL" -e "$NIKATRU_QUIET"
+      - name: Park expiry (tooling/ci/assert-park-expiry.mjs)
+        if: ${{ !cancelled() }}
+        run: |
+          NIKATRU_QUIET="$(mktemp "${RUNNER_TEMP:-/tmp}/nikatru-step.XXXXXX")"
+          cat > "$NIKATRU_QUIET" <<'NIKATRU_QUIET_EOF'
+          node tooling/ci/assert-park-expiry.mjs
+          NIKATRU_QUIET_EOF
+          NIKATRU_SHELL="${BASH:-bash}"; if command -v cygpath >/dev/null 2>&1; then NIKATRU_SHELL="$(cygpath -w "$NIKATRU_SHELL")"; fi
+          node "$GITHUB_WORKSPACE/../.nikatru-shell/quiet-step.mjs" --name ops-watch.heartbeats.24 -- "$NIKATRU_SHELL" -e "$NIKATRU_QUIET"
+      - name: Dated expiry (tooling/ci/dated-expiry.mjs)
+        if: ${{ !cancelled() }}
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          NIKATRU_QUIET="$(mktemp "${RUNNER_TEMP:-/tmp}/nikatru-step.XXXXXX")"
+          cat > "$NIKATRU_QUIET" <<'NIKATRU_QUIET_EOF'
+          node tooling/ci/dated-expiry.mjs
+          NIKATRU_QUIET_EOF
+          NIKATRU_SHELL="${BASH:-bash}"; if command -v cygpath >/dev/null 2>&1; then NIKATRU_SHELL="$(cygpath -w "$NIKATRU_SHELL")"; fi
+          node "$GITHUB_WORKSPACE/../.nikatru-shell/quiet-step.mjs" --name ops-watch.heartbeats.25 -- "$NIKATRU_SHELL" -e "$NIKATRU_QUIET"
+      - name: Box A tools register (tooling/ci/assert-boxa-tools.mjs)
+        if: ${{ !cancelled() }}
+        run: |
+          NIKATRU_QUIET="$(mktemp "${RUNNER_TEMP:-/tmp}/nikatru-step.XXXXXX")"
+          cat > "$NIKATRU_QUIET" <<'NIKATRU_QUIET_EOF'
+          node tooling/ci/assert-boxa-tools.mjs
+          NIKATRU_QUIET_EOF
+          NIKATRU_SHELL="${BASH:-bash}"; if command -v cygpath >/dev/null 2>&1; then NIKATRU_SHELL="$(cygpath -w "$NIKATRU_SHELL")"; fi
+          node "$GITHUB_WORKSPACE/../.nikatru-shell/quiet-step.mjs" --name ops-watch.heartbeats.26 -- "$NIKATRU_SHELL" -e "$NIKATRU_QUIET"
+      - name: The coverage ratchet is no merge magnet (tooling/ci/assert-coverage-merge-share.mjs)
+        if: ${{ !cancelled() }}
+        run: |
+          NIKATRU_QUIET="$(mktemp "${RUNNER_TEMP:-/tmp}/nikatru-step.XXXXXX")"
+          cat > "$NIKATRU_QUIET" <<'NIKATRU_QUIET_EOF'
+          node tooling/ci/assert-coverage-merge-share.mjs
+          NIKATRU_QUIET_EOF
+          NIKATRU_SHELL="${BASH:-bash}"; if command -v cygpath >/dev/null 2>&1; then NIKATRU_SHELL="$(cygpath -w "$NIKATRU_SHELL")"; fi
+          node "$GITHUB_WORKSPACE/../.nikatru-shell/quiet-step.mjs" --name ops-watch.heartbeats.27 -- "$NIKATRU_SHELL" -e "$NIKATRU_QUIET"
       - name: The store dry runs are fresh
         if: ${{ !cancelled() }}
         timeout-minutes: 6
@@ -567,7 +666,7 @@ jobs:
           node --single-threaded tooling/ci/assert-platform-proof-fresh.mjs --store-lanes
           NIKATRU_QUIET_EOF
           NIKATRU_SHELL="${BASH:-bash}"; if command -v cygpath >/dev/null 2>&1; then NIKATRU_SHELL="$(cygpath -w "$NIKATRU_SHELL")"; fi
-          node "$GITHUB_WORKSPACE/../.nikatru-shell/quiet-step.mjs" --name ops-watch.heartbeats.21 -- "$NIKATRU_SHELL" -e "$NIKATRU_QUIET"
+          node "$GITHUB_WORKSPACE/../.nikatru-shell/quiet-step.mjs" --name ops-watch.heartbeats.28 -- "$NIKATRU_SHELL" -e "$NIKATRU_QUIET"
       - name: No matrix cell runs close to its timeout (p95 against timeout-minutes)
         if: ${{ !cancelled() }}
         env:
@@ -579,7 +678,7 @@ jobs:
           node tooling/ci/assert-timeout-budget.mjs --advisory
           NIKATRU_QUIET_EOF
           NIKATRU_SHELL="${BASH:-bash}"; if command -v cygpath >/dev/null 2>&1; then NIKATRU_SHELL="$(cygpath -w "$NIKATRU_SHELL")"; fi
-          node "$GITHUB_WORKSPACE/../.nikatru-shell/quiet-step.mjs" --name ops-watch.heartbeats.22 -- "$NIKATRU_SHELL" -e "$NIKATRU_QUIET"
+          node "$GITHUB_WORKSPACE/../.nikatru-shell/quiet-step.mjs" --name ops-watch.heartbeats.29 -- "$NIKATRU_SHELL" -e "$NIKATRU_QUIET"
       - name: No CI runner pool is unreachable at main's newest pool-sync
         if: ${{ !cancelled() }}
         env:
@@ -591,7 +690,7 @@ jobs:
           node tooling/ops/check-pool-sync.mjs --advisory
           NIKATRU_QUIET_EOF
           NIKATRU_SHELL="${BASH:-bash}"; if command -v cygpath >/dev/null 2>&1; then NIKATRU_SHELL="$(cygpath -w "$NIKATRU_SHELL")"; fi
-          node "$GITHUB_WORKSPACE/../.nikatru-shell/quiet-step.mjs" --name ops-watch.heartbeats.23 -- "$NIKATRU_SHELL" -e "$NIKATRU_QUIET"
+          node "$GITHUB_WORKSPACE/../.nikatru-shell/quiet-step.mjs" --name ops-watch.heartbeats.30 -- "$NIKATRU_SHELL" -e "$NIKATRU_QUIET"
       - name: File the pipeline watches' warnings against one durable issue
         if: ${{ !cancelled() }}
         env:
@@ -619,7 +718,7 @@ jobs:
           node tooling/ops/ops-issue.mjs --kind pipeline-watch --body-file "$body"
           NIKATRU_QUIET_EOF
           NIKATRU_SHELL="${BASH:-bash}"; if command -v cygpath >/dev/null 2>&1; then NIKATRU_SHELL="$(cygpath -w "$NIKATRU_SHELL")"; fi
-          node "$GITHUB_WORKSPACE/../.nikatru-shell/quiet-step.mjs" --name ops-watch.heartbeats.24 -- "$NIKATRU_SHELL" -e "$NIKATRU_QUIET"
+          node "$GITHUB_WORKSPACE/../.nikatru-shell/quiet-step.mjs" --name ops-watch.heartbeats.31 -- "$NIKATRU_SHELL" -e "$NIKATRU_QUIET"
       - name: Mark this period's weekly readers as run
         if: ${{ !cancelled() && inputs.worker_slot != '' && (needs.status.outputs.mark_weekly == 'true' || needs.status.outputs.mark_twice == 'true') && needs.status.outputs.week != '' }}
         env:
@@ -632,7 +731,7 @@ jobs:
           printf '%s %s %s\n' "$WEEK" "$HALF" "$GITHUB_RUN_ID" > .cache/ops-watch-weekly/marker
           NIKATRU_QUIET_EOF
           NIKATRU_SHELL="${BASH:-bash}"; if command -v cygpath >/dev/null 2>&1; then NIKATRU_SHELL="$(cygpath -w "$NIKATRU_SHELL")"; fi
-          node "$GITHUB_WORKSPACE/../.nikatru-shell/quiet-step.mjs" --name ops-watch.heartbeats.25 -- "$NIKATRU_SHELL" -e "$NIKATRU_QUIET"
+          node "$GITHUB_WORKSPACE/../.nikatru-shell/quiet-step.mjs" --name ops-watch.heartbeats.32 -- "$NIKATRU_SHELL" -e "$NIKATRU_QUIET"
       - name: Save this ISO week's weekly marker
         if: ${{ !cancelled() && inputs.worker_slot != '' && needs.status.outputs.mark_weekly == 'true' && needs.status.outputs.week != '' }}
         uses: actions/cache/save@55cc8345863c7cc4c66a329aec7e433d2d1c52a9
@@ -655,7 +754,7 @@ jobs:
           node tooling/ops/check-last-good-reads.mjs
           NIKATRU_QUIET_EOF
           NIKATRU_SHELL="${BASH:-bash}"; if command -v cygpath >/dev/null 2>&1; then NIKATRU_SHELL="$(cygpath -w "$NIKATRU_SHELL")"; fi
-          node "$GITHUB_WORKSPACE/../.nikatru-shell/quiet-step.mjs" --name ops-watch.heartbeats.28 -- "$NIKATRU_SHELL" -e "$NIKATRU_QUIET"
+          node "$GITHUB_WORKSPACE/../.nikatru-shell/quiet-step.mjs" --name ops-watch.heartbeats.35 -- "$NIKATRU_SHELL" -e "$NIKATRU_QUIET"
       - name: Store this job's red detail in the bridge's private home (generated)
         if: always()
         continue-on-error: true
@@ -1485,6 +1584,28 @@ jobs:
           NIKATRU_QUIET_EOF
           NIKATRU_SHELL="${BASH:-bash}"; if command -v cygpath >/dev/null 2>&1; then NIKATRU_SHELL="$(cygpath -w "$NIKATRU_SHELL")"; fi
           node "$GITHUB_WORKSPACE/../.nikatru-shell/quiet-step.mjs" --name ops-watch.runner-budget.6 -- "$NIKATRU_SHELL" -e "$NIKATRU_QUIET"
+      - name: List the merged train/* branches of the code repository (pruned only on the owner's dispatch)
+        if: ${{ !cancelled() && (inputs.worker_slot != '' || inputs.prune_trains) && ((env.NIKATRU_REF || (github.event.client_payload.ref || 'refs/heads/main')) == 'refs/heads/main' && contains(fromJSON('["push","schedule","workflow_dispatch"]'), env.NIKATRU_EVENT_NAME || (github.event.client_payload.event || github.event_name)) && !env.NIKATRU_PR) }}
+        timeout-minutes: 4
+        env:
+          PRUNE: ${{ inputs.prune_trains && '--prune' || '' }}
+          BRIDGE_READ_SECRET: ${{ (github.event.client_payload.event || github.event_name) != 'pull_request' && secrets.BRIDGE_READ_SECRET || '' }}
+          BRIDGE_OPS_SECRET: ${{ (github.event.client_payload.event || github.event_name) != 'pull_request' && secrets.BRIDGE_OPS_SECRET || '' }}
+          NIKATRU_BRIDGE_OPS_URL: ${{ (github.event.client_payload.event || github.event_name) != 'pull_request' && 'https://gh-bridge.nikatru.workers.dev/ops' || '' }}
+        run: |
+          NIKATRU_QUIET="$(mktemp "${RUNNER_TEMP:-/tmp}/nikatru-step.XXXXXX")"
+          cat > "$NIKATRU_QUIET" <<'NIKATRU_QUIET_EOF'
+          set +e
+          node tooling/ops/train-refs.mjs $PRUNE
+          code=$?
+          set -e
+          if [ "$code" -eq 2 ]; then
+            echo "::error title=The train/* branch list is UNKNOWN::The bridge's train-refs list or a judge/prune call was not answered, or the step holds no BRIDGE_OPS_SECRET. Nothing more was judged or deleted; the step log names the call."
+          fi
+          exit "$code"
+          NIKATRU_QUIET_EOF
+          NIKATRU_SHELL="${BASH:-bash}"; if command -v cygpath >/dev/null 2>&1; then NIKATRU_SHELL="$(cygpath -w "$NIKATRU_SHELL")"; fi
+          node "$GITHUB_WORKSPACE/../.nikatru-shell/quiet-step.mjs" --name ops-watch.runner-budget.7 -- "$NIKATRU_SHELL" -e "$NIKATRU_QUIET"
       - name: The CI repository's Actions cache is under its red line
         if: ${{ !cancelled() }}
         env:
@@ -1504,7 +1625,7 @@ jobs:
           exit "$code"
           NIKATRU_QUIET_EOF
           NIKATRU_SHELL="${BASH:-bash}"; if command -v cygpath >/dev/null 2>&1; then NIKATRU_SHELL="$(cygpath -w "$NIKATRU_SHELL")"; fi
-          node "$GITHUB_WORKSPACE/../.nikatru-shell/quiet-step.mjs" --name ops-watch.runner-budget.7 -- "$NIKATRU_SHELL" -e "$NIKATRU_QUIET"
+          node "$GITHUB_WORKSPACE/../.nikatru-shell/quiet-step.mjs" --name ops-watch.runner-budget.8 -- "$NIKATRU_SHELL" -e "$NIKATRU_QUIET"
       - name: Store this job's red detail in the bridge's private home (generated)
         if: always()
         continue-on-error: true
@@ -2135,6 +2256,18 @@ jobs:
           NIKATRU_QUIET_EOF
           NIKATRU_SHELL="${BASH:-bash}"; if command -v cygpath >/dev/null 2>&1; then NIKATRU_SHELL="$(cygpath -w "$NIKATRU_SHELL")"; fi
           node "$GITHUB_WORKSPACE/../.nikatru-shell/quiet-step.mjs" --name ops-watch.config-drift.4 -- "$NIKATRU_SHELL" -e "$NIKATRU_QUIET"
+      - name: Every watched store serves the release the ledger recorded (drift past 72 h is red)
+        if: ${{ !cancelled() }}
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          PLAY_READ_SERVICE_ACCOUNT_JSON: ${{ secrets.PLAY_READ_SERVICE_ACCOUNT_JSON }}
+        run: |
+          NIKATRU_QUIET="$(mktemp "${RUNNER_TEMP:-/tmp}/nikatru-step.XXXXXX")"
+          cat > "$NIKATRU_QUIET" <<'NIKATRU_QUIET_EOF'
+          node tooling/ops/store-version-watch.mjs
+          NIKATRU_QUIET_EOF
+          NIKATRU_SHELL="${BASH:-bash}"; if command -v cygpath >/dev/null 2>&1; then NIKATRU_SHELL="$(cygpath -w "$NIKATRU_SHELL")"; fi
+          node "$GITHUB_WORKSPACE/../.nikatru-shell/quiet-step.mjs" --name ops-watch.config-drift.5 -- "$NIKATRU_SHELL" -e "$NIKATRU_QUIET"
       - name: The register still matches the live GlitchTip monitors
         if: ${{ !cancelled() }}
         env:
@@ -2154,7 +2287,7 @@ jobs:
           exit "$code"
           NIKATRU_QUIET_EOF
           NIKATRU_SHELL="${BASH:-bash}"; if command -v cygpath >/dev/null 2>&1; then NIKATRU_SHELL="$(cygpath -w "$NIKATRU_SHELL")"; fi
-          node "$GITHUB_WORKSPACE/../.nikatru-shell/quiet-step.mjs" --name ops-watch.config-drift.5 -- "$NIKATRU_SHELL" -e "$NIKATRU_QUIET"
+          node "$GITHUB_WORKSPACE/../.nikatru-shell/quiet-step.mjs" --name ops-watch.config-drift.6 -- "$NIKATRU_SHELL" -e "$NIKATRU_QUIET"
       - name: …and every monitor can still reach a mailbox
         if: always()
         env:
@@ -2174,7 +2307,7 @@ jobs:
           exit "$code"
           NIKATRU_QUIET_EOF
           NIKATRU_SHELL="${BASH:-bash}"; if command -v cygpath >/dev/null 2>&1; then NIKATRU_SHELL="$(cygpath -w "$NIKATRU_SHELL")"; fi
-          node "$GITHUB_WORKSPACE/../.nikatru-shell/quiet-step.mjs" --name ops-watch.config-drift.6 -- "$NIKATRU_SHELL" -e "$NIKATRU_QUIET"
+          node "$GITHUB_WORKSPACE/../.nikatru-shell/quiet-step.mjs" --name ops-watch.config-drift.7 -- "$NIKATRU_SHELL" -e "$NIKATRU_QUIET"
       - name: The mail-auth DNS records still say what the register declares
         if: always()
         timeout-minutes: 3
@@ -2193,7 +2326,7 @@ jobs:
           exit "$code"
           NIKATRU_QUIET_EOF
           NIKATRU_SHELL="${BASH:-bash}"; if command -v cygpath >/dev/null 2>&1; then NIKATRU_SHELL="$(cygpath -w "$NIKATRU_SHELL")"; fi
-          node "$GITHUB_WORKSPACE/../.nikatru-shell/quiet-step.mjs" --name ops-watch.config-drift.7 -- "$NIKATRU_SHELL" -e "$NIKATRU_QUIET"
+          node "$GITHUB_WORKSPACE/../.nikatru-shell/quiet-step.mjs" --name ops-watch.config-drift.8 -- "$NIKATRU_SHELL" -e "$NIKATRU_QUIET"
       - name: Every live rail's key, prices and webhook destination still read back as the repo says
         if: always()
         timeout-minutes: 3
@@ -2214,7 +2347,7 @@ jobs:
           exit "$code"
           NIKATRU_QUIET_EOF
           NIKATRU_SHELL="${BASH:-bash}"; if command -v cygpath >/dev/null 2>&1; then NIKATRU_SHELL="$(cygpath -w "$NIKATRU_SHELL")"; fi
-          node "$GITHUB_WORKSPACE/../.nikatru-shell/quiet-step.mjs" --name ops-watch.config-drift.8 -- "$NIKATRU_SHELL" -e "$NIKATRU_QUIET"
+          node "$GITHUB_WORKSPACE/../.nikatru-shell/quiet-step.mjs" --name ops-watch.config-drift.9 -- "$NIKATRU_SHELL" -e "$NIKATRU_QUIET"
       - name: Yesterday's live transactions and refunds each match an entitlement event
         if: always()
         timeout-minutes: 5
@@ -2238,7 +2371,7 @@ jobs:
           exit "$code"
           NIKATRU_QUIET_EOF
           NIKATRU_SHELL="${BASH:-bash}"; if command -v cygpath >/dev/null 2>&1; then NIKATRU_SHELL="$(cygpath -w "$NIKATRU_SHELL")"; fi
-          node "$GITHUB_WORKSPACE/../.nikatru-shell/quiet-step.mjs" --name ops-watch.config-drift.9 -- "$NIKATRU_SHELL" -e "$NIKATRU_QUIET"
+          node "$GITHUB_WORKSPACE/../.nikatru-shell/quiet-step.mjs" --name ops-watch.config-drift.10 -- "$NIKATRU_SHELL" -e "$NIKATRU_QUIET"
       - name: The Apple signing certificates and profiles in register.json still match App Store Connect
         if: always()
         timeout-minutes: 3
@@ -2261,7 +2394,7 @@ jobs:
           exit "$code"
           NIKATRU_QUIET_EOF
           NIKATRU_SHELL="${BASH:-bash}"; if command -v cygpath >/dev/null 2>&1; then NIKATRU_SHELL="$(cygpath -w "$NIKATRU_SHELL")"; fi
-          node "$GITHUB_WORKSPACE/../.nikatru-shell/quiet-step.mjs" --name ops-watch.config-drift.10 -- "$NIKATRU_SHELL" -e "$NIKATRU_QUIET"
+          node "$GITHUB_WORKSPACE/../.nikatru-shell/quiet-step.mjs" --name ops-watch.config-drift.11 -- "$NIKATRU_SHELL" -e "$NIKATRU_QUIET"
       - name: CLOUDFLARE_READ_TOKEN is minted, and the read steps no longer fall back to the deploy token
         if: ${{ !cancelled() }}
         env:
@@ -2281,7 +2414,7 @@ jobs:
           exit "$code"
           NIKATRU_QUIET_EOF
           NIKATRU_SHELL="${BASH:-bash}"; if command -v cygpath >/dev/null 2>&1; then NIKATRU_SHELL="$(cygpath -w "$NIKATRU_SHELL")"; fi
-          node "$GITHUB_WORKSPACE/../.nikatru-shell/quiet-step.mjs" --name ops-watch.config-drift.11 -- "$NIKATRU_SHELL" -e "$NIKATRU_QUIET"
+          node "$GITHUB_WORKSPACE/../.nikatru-shell/quiet-step.mjs" --name ops-watch.config-drift.12 -- "$NIKATRU_SHELL" -e "$NIKATRU_QUIET"
       - name: Store this job's red detail in the bridge's private home (generated)
         if: always()
         continue-on-error: true
@@ -2596,7 +2729,7 @@ jobs:
           cat > "$NIKATRU_QUIET" <<'NIKATRU_QUIET_EOF'
           since="$(date -u -d '8 days ago' +%Y-%m-%dT%H:%M:%SZ)"
           set +e
-          node tooling/ops/triage-failed-runs.mjs --since "$since" --no-prs --branch main --cache-dir .cache/triage --max-requests 2000 > "${RUNNER_TEMP}/ledger.txt" 2>&1
+          node tooling/ops/triage-failed-runs.mjs --since "$since" --no-prs --branch main --cache-dir .cache/triage --max-requests 2000 --cursor "${RUNNER_TEMP}/failure-ledger-cursor.json" --cursor-from-log ops-watch.yml --write-cursor > "${RUNNER_TEMP}/ledger.txt" 2>&1
           code=$?
           set -e
           cat "${RUNNER_TEMP}/ledger.txt"
@@ -2622,7 +2755,7 @@ jobs:
           code=$?
           set -e
           if [ "$code" -eq 2 ]; then
-            echo "::error title=The guard yield is UNKNOWN::tooling/guard-yield.json, tooling/enforcement-index.json or a test file tooling/ci/test/coverage-manifest.json keys could not be read, so nothing about guard yield is known from this run. The step log names which."
+            echo "::error title=The guard yield is UNKNOWN::tooling/guard-yield.json, tooling/enforcement-index.json or a test file the coverage ratchet (tooling/ci/test/coverage/) keys could not be read, so nothing about guard yield is known from this run. The step log names which."
           elif [ "$code" -eq 1 ]; then
             echo "::error title=The guard yield is stale, blind, or not acted on::asOf is past MAX_AGE_DAYS (re-fetch with triage-failed-runs.mjs --yield), the unattributed share is over its limit (give the signatures a guard, then guard-yield.mjs --reattribute), or a zero-catch guard has no KEEP/MERGE/RETIRE, or a KEEP's mutationTest does not resolve in the test file it names (guard-yield.mjs --reattribute re-derives an exposure KEEP's). The step log names each."
           fi
