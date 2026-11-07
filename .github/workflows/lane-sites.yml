@@ -19,14 +19,6 @@ on:
         default: ''
         type: string
     secrets:
-      GH_POOL_DISPATCH_TOKEN_POOL_A:
-        required: false
-      GH_POOL_DISPATCH_TOKEN_POOL_B:
-        required: false
-      GH_POOL_DISPATCH_TOKEN_POOL_C:
-        required: false
-      NIKATRU_POOL_HANDOFF_KEY:
-        required: false
       PRIVATE_DEPLOY_KEY:
         required: true
       NIKATRU_DETAIL_KEY:
@@ -154,8 +146,8 @@ jobs:
 
   site-tokens:
     name: Design tokens (build + drift, all three outputs)
-    needs: [detect, pool-sites]
-    if: needs.detect.outputs.affected == 'true' && !contains(fromJSON(needs.pool-sites.outputs.adopted), 'site-tokens')
+    needs: [detect]
+    if: needs.detect.outputs.affected == 'true'
     runs-on: ubuntu-24.04
     timeout-minutes: 10
     permissions:
@@ -304,8 +296,8 @@ jobs:
 
   site-shared:
     name: Shared site build
-    needs: [detect, pool-sites]
-    if: needs.detect.outputs.affected == 'true' && !contains(fromJSON(needs.pool-sites.outputs.adopted), 'site-shared')
+    needs: [detect]
+    if: needs.detect.outputs.affected == 'true'
     runs-on: ubuntu-24.04
     timeout-minutes: 10
     permissions:
@@ -424,8 +416,8 @@ jobs:
 
   content-gate:
     name: Content pipeline (recipe -> pack -> sign -> gate)
-    needs: [detect, pool-sites]
-    if: needs.detect.outputs.affected == 'true' && !contains(fromJSON(needs.pool-sites.outputs.adopted), 'content-gate')
+    needs: [detect]
+    if: needs.detect.outputs.affected == 'true'
     runs-on: ubuntu-24.04
     timeout-minutes: 10
     permissions:
@@ -598,8 +590,8 @@ jobs:
 
   sites:
     name: Static sites (functions parse + required files)
-    needs: [detect, pool-sites]
-    if: needs.detect.outputs.affected == 'true' && !contains(fromJSON(needs.pool-sites.outputs.adopted), 'sites')
+    needs: [detect]
+    if: needs.detect.outputs.affected == 'true'
     runs-on: ubuntu-24.04
     timeout-minutes: 30
     permissions:
@@ -1123,314 +1115,9 @@ jobs:
           key: nikatru-detail-${{ github.run_id }}-${{ github.run_attempt }}-lane-sites.review-crawl-self-test.${{ strategy.job-index }}
           enableCrossOsArchive: true
 
-  pool-sites:
-    name: Sites — dispatch to the CI runner pools
-    needs: detect
-    if: needs.detect.outputs.affected == 'true'
-    runs-on: ubuntu-24.04
-    timeout-minutes: 30
-    permissions:
-      contents: read
-      actions: read
-    outputs:
-      modes: ${{ steps.pool.outputs.modes }}
-      adopted: ${{ steps.pool.outputs.adopted }}
-      fallback: ${{ steps.pool.outputs.fallback }}
-      shadow: ${{ steps.pool.outputs.shadow }}
-      children: ${{ steps.pool.outputs.children }}
-    steps:
-      - name: Check out the private tree (generated)
-        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
-        with:
-          repository: ${{ env.NIKATRU_PRIVATE_REPO }}
-          ref: ${{ inputs.nikatru_sha || (github.event.client_payload.event == 'pull_request' && format('refs/pull/{0}/merge', github.event.client_payload.pr) || github.event.client_payload.sha || 'main') }}
-          ssh-key: ${{ secrets.PRIVATE_DEPLOY_KEY }}
-          persist-credentials: false
-      - name: Name the private commit (generated)
-        shell: bash
-        working-directory: ${{ github.workspace }}
-        env:
-          NIKATRU_P_EVENT: ${{ github.event.client_payload.event || github.event_name }}
-          NIKATRU_P_REF: ${{ github.event.client_payload.ref || 'refs/heads/main' }}
-          NIKATRU_P_BASE_SHA: ${{ github.event.client_payload.base_sha }}
-          NIKATRU_P_BASE_REF: ${{ github.event.client_payload.base_ref }}
-          NIKATRU_P_PR: ${{ github.event.client_payload.pr }}
-          NIKATRU_P_PR_CREATED_AT: ${{ github.event.client_payload.pr_created_at }}
-          NIKATRU_P_DRAFT: ${{ github.event.client_payload.draft }}
-          NIKATRU_P_SHA: ${{ github.event.client_payload.sha }}
-        run: |
-          if [ "$NIKATRU_P_EVENT" = pull_request ]; then
-            set -- $(git cat-file -p HEAD | sed -n '1,/^$/s/^parent //p')
-            if [ "${2:-}" != "$NIKATRU_P_SHA" ]; then
-              echo "::error::the checked-out merge of PR #$NIKATRU_P_PR is not the merge of the dispatched head $NIKATRU_P_SHA (its second parent is ${2:-none}); the nikatru-pin job pins it — re-run the whole workflow, not this job"
-              exit 1
-            fi
-          fi
-          {
-            echo "NIKATRU_SHA=$(git rev-parse HEAD)"
-            echo "NIKATRU_HEAD_SHA=${NIKATRU_P_SHA:-$(git rev-parse HEAD)}"
-            echo "NIKATRU_EVENT_NAME=$NIKATRU_P_EVENT"
-            echo "NIKATRU_REF=$NIKATRU_P_REF"
-            echo "NIKATRU_REF_NAME=${NIKATRU_P_REF#refs/*/}"
-            echo "NIKATRU_BASE_SHA=$NIKATRU_P_BASE_SHA"
-            echo "NIKATRU_BASE_REF=$NIKATRU_P_BASE_REF"
-            echo "NIKATRU_PR=$NIKATRU_P_PR"
-            echo "NIKATRU_PR_CREATED_AT=$NIKATRU_P_PR_CREATED_AT"
-            echo "NIKATRU_DRAFT=$NIKATRU_P_DRAFT"
-          } >> "$GITHUB_ENV"
-      - name: Check out this shell repository's own step wrapper and reporter (generated)
-        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
-        with:
-          path: .nikatru-shell
-          sparse-checkout: .github/nikatru
-          persist-credentials: false
-      - name: Stage the shell's own copies outside the private checkout (generated)
-        shell: bash
-        working-directory: ${{ github.workspace }}
-        env:
-          NIKATRU_DETAIL_KEY: ${{ secrets.NIKATRU_DETAIL_KEY }}
-          NIKATRU_DETAIL_KEY_FILE: ${{ github.workspace }}/../.nikatru-shell/detail.key
-        run: |
-          rm -rf ../.nikatru-shell
-          mv .nikatru-shell/.github/nikatru ../.nikatru-shell
-          rm -rf .nikatru-shell
-          py=python3; python3 -c '' >/dev/null 2>&1 || py=python
-          "$py" -I "$GITHUB_WORKSPACE/../.nikatru-shell/report.py" derive
-      - name: "Check out private main's pool tooling, which this job runs instead of the branch's (generated: the private tree)"
-        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
-        with:
-          repository: ${{ env.NIKATRU_PRIVATE_REPO }}
-          ref: main
-          path: .pool-trusted
-          sparse-checkout: |
-            tooling
-            .github/workflows
-            services/gh-bridge
-          ssh-key: ${{ secrets.PRIVATE_DEPLOY_KEY }}
-          persist-credentials: false
-      - id: node-pin
-        name: Read the Node pin from private main's copy, never from this branch's tree
-        timeout-minutes: 1
-        run: |
-          NIKATRU_QUIET="$(mktemp "${RUNNER_TEMP:-/tmp}/nikatru-step.XXXXXX")"
-          cat > "$NIKATRU_QUIET" <<'NIKATRU_QUIET_EOF'
-          set -euo pipefail
-          [ -d .pool-trusted ] && [ ! -L .pool-trusted ] && [ "$(cd .pool-trusted && pwd -P)" = "$(pwd -P)/.pool-trusted" ] || { echo "::error::.pool-trusted is not private main's checkout"; exit 1; }
-          [ ! -L .pool-trusted/tooling ] && [ ! -L .pool-trusted/tooling/versions.json ] || { echo "::error::private main's versions.json is a symlink"; exit 1; }
-          v="$(jq -r '.node' .pool-trusted/tooling/versions.json)"
-          [[ "$v" =~ ^[0-9]+$ ]] || { echo "::error::private main's tooling/versions.json names no Node major"; exit 1; }
-          echo "node=$v" >> "$GITHUB_OUTPUT"
-          NIKATRU_QUIET_EOF
-          NIKATRU_SHELL="${BASH:-bash}"; if command -v cygpath >/dev/null 2>&1; then NIKATRU_SHELL="$(cygpath -w "$NIKATRU_SHELL")"; fi
-          node "$GITHUB_WORKSPACE/../.nikatru-shell/quiet-step.mjs" --name lane-sites.pool-sites.3 -- "$NIKATRU_SHELL" -e "$NIKATRU_QUIET"
-      - name: Check out private main's composite actions (generated)
-        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
-        with:
-          repository: ${{ env.NIKATRU_PRIVATE_REPO }}
-          ref: refs/heads/main
-          path: .nikatru-trusted
-          sparse-checkout: .github/actions
-          ssh-key: ${{ secrets.PRIVATE_DEPLOY_KEY }}
-          persist-credentials: false
-      - name: Keep private main's composite actions out of the branch's tree (generated)
-        shell: bash
-        working-directory: ${{ github.workspace }}
-        run: printf '/.nikatru-trusted/\n' >> "$(git rev-parse --git-path info/exclude)"
-      - uses: ./.nikatru-trusted/.github/actions/setup-node
-        with:
-          node-version: ${{ steps.node-pin.outputs.node }}
-      - id: pool
-        name: Dispatch each class to its pool (and, in pool mode, adopt its verdicts)
-        env:
-          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-          GH_POOL_DISPATCH_TOKEN_POOL_A: ${{ secrets.GH_POOL_DISPATCH_TOKEN_POOL_A }}
-          GH_POOL_DISPATCH_TOKEN_POOL_B: ${{ secrets.GH_POOL_DISPATCH_TOKEN_POOL_B }}
-          GH_POOL_DISPATCH_TOKEN_POOL_C: ${{ secrets.GH_POOL_DISPATCH_TOKEN_POOL_C }}
-          NIKATRU_POOL_HANDOFF_KEY: ${{ secrets.NIKATRU_POOL_HANDOFF_KEY }}
-          POOL_NEEDS: ${{ toJSON(needs) }}
-          NIKATRU_POOLS: ${{ vars.NIKATRU_POOLS }}
-        run: |
-          NIKATRU_QUIET="$(mktemp "${RUNNER_TEMP:-/tmp}/nikatru-step.XXXXXX")"
-          cat > "$NIKATRU_QUIET" <<'NIKATRU_QUIET_EOF'
-          node .pool-trusted/tooling/ops/pool-shadow.mjs dispatch --root .pool-trusted --workflow lane-sites.yml
-          NIKATRU_QUIET_EOF
-          NIKATRU_SHELL="${BASH:-bash}"; if command -v cygpath >/dev/null 2>&1; then NIKATRU_SHELL="$(cygpath -w "$NIKATRU_SHELL")"; fi
-          node "$GITHUB_WORKSPACE/../.nikatru-shell/quiet-step.mjs" --name lane-sites.pool-sites.5 -- "$NIKATRU_SHELL" -e "$NIKATRU_QUIET"
-      - name: Hand this job's red detail to the report job, sealed (generated)
-        id: nikatru-handoff
-        if: always()
-        shell: bash
-        working-directory: ${{ github.workspace }}
-        env:
-          NIKATRU_DETAIL_KEY_FILE: ${{ github.workspace }}/../.nikatru-shell/detail.key
-          NIKATRU_HANDOFF: nikatru-detail-${{ github.run_id }}-${{ github.run_attempt }}-lane-sites.pool-sites.${{ strategy.job-index }}
-        run: |
-          if [ -s "$RUNNER_TEMP/report-detail.md" ]; then
-            py=python3; python3 -c '' >/dev/null 2>&1 || py=python
-            "$py" -I "$GITHUB_WORKSPACE/../.nikatru-shell/report.py" handoff
-          fi
-      - name: Save the hand-off (generated)
-        if: always() && steps.nikatru-handoff.outputs.has == 'true'
-        uses: actions/cache/save@55cc8345863c7cc4c66a329aec7e433d2d1c52a9
-        with:
-          path: .nikatru-detail
-          key: nikatru-detail-${{ github.run_id }}-${{ github.run_attempt }}-lane-sites.pool-sites.${{ strategy.job-index }}
-          enableCrossOsArchive: true
-
-  pool-sites-record:
-    name: Sites — record home vs pool (shadow)
-    needs: [detect, pool-sites, site-tokens, site-shared, content-gate, sites]
-    if: always() && needs.detect.outputs.affected == 'true' && needs.pool-sites.outputs.shadow != '[]'
-    runs-on: ubuntu-24.04
-    timeout-minutes: 15
-    continue-on-error: true
-    permissions:
-      contents: read
-      actions: read
-    steps:
-      - name: Check out the private tree (generated)
-        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
-        with:
-          repository: ${{ env.NIKATRU_PRIVATE_REPO }}
-          ref: ${{ inputs.nikatru_sha || (github.event.client_payload.event == 'pull_request' && format('refs/pull/{0}/merge', github.event.client_payload.pr) || github.event.client_payload.sha || 'main') }}
-          ssh-key: ${{ secrets.PRIVATE_DEPLOY_KEY }}
-          persist-credentials: false
-        timeout-minutes: 2
-      - name: Name the private commit (generated)
-        shell: bash
-        working-directory: ${{ github.workspace }}
-        env:
-          NIKATRU_P_EVENT: ${{ github.event.client_payload.event || github.event_name }}
-          NIKATRU_P_REF: ${{ github.event.client_payload.ref || 'refs/heads/main' }}
-          NIKATRU_P_BASE_SHA: ${{ github.event.client_payload.base_sha }}
-          NIKATRU_P_BASE_REF: ${{ github.event.client_payload.base_ref }}
-          NIKATRU_P_PR: ${{ github.event.client_payload.pr }}
-          NIKATRU_P_PR_CREATED_AT: ${{ github.event.client_payload.pr_created_at }}
-          NIKATRU_P_DRAFT: ${{ github.event.client_payload.draft }}
-          NIKATRU_P_SHA: ${{ github.event.client_payload.sha }}
-        run: |
-          if [ "$NIKATRU_P_EVENT" = pull_request ]; then
-            set -- $(git cat-file -p HEAD | sed -n '1,/^$/s/^parent //p')
-            if [ "${2:-}" != "$NIKATRU_P_SHA" ]; then
-              echo "::error::the checked-out merge of PR #$NIKATRU_P_PR is not the merge of the dispatched head $NIKATRU_P_SHA (its second parent is ${2:-none}); the nikatru-pin job pins it — re-run the whole workflow, not this job"
-              exit 1
-            fi
-          fi
-          {
-            echo "NIKATRU_SHA=$(git rev-parse HEAD)"
-            echo "NIKATRU_HEAD_SHA=${NIKATRU_P_SHA:-$(git rev-parse HEAD)}"
-            echo "NIKATRU_EVENT_NAME=$NIKATRU_P_EVENT"
-            echo "NIKATRU_REF=$NIKATRU_P_REF"
-            echo "NIKATRU_REF_NAME=${NIKATRU_P_REF#refs/*/}"
-            echo "NIKATRU_BASE_SHA=$NIKATRU_P_BASE_SHA"
-            echo "NIKATRU_BASE_REF=$NIKATRU_P_BASE_REF"
-            echo "NIKATRU_PR=$NIKATRU_P_PR"
-            echo "NIKATRU_PR_CREATED_AT=$NIKATRU_P_PR_CREATED_AT"
-            echo "NIKATRU_DRAFT=$NIKATRU_P_DRAFT"
-          } >> "$GITHUB_ENV"
-      - name: Check out this shell repository's own step wrapper and reporter (generated)
-        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
-        with:
-          path: .nikatru-shell
-          sparse-checkout: .github/nikatru
-          persist-credentials: false
-      - name: Stage the shell's own copies outside the private checkout (generated)
-        shell: bash
-        working-directory: ${{ github.workspace }}
-        env:
-          NIKATRU_DETAIL_KEY: ${{ secrets.NIKATRU_DETAIL_KEY }}
-          NIKATRU_DETAIL_KEY_FILE: ${{ github.workspace }}/../.nikatru-shell/detail.key
-        run: |
-          rm -rf ../.nikatru-shell
-          mv .nikatru-shell/.github/nikatru ../.nikatru-shell
-          rm -rf .nikatru-shell
-          py=python3; python3 -c '' >/dev/null 2>&1 || py=python
-          "$py" -I "$GITHUB_WORKSPACE/../.nikatru-shell/report.py" derive
-      - name: "Check out private main's pool tooling, which this job runs instead of the branch's (generated: the private tree)"
-        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
-        with:
-          repository: ${{ env.NIKATRU_PRIVATE_REPO }}
-          ref: main
-          path: .pool-trusted
-          sparse-checkout: |
-            tooling
-            .github/workflows
-          ssh-key: ${{ secrets.PRIVATE_DEPLOY_KEY }}
-          persist-credentials: false
-        timeout-minutes: 2
-      - id: node-pin
-        name: Read the Node pin from private main's copy, never from this branch's tree
-        timeout-minutes: 1
-        run: |
-          NIKATRU_QUIET="$(mktemp "${RUNNER_TEMP:-/tmp}/nikatru-step.XXXXXX")"
-          cat > "$NIKATRU_QUIET" <<'NIKATRU_QUIET_EOF'
-          set -euo pipefail
-          [ -d .pool-trusted ] && [ ! -L .pool-trusted ] && [ "$(cd .pool-trusted && pwd -P)" = "$(pwd -P)/.pool-trusted" ] || { echo "::error::.pool-trusted is not private main's checkout"; exit 1; }
-          [ ! -L .pool-trusted/tooling ] && [ ! -L .pool-trusted/tooling/versions.json ] || { echo "::error::private main's versions.json is a symlink"; exit 1; }
-          v="$(jq -r '.node' .pool-trusted/tooling/versions.json)"
-          [[ "$v" =~ ^[0-9]+$ ]] || { echo "::error::private main's tooling/versions.json names no Node major"; exit 1; }
-          echo "node=$v" >> "$GITHUB_OUTPUT"
-          NIKATRU_QUIET_EOF
-          NIKATRU_SHELL="${BASH:-bash}"; if command -v cygpath >/dev/null 2>&1; then NIKATRU_SHELL="$(cygpath -w "$NIKATRU_SHELL")"; fi
-          node "$GITHUB_WORKSPACE/../.nikatru-shell/quiet-step.mjs" --name lane-sites.pool-sites-record.3 -- "$NIKATRU_SHELL" -e "$NIKATRU_QUIET"
-      - name: Check out private main's composite actions (generated)
-        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
-        with:
-          repository: ${{ env.NIKATRU_PRIVATE_REPO }}
-          ref: refs/heads/main
-          path: .nikatru-trusted
-          sparse-checkout: .github/actions
-          ssh-key: ${{ secrets.PRIVATE_DEPLOY_KEY }}
-          persist-credentials: false
-      - name: Keep private main's composite actions out of the branch's tree (generated)
-        shell: bash
-        working-directory: ${{ github.workspace }}
-        run: printf '/.nikatru-trusted/\n' >> "$(git rev-parse --git-path info/exclude)"
-      - uses: ./.nikatru-trusted/.github/actions/setup-node
-        timeout-minutes: 2
-        with:
-          node-version: ${{ steps.node-pin.outputs.node }}
-      - name: Record home vs pool for each unit
-        timeout-minutes: 6
-        env:
-          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-          GH_POOL_DISPATCH_TOKEN_POOL_A: ${{ secrets.GH_POOL_DISPATCH_TOKEN_POOL_A }}
-          GH_POOL_DISPATCH_TOKEN_POOL_B: ${{ secrets.GH_POOL_DISPATCH_TOKEN_POOL_B }}
-          GH_POOL_DISPATCH_TOKEN_POOL_C: ${{ secrets.GH_POOL_DISPATCH_TOKEN_POOL_C }}
-          NIKATRU_POOL_HANDOFF_KEY: ${{ secrets.NIKATRU_POOL_HANDOFF_KEY }}
-          POOL_CHILDREN: ${{ needs.pool-sites.outputs.children }}
-          POOL_NEEDS: ${{ toJSON(needs) }}
-        run: |
-          NIKATRU_QUIET="$(mktemp "${RUNNER_TEMP:-/tmp}/nikatru-step.XXXXXX")"
-          cat > "$NIKATRU_QUIET" <<'NIKATRU_QUIET_EOF'
-          node .pool-trusted/tooling/ops/pool-shadow.mjs record --root .pool-trusted --workflow lane-sites.yml
-          NIKATRU_QUIET_EOF
-          NIKATRU_SHELL="${BASH:-bash}"; if command -v cygpath >/dev/null 2>&1; then NIKATRU_SHELL="$(cygpath -w "$NIKATRU_SHELL")"; fi
-          node "$GITHUB_WORKSPACE/../.nikatru-shell/quiet-step.mjs" --name lane-sites.pool-sites-record.5 -- "$NIKATRU_SHELL" -e "$NIKATRU_QUIET"
-      - name: Hand this job's red detail to the report job, sealed (generated)
-        id: nikatru-handoff
-        if: always()
-        shell: bash
-        working-directory: ${{ github.workspace }}
-        env:
-          NIKATRU_DETAIL_KEY_FILE: ${{ github.workspace }}/../.nikatru-shell/detail.key
-          NIKATRU_HANDOFF: nikatru-detail-${{ github.run_id }}-${{ github.run_attempt }}-lane-sites.pool-sites-record.${{ strategy.job-index }}
-        run: |
-          if [ -s "$RUNNER_TEMP/report-detail.md" ]; then
-            py=python3; python3 -c '' >/dev/null 2>&1 || py=python
-            "$py" -I "$GITHUB_WORKSPACE/../.nikatru-shell/report.py" handoff
-          fi
-      - name: Save the hand-off (generated)
-        if: always() && steps.nikatru-handoff.outputs.has == 'true'
-        uses: actions/cache/save@55cc8345863c7cc4c66a329aec7e433d2d1c52a9
-        with:
-          path: .nikatru-detail
-          key: nikatru-detail-${{ github.run_id }}-${{ github.run_attempt }}-lane-sites.pool-sites-record.${{ strategy.job-index }}
-          enableCrossOsArchive: true
-
   lane-verdict:
     name: lane-verdict
-    needs: [detect, site-tokens, site-shared, content-gate, sites, review-crawl-self-test, pool-sites, pool-sites-record]
+    needs: [detect, site-tokens, site-shared, content-gate, sites, review-crawl-self-test]
     if: always()
     runs-on: ubuntu-24.04
     timeout-minutes: 5

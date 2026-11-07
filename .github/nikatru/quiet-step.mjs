@@ -62,7 +62,7 @@ export const TAIL_LINES = 400;
 export const DETAIL_FILE = 'report-detail.md';
 /** How long the output pipes may stay open after the command exits (a leftover background process). */
 export const DRAIN_MS = 5000;
-/** The one `--name` quiet-step accepts (gen-pool-shell.mjs checks every name it writes against this, never a copy). */
+/** The one `--name` quiet-step accepts. */
 export const STEP_NAME = /^[A-Za-z0-9][A-Za-z0-9._()-]{0,99}$/;
 /** A line a script publishes on purpose: its text is printed, masked. */
 export const PUBLIC_PREFIX = '::nikatru-public::';

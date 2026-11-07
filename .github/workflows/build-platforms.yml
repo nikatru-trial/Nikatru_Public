@@ -3813,29 +3813,3 @@ jobs:
           NIKATRU_P_REF: ${{ github.event.client_payload.ref }}
           NIKATRU_RESULTS: '{"gate": "${{ needs.gate.result }}", "prepare": "${{ needs.prepare.result }}", "linux_web_android": "${{ needs.linux_web_android.result }}", "windows": "${{ needs.windows.result }}", "windows_arm64": "${{ needs.windows_arm64.result }}", "linux_arm64": "${{ needs.linux_arm64.result }}", "apple": "${{ needs.apple.result }}", "durable_symbols": "${{ needs.durable_symbols.result }}", "release": "${{ needs.release.result }}", "attest": "${{ needs.attest.result }}", "all_platforms": "${{ needs.all_platforms.result }}"}'
         run: /usr/bin/python3 -I .github/nikatru/report.py send .github/nikatru/build-platforms.json
-
-  nikatru-relay:
-    name: Start the workflows that follow this run (generated)
-    needs: [nikatru-pin, gate, prepare, linux_web_android, windows, windows_arm64, linux_arm64, apple, all_platforms, attest, durable_symbols, release, nikatru-ran, nikatru-collect, nikatru-report]
-    if: always() && (github.event_name != 'repository_dispatch' || (github.event.client_payload.event == 'push' && startsWith(github.event.client_payload.ref, 'refs/tags/subscriptiontracker-v')))
-    runs-on: ubuntu-24.04
-    defaults:
-      run:
-        working-directory: ${{ github.workspace }}
-    timeout-minutes: 5
-    continue-on-error: true
-    permissions:
-      actions: write
-    steps:
-      - name: Start redeploy-stranded.yml after this run (generated)
-        if: always()
-        env:
-          GH_TOKEN: ${{ github.token }}
-          NIKATRU_RELAY_RUN: ${{ github.run_id }}
-          NIKATRU_RELAY_ATTEMPT: ${{ github.run_attempt }}
-          NIKATRU_RELAY_NAME: Build apps
-          NIKATRU_RELAY_PATH: .github/workflows/build-platforms.yml
-          NIKATRU_RELAY_CONCLUSION: ${{ contains(needs.*.result, 'cancelled') && 'cancelled' || contains(needs.*.result, 'failure') && 'failure' || 'success' }}
-          NIKATRU_RELAY_HEAD_SHA: ${{ needs.nikatru-pin.outputs.sha }}
-          NIKATRU_RELAY_EVENT: ${{ github.event.client_payload.event || github.event_name }}
-        run: gh api --method POST "repos/$GITHUB_REPOSITORY/actions/workflows/redeploy-stranded.yml/dispatches" -f ref=main -f "inputs[nikatru_relay_run]=$NIKATRU_RELAY_RUN" -f "inputs[nikatru_relay_attempt]=$NIKATRU_RELAY_ATTEMPT" -f "inputs[nikatru_relay_name]=$NIKATRU_RELAY_NAME" -f "inputs[nikatru_relay_path]=$NIKATRU_RELAY_PATH" -f "inputs[nikatru_relay_conclusion]=$NIKATRU_RELAY_CONCLUSION" -f "inputs[nikatru_relay_head_sha]=$NIKATRU_RELAY_HEAD_SHA" -f "inputs[nikatru_relay_event]=$NIKATRU_RELAY_EVENT" --silent || echo "::warning::could not start redeploy-stranded.yml after run $NIKATRU_RELAY_RUN attempt $NIKATRU_RELAY_ATTEMPT"

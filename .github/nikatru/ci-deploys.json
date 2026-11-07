@@ -22,13 +22,6 @@
       ]
     },
     {
-      "job": "pool-sync",
-      "context": "ci/pool-sync",
-      "members": [
-        "ci.pool-sync."
-      ]
-    },
-    {
       "job": "money-plan",
       "context": "ci/money-plan",
       "members": [
