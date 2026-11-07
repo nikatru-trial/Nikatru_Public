@@ -52,7 +52,7 @@ verdict back to that repository. It is generated: a pull request here is not how
   `BRIDGE_ARTIFACT_SECRET` (signs a private artifact upload; held only by the private-artifact
   steps), plus what each workflow reads.
 
-## Workflows (53)
+## Workflows (55)
 
 - `apple-expiry-write.yml`
 - `autopilot-watch.yml`
@@ -86,6 +86,7 @@ verdict back to that repository. It is generated: a pull request here is not how
 - `native-auth-proof.yml`
 - `new-user-e2e.yml` — reports `new-user-e2e`
 - `ops-watch.yml` — reports `ops-watch`
+- `org-move-duty.yml`
 - `owner-page-watch.yml`
 - `pr-recheck.yml`
 - `redeploy-stranded.yml`
@@ -103,6 +104,7 @@ verdict back to that repository. It is generated: a pull request here is not how
 - `submit-snap.yml`
 - `submit-windows-store.yml`
 - `symbolication-proof.yml`
+- `template-verifier-windows.yml`
 - `time-travel.yml`
 - `trufflehog.yml`
 - `update-goldens.yml`

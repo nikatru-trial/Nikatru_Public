@@ -440,16 +440,7 @@ jobs:
         run: |
           NIKATRU_QUIET="$(mktemp "${RUNNER_TEMP:-/tmp}/nikatru-step.XXXXXX")"
           cat > "$NIKATRU_QUIET" <<'NIKATRU_QUIET_EOF'
-          missing=""
-          for k in SUPABASE_URL SUPABASE_ANON_KEY SUPABASE_SERVICE_ROLE_KEY; do
-            eval "v=\$$k"
-            [ -z "$v" ] && missing="$missing $k"
-          done
-          if [ -n "$missing" ]; then
-            echo "::error title=Capture cannot run::Missing secret(s):$missing. Without them the app builds in DEMO posture, whose every screen carries a 'Demo data' banner and whose board is twelve third-party trademarks. This is a failed run, not a skipped one."
-            exit 1
-          fi
-          echo "All three secrets present — the build will be LIVE."
+          node tooling/store/capture-account.mjs preflight
           NIKATRU_QUIET_EOF
           NIKATRU_SHELL="${BASH:-bash}"; if command -v cygpath >/dev/null 2>&1; then NIKATRU_SHELL="$(cygpath -w "$NIKATRU_SHELL")"; fi
           node "$GITHUB_WORKSPACE/../.nikatru-shell/quiet-step.mjs" --name store-screenshots.capture.3 -- "$NIKATRU_SHELL" -e "$NIKATRU_QUIET"
@@ -541,7 +532,7 @@ jobs:
         run: |
           NIKATRU_QUIET="$(mktemp "${RUNNER_TEMP:-/tmp}/nikatru-step.XXXXXX")"
           cat > "$NIKATRU_QUIET" <<'NIKATRU_QUIET_EOF'
-          node tooling/e2e/provision_user.mjs
+          node tooling/store/capture-account.mjs provision
           NIKATRU_QUIET_EOF
           NIKATRU_SHELL="${BASH:-bash}"; if command -v cygpath >/dev/null 2>&1; then NIKATRU_SHELL="$(cygpath -w "$NIKATRU_SHELL")"; fi
           node "$GITHUB_WORKSPACE/../.nikatru-shell/quiet-step.mjs" --name store-screenshots.capture.12 -- "$NIKATRU_SHELL" -e "$NIKATRU_QUIET"
@@ -766,7 +757,7 @@ jobs:
         run: |
           NIKATRU_QUIET="$(mktemp "${RUNNER_TEMP:-/tmp}/nikatru-step.XXXXXX")"
           cat > "$NIKATRU_QUIET" <<'NIKATRU_QUIET_EOF'
-          node tooling/e2e/purge.mjs
+          node tooling/store/capture-account.mjs purge
           NIKATRU_QUIET_EOF
           NIKATRU_SHELL="${BASH:-bash}"; if command -v cygpath >/dev/null 2>&1; then NIKATRU_SHELL="$(cygpath -w "$NIKATRU_SHELL")"; fi
           node "$GITHUB_WORKSPACE/../.nikatru-shell/quiet-step.mjs" --name store-screenshots.capture.27 -- "$NIKATRU_SHELL" -e "$NIKATRU_QUIET"
@@ -870,16 +861,7 @@ jobs:
         run: |
           NIKATRU_QUIET="$(mktemp "${RUNNER_TEMP:-/tmp}/nikatru-step.XXXXXX")"
           cat > "$NIKATRU_QUIET" <<'NIKATRU_QUIET_EOF'
-          missing=""
-          for k in SUPABASE_URL SUPABASE_ANON_KEY SUPABASE_SERVICE_ROLE_KEY; do
-            eval "v=\$$k"
-            [ -z "$v" ] && missing="$missing $k"
-          done
-          if [ -n "$missing" ]; then
-            echo "::error title=Capture cannot run::Missing secret(s):$missing. Without them the app builds in DEMO posture, whose every screen carries a 'Demo data' banner and whose board is twelve third-party trademarks. This is a failed run, not a skipped one."
-            exit 1
-          fi
-          echo "All three secrets present — the build will be LIVE."
+          node tooling/store/capture-account.mjs preflight
           NIKATRU_QUIET_EOF
           NIKATRU_SHELL="${BASH:-bash}"; if command -v cygpath >/dev/null 2>&1; then NIKATRU_SHELL="$(cygpath -w "$NIKATRU_SHELL")"; fi
           node "$GITHUB_WORKSPACE/../.nikatru-shell/quiet-step.mjs" --name store-screenshots.capture-linux.3 -- "$NIKATRU_SHELL" -e "$NIKATRU_QUIET"
@@ -1000,7 +982,7 @@ jobs:
         run: |
           NIKATRU_QUIET="$(mktemp "${RUNNER_TEMP:-/tmp}/nikatru-step.XXXXXX")"
           cat > "$NIKATRU_QUIET" <<'NIKATRU_QUIET_EOF'
-          node tooling/e2e/provision_user.mjs
+          node tooling/store/capture-account.mjs provision
           NIKATRU_QUIET_EOF
           NIKATRU_SHELL="${BASH:-bash}"; if command -v cygpath >/dev/null 2>&1; then NIKATRU_SHELL="$(cygpath -w "$NIKATRU_SHELL")"; fi
           node "$GITHUB_WORKSPACE/../.nikatru-shell/quiet-step.mjs" --name store-screenshots.capture-linux.12 -- "$NIKATRU_SHELL" -e "$NIKATRU_QUIET"
@@ -1165,7 +1147,7 @@ jobs:
         run: |
           NIKATRU_QUIET="$(mktemp "${RUNNER_TEMP:-/tmp}/nikatru-step.XXXXXX")"
           cat > "$NIKATRU_QUIET" <<'NIKATRU_QUIET_EOF'
-          node tooling/e2e/purge.mjs
+          node tooling/store/capture-account.mjs purge
           NIKATRU_QUIET_EOF
           NIKATRU_SHELL="${BASH:-bash}"; if command -v cygpath >/dev/null 2>&1; then NIKATRU_SHELL="$(cygpath -w "$NIKATRU_SHELL")"; fi
           node "$GITHUB_WORKSPACE/../.nikatru-shell/quiet-step.mjs" --name store-screenshots.capture-linux.23 -- "$NIKATRU_SHELL" -e "$NIKATRU_QUIET"
@@ -1273,16 +1255,7 @@ jobs:
         run: |
           NIKATRU_QUIET="$(mktemp "${RUNNER_TEMP:-/tmp}/nikatru-step.XXXXXX")"
           cat > "$NIKATRU_QUIET" <<'NIKATRU_QUIET_EOF'
-          missing=""
-          for k in SUPABASE_URL SUPABASE_ANON_KEY SUPABASE_SERVICE_ROLE_KEY; do
-            eval "v=\$$k"
-            [ -z "$v" ] && missing="$missing $k"
-          done
-          if [ -n "$missing" ]; then
-            echo "::error title=Capture cannot run::Missing secret(s):$missing. Without them the app builds in DEMO posture, whose every screen carries a 'Demo data' banner and whose board is twelve third-party trademarks. This is a failed run, not a skipped one."
-            exit 1
-          fi
-          echo "All three secrets present — the build will be LIVE."
+          node tooling/store/capture-account.mjs preflight
           NIKATRU_QUIET_EOF
           NIKATRU_SHELL="${BASH:-bash}"; if command -v cygpath >/dev/null 2>&1; then NIKATRU_SHELL="$(cygpath -w "$NIKATRU_SHELL")"; fi
           node "$GITHUB_WORKSPACE/../.nikatru-shell/quiet-step.mjs" --name store-screenshots.capture-desktop-native.3 -- "$NIKATRU_SHELL" --noprofile --norc -eo pipefail "$NIKATRU_QUIET"
@@ -1399,7 +1372,7 @@ jobs:
         run: |
           NIKATRU_QUIET="$(mktemp "${RUNNER_TEMP:-/tmp}/nikatru-step.XXXXXX")"
           cat > "$NIKATRU_QUIET" <<'NIKATRU_QUIET_EOF'
-          node tooling/e2e/provision_user.mjs
+          node tooling/store/capture-account.mjs provision
           NIKATRU_QUIET_EOF
           NIKATRU_SHELL="${BASH:-bash}"; if command -v cygpath >/dev/null 2>&1; then NIKATRU_SHELL="$(cygpath -w "$NIKATRU_SHELL")"; fi
           node "$GITHUB_WORKSPACE/../.nikatru-shell/quiet-step.mjs" --name store-screenshots.capture-desktop-native.11 -- "$NIKATRU_SHELL" --noprofile --norc -eo pipefail "$NIKATRU_QUIET"
@@ -1553,7 +1526,7 @@ jobs:
         run: |
           NIKATRU_QUIET="$(mktemp "${RUNNER_TEMP:-/tmp}/nikatru-step.XXXXXX")"
           cat > "$NIKATRU_QUIET" <<'NIKATRU_QUIET_EOF'
-          node tooling/e2e/purge.mjs
+          node tooling/store/capture-account.mjs purge
           NIKATRU_QUIET_EOF
           NIKATRU_SHELL="${BASH:-bash}"; if command -v cygpath >/dev/null 2>&1; then NIKATRU_SHELL="$(cygpath -w "$NIKATRU_SHELL")"; fi
           node "$GITHUB_WORKSPACE/../.nikatru-shell/quiet-step.mjs" --name store-screenshots.capture-desktop-native.22 -- "$NIKATRU_SHELL" --noprofile --norc -eo pipefail "$NIKATRU_QUIET"
@@ -1575,7 +1548,7 @@ jobs:
     if: needs.nikatru-pin.result == 'success' && (needs.nikatru-approve.result == 'success' || (needs.nikatru-approve.result == 'skipped' && !((inputs.private_ref || '') != ''))) && !cancelled() && !failure() && needs.gate.result == 'success' && (inputs.channel == 'ios-appstore')
     needs: [nikatru-pin, nikatru-approve, gate]
     runs-on: macos-26
-    timeout-minutes: 107
+    timeout-minutes: 109
     permissions:
       contents: read
       id-token: write
@@ -1657,16 +1630,7 @@ jobs:
         run: |
           NIKATRU_QUIET="$(mktemp "${RUNNER_TEMP:-/tmp}/nikatru-step.XXXXXX")"
           cat > "$NIKATRU_QUIET" <<'NIKATRU_QUIET_EOF'
-          missing=""
-          for k in SUPABASE_URL SUPABASE_ANON_KEY SUPABASE_SERVICE_ROLE_KEY; do
-            eval "v=\$$k"
-            [ -z "$v" ] && missing="$missing $k"
-          done
-          if [ -n "$missing" ]; then
-            echo "::error title=Capture cannot run::Missing secret(s):$missing. Without them the app builds in DEMO posture, whose every screen carries a 'Demo data' banner and whose board is twelve third-party trademarks. This is a failed run, not a skipped one."
-            exit 1
-          fi
-          echo "All three secrets present — the build will be LIVE."
+          node tooling/store/capture-account.mjs preflight
           NIKATRU_QUIET_EOF
           NIKATRU_SHELL="${BASH:-bash}"; if command -v cygpath >/dev/null 2>&1; then NIKATRU_SHELL="$(cygpath -w "$NIKATRU_SHELL")"; fi
           node "$GITHUB_WORKSPACE/../.nikatru-shell/quiet-step.mjs" --name store-screenshots.capture-ios.3 -- "$NIKATRU_SHELL" -e "$NIKATRU_QUIET"
@@ -1804,7 +1768,7 @@ jobs:
         run: |
           NIKATRU_QUIET="$(mktemp "${RUNNER_TEMP:-/tmp}/nikatru-step.XXXXXX")"
           cat > "$NIKATRU_QUIET" <<'NIKATRU_QUIET_EOF'
-          node tooling/e2e/provision_user.mjs
+          node tooling/store/capture-account.mjs provision
           NIKATRU_QUIET_EOF
           NIKATRU_SHELL="${BASH:-bash}"; if command -v cygpath >/dev/null 2>&1; then NIKATRU_SHELL="$(cygpath -w "$NIKATRU_SHELL")"; fi
           node "$GITHUB_WORKSPACE/../.nikatru-shell/quiet-step.mjs" --name store-screenshots.capture-ios.12 -- "$NIKATRU_SHELL" -e "$NIKATRU_QUIET"
@@ -1867,7 +1831,7 @@ jobs:
         run: |
           NIKATRU_QUIET="$(mktemp "${RUNNER_TEMP:-/tmp}/nikatru-step.XXXXXX")"
           cat > "$NIKATRU_QUIET" <<'NIKATRU_QUIET_EOF'
-          node tooling/store/capture-deadline.mjs --minutes 13 --evidence-dir "${RUNNER_TEMP}/capture-evidence/iap" -- node tooling/store/capture-iap-review.mjs --app "$APP"
+          node tooling/store/capture-deadline.mjs --minutes 15 --evidence-dir "${RUNNER_TEMP}/capture-evidence/iap" -- node tooling/store/capture-iap-review.mjs --app "$APP"
           NIKATRU_QUIET_EOF
           NIKATRU_SHELL="${BASH:-bash}"; if command -v cygpath >/dev/null 2>&1; then NIKATRU_SHELL="$(cygpath -w "$NIKATRU_SHELL")"; fi
           node "$GITHUB_WORKSPACE/../.nikatru-shell/quiet-step.mjs" --name store-screenshots.capture-ios.18 -- "$NIKATRU_SHELL" -e "$NIKATRU_QUIET"
@@ -1984,7 +1948,7 @@ jobs:
         run: |
           NIKATRU_QUIET="$(mktemp "${RUNNER_TEMP:-/tmp}/nikatru-step.XXXXXX")"
           cat > "$NIKATRU_QUIET" <<'NIKATRU_QUIET_EOF'
-          node tooling/e2e/purge.mjs
+          node tooling/store/capture-account.mjs purge
           NIKATRU_QUIET_EOF
           NIKATRU_SHELL="${BASH:-bash}"; if command -v cygpath >/dev/null 2>&1; then NIKATRU_SHELL="$(cygpath -w "$NIKATRU_SHELL")"; fi
           node "$GITHUB_WORKSPACE/../.nikatru-shell/quiet-step.mjs" --name store-screenshots.capture-ios.25 -- "$NIKATRU_SHELL" -e "$NIKATRU_QUIET"
