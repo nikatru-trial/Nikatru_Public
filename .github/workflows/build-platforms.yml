@@ -2023,6 +2023,8 @@ jobs:
       fail-fast: false
       matrix:
         app: ${{ fromJSON(needs.prepare.outputs.apps) }}
+    env:
+      APPLE_LOCK_MODE: report
     permissions:
       contents: read
       checks: read
@@ -2144,6 +2146,26 @@ jobs:
           NIKATRU_QUIET_EOF
           NIKATRU_SHELL="${BASH:-bash}"; if command -v cygpath >/dev/null 2>&1; then NIKATRU_SHELL="$(cygpath -w "$NIKATRU_SHELL")"; fi
           node "$GITHUB_WORKSPACE/../.nikatru-shell/quiet-step.mjs" --name build-platforms.apple.7 -- "$NIKATRU_SHELL" -e "$NIKATRU_QUIET"
+      - name: Resolve the Apple packages before signing, and grade their locks
+        env:
+          APP: ${{ matrix.app }}
+        run: |
+          NIKATRU_QUIET="$(mktemp "${RUNNER_TEMP:-/tmp}/nikatru-step.XXXXXX")"
+          cat > "$NIKATRU_QUIET" <<'NIKATRU_QUIET_EOF'
+          node tooling/ci/apple-lock-report.mjs --resolve --dir "apps/${APP}" --out "${RUNNER_TEMP}/apple-dependency-locks-presign" --artifact "apple-dependency-locks-presign-${APP}"
+          NIKATRU_QUIET_EOF
+          NIKATRU_SHELL="${BASH:-bash}"; if command -v cygpath >/dev/null 2>&1; then NIKATRU_SHELL="$(cygpath -w "$NIKATRU_SHELL")"; fi
+          node "$GITHUB_WORKSPACE/../.nikatru-shell/quiet-step.mjs" --name build-platforms.apple.8 -- "$NIKATRU_SHELL" -e "$NIKATRU_QUIET"
+      - name: Store apple-dependency-locks-presign-${{ matrix.app }} in the bridge's private home (generated)
+        shell: bash
+        working-directory: ${{ github.workspace }}
+        env:
+          NIKATRU_PATHS: ${{ runner.temp }}/apple-dependency-locks-presign
+          NIKATRU_ARTIFACT_NAME: apple-dependency-locks-presign-${{ matrix.app }}
+          NIKATRU_IF_NO_FILES: warn
+          BRIDGE_ARTIFACT_SECRET: ${{ secrets.BRIDGE_ARTIFACT_SECRET }}
+          NIKATRU_BRIDGE_ARTIFACT_URL: https://gh-bridge.nikatru.workers.dev/artifact
+        run: node tooling/ops/bridge-artifact.mjs upload
       - name: Prepare the Apple distribution identity
         env:
           APPLE_DIST_CERT_P12_BASE64: ${{ secrets.APPLE_DIST_CERT_P12_BASE64 }}
@@ -2159,7 +2181,7 @@ jobs:
           node tooling/ci/apple-signing.mjs --app ${{ matrix.app }} --channel ios-appstore --channel macos-appstore
           NIKATRU_QUIET_EOF
           NIKATRU_SHELL="${BASH:-bash}"; if command -v cygpath >/dev/null 2>&1; then NIKATRU_SHELL="$(cygpath -w "$NIKATRU_SHELL")"; fi
-          node "$GITHUB_WORKSPACE/../.nikatru-shell/quiet-step.mjs" --name build-platforms.apple.8 -- "$NIKATRU_SHELL" -e "$NIKATRU_QUIET"
+          node "$GITHUB_WORKSPACE/../.nikatru-shell/quiet-step.mjs" --name build-platforms.apple.10 -- "$NIKATRU_SHELL" -e "$NIKATRU_QUIET"
       - name: Point the Xcode projects at the imported identity
         if: env.APPLE_SIGNING_POSTURE == 'release-signed'
         working-directory: apps/${{ matrix.app }}
@@ -2197,7 +2219,7 @@ jobs:
           echo "::endgroup::"
           NIKATRU_QUIET_EOF
           NIKATRU_SHELL="${BASH:-bash}"; if command -v cygpath >/dev/null 2>&1; then NIKATRU_SHELL="$(cygpath -w "$NIKATRU_SHELL")"; fi
-          node "$GITHUB_WORKSPACE/../.nikatru-shell/quiet-step.mjs" --name build-platforms.apple.9 -- "$NIKATRU_SHELL" -e "$NIKATRU_QUIET"
+          node "$GITHUB_WORKSPACE/../.nikatru-shell/quiet-step.mjs" --name build-platforms.apple.11 -- "$NIKATRU_SHELL" -e "$NIKATRU_QUIET"
       - name: The signing identity is reachable from this shell
         if: env.APPLE_SIGNING_POSTURE == 'release-signed'
         run: |
@@ -2208,7 +2230,7 @@ jobs:
           security find-identity -v "$APPLE_KEYCHAIN_PATH"
           NIKATRU_QUIET_EOF
           NIKATRU_SHELL="${BASH:-bash}"; if command -v cygpath >/dev/null 2>&1; then NIKATRU_SHELL="$(cygpath -w "$NIKATRU_SHELL")"; fi
-          node "$GITHUB_WORKSPACE/../.nikatru-shell/quiet-step.mjs" --name build-platforms.apple.10 -- "$NIKATRU_SHELL" -e "$NIKATRU_QUIET"
+          node "$GITHUB_WORKSPACE/../.nikatru-shell/quiet-step.mjs" --name build-platforms.apple.12 -- "$NIKATRU_SHELL" -e "$NIKATRU_QUIET"
       - name: Build macos
         id: build_macos
         env:
@@ -2222,7 +2244,7 @@ jobs:
           node tooling/ci/flutter-release-build.mjs ${{ matrix.app }} macos macos-appstore
           NIKATRU_QUIET_EOF
           NIKATRU_SHELL="${BASH:-bash}"; if command -v cygpath >/dev/null 2>&1; then NIKATRU_SHELL="$(cygpath -w "$NIKATRU_SHELL")"; fi
-          node "$GITHUB_WORKSPACE/../.nikatru-shell/quiet-step.mjs" --name build-platforms.apple.11 -- "$NIKATRU_SHELL" -e "$NIKATRU_QUIET"
+          node "$GITHUB_WORKSPACE/../.nikatru-shell/quiet-step.mjs" --name build-platforms.apple.13 -- "$NIKATRU_SHELL" -e "$NIKATRU_QUIET"
       - name: The macOS bundle is signed by the identity this lane intended
         run: |
           NIKATRU_QUIET="$(mktemp "${RUNNER_TEMP:-/tmp}/nikatru-step.XXXXXX")"
@@ -2230,7 +2252,7 @@ jobs:
           node tooling/ci/assert-artifact-signed-apple.mjs apps/${{ matrix.app }}/build/macos/Build/Products/Release/*.app
           NIKATRU_QUIET_EOF
           NIKATRU_SHELL="${BASH:-bash}"; if command -v cygpath >/dev/null 2>&1; then NIKATRU_SHELL="$(cygpath -w "$NIKATRU_SHELL")"; fi
-          node "$GITHUB_WORKSPACE/../.nikatru-shell/quiet-step.mjs" --name build-platforms.apple.12 -- "$NIKATRU_SHELL" -e "$NIKATRU_QUIET"
+          node "$GITHUB_WORKSPACE/../.nikatru-shell/quiet-step.mjs" --name build-platforms.apple.14 -- "$NIKATRU_SHELL" -e "$NIKATRU_QUIET"
       - name: The macOS bundle carries the Info.plist keys app.yaml renders
         run: |
           NIKATRU_QUIET="$(mktemp "${RUNNER_TEMP:-/tmp}/nikatru-step.XXXXXX")"
@@ -2238,7 +2260,7 @@ jobs:
           node tooling/ci/assert-built-info-plist.mjs --app ${{ matrix.app }} apps/${{ matrix.app }}/build/macos/Build/Products/Release/*.app
           NIKATRU_QUIET_EOF
           NIKATRU_SHELL="${BASH:-bash}"; if command -v cygpath >/dev/null 2>&1; then NIKATRU_SHELL="$(cygpath -w "$NIKATRU_SHELL")"; fi
-          node "$GITHUB_WORKSPACE/../.nikatru-shell/quiet-step.mjs" --name build-platforms.apple.13 -- "$NIKATRU_SHELL" -e "$NIKATRU_QUIET"
+          node "$GITHUB_WORKSPACE/../.nikatru-shell/quiet-step.mjs" --name build-platforms.apple.15 -- "$NIKATRU_SHELL" -e "$NIKATRU_QUIET"
       - name: Build ios (signed archive + export)
         id: build_ipa
         if: env.APPLE_SIGNING_POSTURE == 'release-signed'
@@ -2253,7 +2275,7 @@ jobs:
           node tooling/ci/flutter-release-build.mjs ${{ matrix.app }} ipa ios-appstore
           NIKATRU_QUIET_EOF
           NIKATRU_SHELL="${BASH:-bash}"; if command -v cygpath >/dev/null 2>&1; then NIKATRU_SHELL="$(cygpath -w "$NIKATRU_SHELL")"; fi
-          node "$GITHUB_WORKSPACE/../.nikatru-shell/quiet-step.mjs" --name build-platforms.apple.14 -- "$NIKATRU_SHELL" -e "$NIKATRU_QUIET"
+          node "$GITHUB_WORKSPACE/../.nikatru-shell/quiet-step.mjs" --name build-platforms.apple.16 -- "$NIKATRU_SHELL" -e "$NIKATRU_QUIET"
       - name: Stamp the .ipa with the channel its build compiled in
         if: env.APPLE_SIGNING_POSTURE == 'release-signed'
         run: |
@@ -2262,7 +2284,7 @@ jobs:
           node tooling/ci/stamp-channel.mjs --channel ios-appstore --build-step build_ipa apps/${{ matrix.app }}/build/ios/ipa/*.ipa
           NIKATRU_QUIET_EOF
           NIKATRU_SHELL="${BASH:-bash}"; if command -v cygpath >/dev/null 2>&1; then NIKATRU_SHELL="$(cygpath -w "$NIKATRU_SHELL")"; fi
-          node "$GITHUB_WORKSPACE/../.nikatru-shell/quiet-step.mjs" --name build-platforms.apple.15 -- "$NIKATRU_SHELL" -e "$NIKATRU_QUIET"
+          node "$GITHUB_WORKSPACE/../.nikatru-shell/quiet-step.mjs" --name build-platforms.apple.17 -- "$NIKATRU_SHELL" -e "$NIKATRU_QUIET"
       - name: The .ipa carries the Info.plist keys app.yaml renders
         if: env.APPLE_SIGNING_POSTURE == 'release-signed'
         run: |
@@ -2271,7 +2293,7 @@ jobs:
           node tooling/ci/assert-built-info-plist.mjs --app ${{ matrix.app }} apps/${{ matrix.app }}/build/ios/ipa/*.ipa
           NIKATRU_QUIET_EOF
           NIKATRU_SHELL="${BASH:-bash}"; if command -v cygpath >/dev/null 2>&1; then NIKATRU_SHELL="$(cygpath -w "$NIKATRU_SHELL")"; fi
-          node "$GITHUB_WORKSPACE/../.nikatru-shell/quiet-step.mjs" --name build-platforms.apple.16 -- "$NIKATRU_SHELL" -e "$NIKATRU_QUIET"
+          node "$GITHUB_WORKSPACE/../.nikatru-shell/quiet-step.mjs" --name build-platforms.apple.18 -- "$NIKATRU_SHELL" -e "$NIKATRU_QUIET"
       - name: Build ios (no codesign — unsigned build proof)
         if: env.APPLE_SIGNING_POSTURE != 'release-signed'
         env:
@@ -2285,7 +2307,7 @@ jobs:
           node tooling/ci/flutter-release-build.mjs ${{ matrix.app }} ios ios-appstore
           NIKATRU_QUIET_EOF
           NIKATRU_SHELL="${BASH:-bash}"; if command -v cygpath >/dev/null 2>&1; then NIKATRU_SHELL="$(cygpath -w "$NIKATRU_SHELL")"; fi
-          node "$GITHUB_WORKSPACE/../.nikatru-shell/quiet-step.mjs" --name build-platforms.apple.17 -- "$NIKATRU_SHELL" -e "$NIKATRU_QUIET"
+          node "$GITHUB_WORKSPACE/../.nikatru-shell/quiet-step.mjs" --name build-platforms.apple.19 -- "$NIKATRU_SHELL" -e "$NIKATRU_QUIET"
       - name: Stage symbols-${{ matrix.app }}-apple for this run's later jobs (generated)
         id: nikatru-stage-11
         shell: bash
@@ -2342,55 +2364,17 @@ jobs:
           exit "$drift"
           NIKATRU_QUIET_EOF
           NIKATRU_SHELL="${BASH:-bash}"; if command -v cygpath >/dev/null 2>&1; then NIKATRU_SHELL="$(cygpath -w "$NIKATRU_SHELL")"; fi
-          node "$GITHUB_WORKSPACE/../.nikatru-shell/quiet-step.mjs" --name build-platforms.apple.19 -- "$NIKATRU_SHELL" -e "$NIKATRU_QUIET"
+          node "$GITHUB_WORKSPACE/../.nikatru-shell/quiet-step.mjs" --name build-platforms.apple.21 -- "$NIKATRU_SHELL" -e "$NIKATRU_QUIET"
       - name: Report the Apple dependency locks this build resolved
-        working-directory: apps/${{ matrix.app }}
         env:
-          APPLE_LOCK_MODE: report
           APP: ${{ matrix.app }}
         run: |
           NIKATRU_QUIET="$(mktemp "${RUNNER_TEMP:-/tmp}/nikatru-step.XXXXXX")"
           cat > "$NIKATRU_QUIET" <<'NIKATRU_QUIET_EOF'
-          set -euo pipefail
-          out="${RUNNER_TEMP}/apple-dependency-locks"
-          rm -rf "$out"
-          mkdir -p "$out"
-          report="${out}/locks.txt"
-          : > "$report"
-          found=0
-          unheld=0
-          while IFS= read -r -d '' lock; do
-            lock="${lock#./}"
-            found=$((found + 1))
-            sha="$(shasum -a 256 "$lock" | cut -d' ' -f1)"
-            if git ls-files --error-unmatch "$lock" > /dev/null 2>&1; then
-              if git diff --quiet -- "$lock"; then
-                state="held, unchanged"
-              else
-                state="held, CHANGED by this build"
-                unheld=1
-              fi
-            else
-              state="NOT held (resolved by this build, not committed)"
-              unheld=1
-            fi
-            mkdir -p "${out}/$(dirname "$lock")"
-            cp "$lock" "${out}/${lock}"
-            echo "apple-lock apps/${APP}/${lock} sha256 ${sha}: ${state}" | tee -a "$report"
-          done < <(find ios macos \( -name build -o -name DerivedData -o -name Pods -o -path '*/Flutter/ephemeral' \) -prune -o \( -name Podfile.lock -o -name Package.resolved \) -type f -print0)
-          if [ "$found" -eq 0 ]; then
-            echo "apple-lock apps/${APP}: no Podfile.lock and no Package.resolved — this build resolved no remote Apple package" | tee -a "$report"
-          fi
-          if [ "$unheld" -ne 0 ]; then
-            if [ "$APPLE_LOCK_MODE" = enforce ]; then
-              echo "::error title=Apple dependencies unlocked::a lock this build resolved is not the committed one (${report}). Commit the files from the apple-dependency-locks-${APP} artifact in a reviewed change."
-              exit 1
-            fi
-            echo "::warning title=Apple dependencies unlocked (report-only)::$(grep -cE 'NOT held|CHANGED' "$report") lock(s) not held by the repo; see the apple-dependency-locks-${APP} artifact."
-          fi
+          node tooling/ci/apple-lock-report.mjs --dir "apps/${APP}" --out "${RUNNER_TEMP}/apple-dependency-locks" --artifact "apple-dependency-locks-${APP}"
           NIKATRU_QUIET_EOF
           NIKATRU_SHELL="${BASH:-bash}"; if command -v cygpath >/dev/null 2>&1; then NIKATRU_SHELL="$(cygpath -w "$NIKATRU_SHELL")"; fi
-          node "$GITHUB_WORKSPACE/../.nikatru-shell/quiet-step.mjs" --name build-platforms.apple.20 -- "$NIKATRU_SHELL" -e "$NIKATRU_QUIET"
+          node "$GITHUB_WORKSPACE/../.nikatru-shell/quiet-step.mjs" --name build-platforms.apple.22 -- "$NIKATRU_SHELL" -e "$NIKATRU_QUIET"
       - name: Store apple-dependency-locks-${{ matrix.app }} in the bridge's private home (generated)
         shell: bash
         working-directory: ${{ github.workspace }}
@@ -2422,7 +2406,7 @@ jobs:
           ls -l "$out"
           NIKATRU_QUIET_EOF
           NIKATRU_SHELL="${BASH:-bash}"; if command -v cygpath >/dev/null 2>&1; then NIKATRU_SHELL="$(cygpath -w "$NIKATRU_SHELL")"; fi
-          node "$GITHUB_WORKSPACE/../.nikatru-shell/quiet-step.mjs" --name build-platforms.apple.22 -- "$NIKATRU_SHELL" -e "$NIKATRU_QUIET"
+          node "$GITHUB_WORKSPACE/../.nikatru-shell/quiet-step.mjs" --name build-platforms.apple.24 -- "$NIKATRU_SHELL" -e "$NIKATRU_QUIET"
       - name: Stamp the .pkg with the channel its build compiled in
         if: env.APPLE_SIGNING_POSTURE == 'release-signed'
         run: |
@@ -2431,7 +2415,7 @@ jobs:
           node tooling/ci/stamp-channel.mjs --channel macos-appstore --build-step build_macos apps/${{ matrix.app }}/build/macos/pkg/*.pkg
           NIKATRU_QUIET_EOF
           NIKATRU_SHELL="${BASH:-bash}"; if command -v cygpath >/dev/null 2>&1; then NIKATRU_SHELL="$(cygpath -w "$NIKATRU_SHELL")"; fi
-          node "$GITHUB_WORKSPACE/../.nikatru-shell/quiet-step.mjs" --name build-platforms.apple.23 -- "$NIKATRU_SHELL" -e "$NIKATRU_QUIET"
+          node "$GITHUB_WORKSPACE/../.nikatru-shell/quiet-step.mjs" --name build-platforms.apple.25 -- "$NIKATRU_SHELL" -e "$NIKATRU_QUIET"
       - name: PROVE the .ipa and .pkg are real and signed
         if: env.APPLE_SIGNING_POSTURE == 'release-signed'
         run: |
@@ -2440,7 +2424,7 @@ jobs:
           node tooling/ci/assert-artifact-signed-apple.mjs --capture ${{ runner.temp }}/apple-capture apps/${{ matrix.app }}/build/ios/ipa/*.ipa apps/${{ matrix.app }}/build/macos/pkg/*.pkg
           NIKATRU_QUIET_EOF
           NIKATRU_SHELL="${BASH:-bash}"; if command -v cygpath >/dev/null 2>&1; then NIKATRU_SHELL="$(cygpath -w "$NIKATRU_SHELL")"; fi
-          node "$GITHUB_WORKSPACE/../.nikatru-shell/quiet-step.mjs" --name build-platforms.apple.24 -- "$NIKATRU_SHELL" -e "$NIKATRU_QUIET"
+          node "$GITHUB_WORKSPACE/../.nikatru-shell/quiet-step.mjs" --name build-platforms.apple.26 -- "$NIKATRU_SHELL" -e "$NIKATRU_QUIET"
       - name: Store ci-proof-apple-capture-${{ matrix.app }} in the bridge's private home (generated)
         if: ${{ !cancelled() && env.APPLE_SIGNING_POSTURE == 'release-signed' }}
         shell: bash
@@ -2463,7 +2447,7 @@ jobs:
           exit "$status"
           NIKATRU_QUIET_EOF
           NIKATRU_SHELL="${BASH:-bash}"; if command -v cygpath >/dev/null 2>&1; then NIKATRU_SHELL="$(cygpath -w "$NIKATRU_SHELL")"; fi
-          node "$GITHUB_WORKSPACE/../.nikatru-shell/quiet-step.mjs" --name build-platforms.apple.26 -- "$NIKATRU_SHELL" -e "$NIKATRU_QUIET"
+          node "$GITHUB_WORKSPACE/../.nikatru-shell/quiet-step.mjs" --name build-platforms.apple.28 -- "$NIKATRU_SHELL" -e "$NIKATRU_QUIET"
       - name: The iOS bundle is signed by the identity this lane intended
         if: env.APPLE_SIGNING_POSTURE != 'release-signed'
         run: |
@@ -2472,7 +2456,7 @@ jobs:
           node tooling/ci/assert-artifact-signed-apple.mjs apps/${{ matrix.app }}/build/ios/iphoneos/*.app
           NIKATRU_QUIET_EOF
           NIKATRU_SHELL="${BASH:-bash}"; if command -v cygpath >/dev/null 2>&1; then NIKATRU_SHELL="$(cygpath -w "$NIKATRU_SHELL")"; fi
-          node "$GITHUB_WORKSPACE/../.nikatru-shell/quiet-step.mjs" --name build-platforms.apple.27 -- "$NIKATRU_SHELL" -e "$NIKATRU_QUIET"
+          node "$GITHUB_WORKSPACE/../.nikatru-shell/quiet-step.mjs" --name build-platforms.apple.29 -- "$NIKATRU_SHELL" -e "$NIKATRU_QUIET"
       - name: The iOS bundle carries the Info.plist keys app.yaml renders
         if: env.APPLE_SIGNING_POSTURE != 'release-signed'
         run: |
@@ -2481,7 +2465,7 @@ jobs:
           node tooling/ci/assert-built-info-plist.mjs --app ${{ matrix.app }} apps/${{ matrix.app }}/build/ios/iphoneos/*.app
           NIKATRU_QUIET_EOF
           NIKATRU_SHELL="${BASH:-bash}"; if command -v cygpath >/dev/null 2>&1; then NIKATRU_SHELL="$(cygpath -w "$NIKATRU_SHELL")"; fi
-          node "$GITHUB_WORKSPACE/../.nikatru-shell/quiet-step.mjs" --name build-platforms.apple.28 -- "$NIKATRU_SHELL" -e "$NIKATRU_QUIET"
+          node "$GITHUB_WORKSPACE/../.nikatru-shell/quiet-step.mjs" --name build-platforms.apple.30 -- "$NIKATRU_SHELL" -e "$NIKATRU_QUIET"
       - name: Every artifact this lane claims exists, and is not empty
         run: |
           NIKATRU_QUIET="$(mktemp "${RUNNER_TEMP:-/tmp}/nikatru-step.XXXXXX")"
@@ -2489,7 +2473,7 @@ jobs:
           node tooling/ci/assert-artifact-shape.mjs --app ${{ matrix.app }} --platform apple
           NIKATRU_QUIET_EOF
           NIKATRU_SHELL="${BASH:-bash}"; if command -v cygpath >/dev/null 2>&1; then NIKATRU_SHELL="$(cygpath -w "$NIKATRU_SHELL")"; fi
-          node "$GITHUB_WORKSPACE/../.nikatru-shell/quiet-step.mjs" --name build-platforms.apple.29 -- "$NIKATRU_SHELL" -e "$NIKATRU_QUIET"
+          node "$GITHUB_WORKSPACE/../.nikatru-shell/quiet-step.mjs" --name build-platforms.apple.31 -- "$NIKATRU_SHELL" -e "$NIKATRU_QUIET"
       - name: Install glitchtip-cli (pinned by version AND by digest)
         run: |
           NIKATRU_QUIET="$(mktemp "${RUNNER_TEMP:-/tmp}/nikatru-step.XXXXXX")"
@@ -2497,7 +2481,7 @@ jobs:
           node tooling/ci/install-pinned-tool.mjs glitchtip-cli --out "$RUNNER_TEMP"
           NIKATRU_QUIET_EOF
           NIKATRU_SHELL="${BASH:-bash}"; if command -v cygpath >/dev/null 2>&1; then NIKATRU_SHELL="$(cygpath -w "$NIKATRU_SHELL")"; fi
-          node "$GITHUB_WORKSPACE/../.nikatru-shell/quiet-step.mjs" --name build-platforms.apple.30 -- "$NIKATRU_SHELL" -e "$NIKATRU_QUIET"
+          node "$GITHUB_WORKSPACE/../.nikatru-shell/quiet-step.mjs" --name build-platforms.apple.32 -- "$NIKATRU_SHELL" -e "$NIKATRU_QUIET"
       - name: Upload the native debug symbols to GlitchTip
         timeout-minutes: 12
         env:
@@ -2518,7 +2502,7 @@ jobs:
             --org "$gt_org" --project "$gt_project"
           NIKATRU_QUIET_EOF
           NIKATRU_SHELL="${BASH:-bash}"; if command -v cygpath >/dev/null 2>&1; then NIKATRU_SHELL="$(cygpath -w "$NIKATRU_SHELL")"; fi
-          node "$GITHUB_WORKSPACE/../.nikatru-shell/quiet-step.mjs" --name build-platforms.apple.31 -- "$NIKATRU_SHELL" -e "$NIKATRU_QUIET"
+          node "$GITHUB_WORKSPACE/../.nikatru-shell/quiet-step.mjs" --name build-platforms.apple.33 -- "$NIKATRU_SHELL" -e "$NIKATRU_QUIET"
       - name: Stage store-${{ matrix.app }}-macos-pkg for this run's later jobs (generated)
         id: nikatru-stage-12
         if: ${{ (env.APPLE_SIGNING_POSTURE == 'release-signed') && (startsWith(github.event.client_payload.ref || 'refs/heads/main', 'refs/tags/') && 'tag' || 'branch') == 'tag' }}
