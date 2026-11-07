@@ -9,18 +9,10 @@
     "job": "e2e",
     "context": "e2e",
     "members": [
-      "e2e.e2e."
+      "e2e-leg."
     ]
   },
-  "lanes": [
-    {
-      "job": "prepare",
-      "context": "e2e/prepare",
-      "members": [
-        "e2e.prepare."
-      ]
-    }
-  ],
+  "lanes": [],
   "leadDispatch": true,
   "dispatchDetailUrl": "https://gh-bridge.nikatru.workers.dev/dispatch-detail"
 }

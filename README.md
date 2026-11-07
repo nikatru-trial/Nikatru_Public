@@ -52,7 +52,7 @@ verdict back to that repository. It is generated: a pull request here is not how
   `BRIDGE_ARTIFACT_SECRET` (signs a private artifact upload; held only by the private-artifact
   steps), plus what each workflow reads.
 
-## Workflows (53)
+## Workflows (54)
 
 - `apple-expiry-write.yml`
 - `autopilot-watch.yml`
@@ -64,6 +64,7 @@ verdict back to that repository. It is generated: a pull request here is not how
 - `deploy-sandbox.yml`
 - `deploy-web.yml`
 - `deploy-workers.yml`
+- `e2e-leg.yml`
 - `e2e.yml` — reports `e2e`
 - `extensions-beta.yml`
 - `extensions-ci.yml`
