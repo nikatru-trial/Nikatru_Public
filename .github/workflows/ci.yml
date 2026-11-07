@@ -517,7 +517,7 @@ jobs:
 
   lane-workers:
     name: lane-workers
-    if: (github.event_name != 'repository_dispatch' || (github.event.client_payload.event == 'push' && github.event.client_payload.ref == 'refs/heads/main') || github.event.client_payload.event == 'pull_request') && ((success() || (!cancelled() && (github.event.client_payload.event == 'pull_request' && startsWith(github.event.client_payload.ref, 'refs/heads/rehearsal/')))) && github.event.client_payload.draft != true)
+    if: (github.event_name != 'repository_dispatch' || (github.event.client_payload.event == 'push' && github.event.client_payload.ref == 'refs/heads/main') || github.event.client_payload.event == 'pull_request') && ((success() || (!cancelled() && (github.event.client_payload.event == 'pull_request' && (startsWith(github.event.client_payload.ref, 'refs/heads/rehearsal/') || startsWith(github.event.client_payload.ref, 'refs/heads/train/translations-'))))) && github.event.client_payload.draft != true)
     uses: ./.github/workflows/lane-workers.yml
     needs: [nikatru-pin, first-pass]
     permissions:
@@ -536,7 +536,7 @@ jobs:
 
   lane-guards:
     name: lane-guards
-    if: (github.event_name != 'repository_dispatch' || (github.event.client_payload.event == 'push' && github.event.client_payload.ref == 'refs/heads/main') || github.event.client_payload.event == 'pull_request') && ((success() || (!cancelled() && (github.event.client_payload.event == 'pull_request' && startsWith(github.event.client_payload.ref, 'refs/heads/rehearsal/')))) && github.event.client_payload.draft != true)
+    if: (github.event_name != 'repository_dispatch' || (github.event.client_payload.event == 'push' && github.event.client_payload.ref == 'refs/heads/main') || github.event.client_payload.event == 'pull_request') && ((success() || (!cancelled() && (github.event.client_payload.event == 'pull_request' && (startsWith(github.event.client_payload.ref, 'refs/heads/rehearsal/') || startsWith(github.event.client_payload.ref, 'refs/heads/train/translations-'))))) && github.event.client_payload.draft != true)
     uses: ./.github/workflows/lane-guards.yml
     needs: [nikatru-pin, first-pass]
     permissions:
@@ -561,7 +561,7 @@ jobs:
 
   lane-sites:
     name: lane-sites
-    if: (github.event_name != 'repository_dispatch' || (github.event.client_payload.event == 'push' && github.event.client_payload.ref == 'refs/heads/main') || github.event.client_payload.event == 'pull_request') && ((success() || (!cancelled() && (github.event.client_payload.event == 'pull_request' && startsWith(github.event.client_payload.ref, 'refs/heads/rehearsal/')))) && github.event.client_payload.draft != true)
+    if: (github.event_name != 'repository_dispatch' || (github.event.client_payload.event == 'push' && github.event.client_payload.ref == 'refs/heads/main') || github.event.client_payload.event == 'pull_request') && ((success() || (!cancelled() && (github.event.client_payload.event == 'pull_request' && (startsWith(github.event.client_payload.ref, 'refs/heads/rehearsal/') || startsWith(github.event.client_payload.ref, 'refs/heads/train/translations-'))))) && github.event.client_payload.draft != true)
     uses: ./.github/workflows/lane-sites.yml
     needs: [nikatru-pin, first-pass]
     permissions:
@@ -582,7 +582,7 @@ jobs:
 
   lane-apps:
     name: lane-apps
-    if: (github.event_name != 'repository_dispatch' || (github.event.client_payload.event == 'push' && github.event.client_payload.ref == 'refs/heads/main') || github.event.client_payload.event == 'pull_request') && ((success() || (!cancelled() && (github.event.client_payload.event == 'pull_request' && startsWith(github.event.client_payload.ref, 'refs/heads/rehearsal/')))) && github.event.client_payload.draft != true)
+    if: (github.event_name != 'repository_dispatch' || (github.event.client_payload.event == 'push' && github.event.client_payload.ref == 'refs/heads/main') || github.event.client_payload.event == 'pull_request') && ((success() || (!cancelled() && (github.event.client_payload.event == 'pull_request' && (startsWith(github.event.client_payload.ref, 'refs/heads/rehearsal/') || startsWith(github.event.client_payload.ref, 'refs/heads/train/translations-'))))) && github.event.client_payload.draft != true)
     uses: ./.github/workflows/lane-apps.yml
     needs: [nikatru-pin, first-pass]
     permissions:
@@ -601,7 +601,7 @@ jobs:
 
   lane-build:
     name: lane-build
-    if: (github.event_name != 'repository_dispatch' || (github.event.client_payload.event == 'push' && github.event.client_payload.ref == 'refs/heads/main') || github.event.client_payload.event == 'pull_request') && ((success() || (!cancelled() && (github.event.client_payload.event == 'pull_request' && startsWith(github.event.client_payload.ref, 'refs/heads/rehearsal/')))) && github.event.client_payload.draft != true)
+    if: (github.event_name != 'repository_dispatch' || (github.event.client_payload.event == 'push' && github.event.client_payload.ref == 'refs/heads/main') || github.event.client_payload.event == 'pull_request') && ((success() || (!cancelled() && (github.event.client_payload.event == 'pull_request' && (startsWith(github.event.client_payload.ref, 'refs/heads/rehearsal/') || startsWith(github.event.client_payload.ref, 'refs/heads/train/translations-'))))) && github.event.client_payload.draft != true)
     uses: ./.github/workflows/lane-build.yml
     needs: [nikatru-pin, first-pass]
     permissions:
@@ -620,7 +620,7 @@ jobs:
 
   extensions:
     name: extensions
-    if: (github.event_name != 'repository_dispatch' || (github.event.client_payload.event == 'push' && github.event.client_payload.ref == 'refs/heads/main') || github.event.client_payload.event == 'pull_request') && ((success() || (!cancelled() && (github.event.client_payload.event == 'pull_request' && startsWith(github.event.client_payload.ref, 'refs/heads/rehearsal/')))) && github.event.client_payload.draft != true)
+    if: (github.event_name != 'repository_dispatch' || (github.event.client_payload.event == 'push' && github.event.client_payload.ref == 'refs/heads/main') || github.event.client_payload.event == 'pull_request') && ((success() || (!cancelled() && (github.event.client_payload.event == 'pull_request' && (startsWith(github.event.client_payload.ref, 'refs/heads/rehearsal/') || startsWith(github.event.client_payload.ref, 'refs/heads/train/translations-'))))) && github.event.client_payload.draft != true)
     uses: ./.github/workflows/extensions-ci.yml
     needs: [nikatru-pin, first-pass]
     permissions:
@@ -634,7 +634,7 @@ jobs:
 
   as-if-main:
     name: as-if-main
-    if: (github.event_name != 'repository_dispatch' || (github.event.client_payload.event == 'push' && github.event.client_payload.ref == 'refs/heads/main') || github.event.client_payload.event == 'pull_request') && ((success() || (!cancelled() && (github.event.client_payload.event == 'pull_request' && startsWith(github.event.client_payload.ref, 'refs/heads/rehearsal/')))) && github.event.client_payload.draft != true)
+    if: (github.event_name != 'repository_dispatch' || (github.event.client_payload.event == 'push' && github.event.client_payload.ref == 'refs/heads/main') || github.event.client_payload.event == 'pull_request') && ((success() || (!cancelled() && (github.event.client_payload.event == 'pull_request' && (startsWith(github.event.client_payload.ref, 'refs/heads/rehearsal/') || startsWith(github.event.client_payload.ref, 'refs/heads/train/translations-'))))) && github.event.client_payload.draft != true)
     needs: [nikatru-pin, first-pass]
     runs-on: ubuntu-24.04
     timeout-minutes: 20

@@ -209,6 +209,7 @@ jobs:
       - name: Propose the records by pull request
         if: steps.decide.outputs.propose == 'true'
         env:
+          NIKATRU_RECORD_CLASS: name-clearance
           NIKATRU_PROPOSE_PATHS: ${{ steps.decide.outputs.paths }}
           NIKATRU_PROPOSE_BRANCH: chore/name-clearance-${{ github.run_id }}
           NIKATRU_PROPOSE_BASE: main
