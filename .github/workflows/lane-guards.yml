@@ -171,7 +171,7 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        shard: [1, 2, 3, 4]
+        shard: [1, 2, 3, 4, 5, 6]
     steps:
       - name: Check out the private tree (generated)
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
@@ -254,7 +254,7 @@ jobs:
           cat > "$NIKATRU_QUIET" <<'NIKATRU_QUIET_EOF'
           set -euo pipefail
           mkdir -p "${{ runner.temp }}/guard-tests"
-          node tooling/ci/guard-test-shards.mjs --plan --shards 4 --shard ${{ matrix.shard }} --out "${{ runner.temp }}/guard-tests/files.txt" > /dev/null
+          node tooling/ci/guard-test-shards.mjs --plan --shards 6 --shard ${{ matrix.shard }} --out "${{ runner.temp }}/guard-tests/files.txt" > /dev/null
           node --import "$SPAWN_CEILING" --test-timeout=600000 --test --test-reporter=spec  --test-reporter-destination=stdout --test-reporter=junit --test-reporter-destination="${{ runner.temp }}/guard-tests/guard-tests.junit.xml" $(cat "${{ runner.temp }}/guard-tests/files.txt")
           NIKATRU_QUIET_EOF
           NIKATRU_SHELL="${BASH:-bash}"; if command -v cygpath >/dev/null 2>&1; then NIKATRU_SHELL="$(cygpath -w "$NIKATRU_SHELL")"; fi
@@ -622,7 +622,7 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        shard: [1, 2, 3, 4]
+        shard: [1, 2, 3, 4, 5, 6]
     steps:
       - name: Check out the private tree (generated)
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
@@ -976,11 +976,65 @@ jobs:
           mkdir -p "$NIKATRU_TO"
           cp -a .nikatru-handoff/x/. "$NIKATRU_TO/"
           rm -rf .nikatru-handoff/x
+      - name: Restore the guard-tests-junit-shard-5 hand-off from this run (generated)
+        id: nikatru-restore-7
+        timeout-minutes: 6
+        uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333
+        with:
+          name: nikatru-handoff-guard-tests-junit-shard-5
+          path: .nikatru-handoff/sealed
+      - name: Unseal the guard-tests-junit-shard-5 hand-off (generated)
+        id: nikatru-unseal-7
+        if: ${{ (success()) && steps.nikatru-restore-7.outcome == 'success' }}
+        shell: bash
+        working-directory: ${{ github.workspace }}
+        env:
+          NIKATRU_HANDOFF_KEY_FILE: ${{ github.workspace }}/../.nikatru-shell/handoff.key
+          NIKATRU_HANDOFF_KEY: nikatru-handoff-guard-tests-junit-shard-5-${{ github.run_id }}-run
+          NIKATRU_HANDOFF_PREFIX: nikatru-handoff-guard-tests-junit-shard-5-${{ github.run_id }}-
+        run: node tooling/ci/shell-handoff.mjs unseal
+      - name: Place the guard-tests-junit-shard-5 hand-off where download-artifact put it (generated)
+        if: ${{ (success()) && steps.nikatru-unseal-7.outcome == 'success' }}
+        shell: bash
+        working-directory: ${{ github.workspace }}
+        env:
+          NIKATRU_TO: ${{ runner.temp }}/guard-tests-shards/guard-tests-junit-shard-5
+        run: |
+          mkdir -p "$NIKATRU_TO"
+          cp -a .nikatru-handoff/x/. "$NIKATRU_TO/"
+          rm -rf .nikatru-handoff/x
+      - name: Restore the guard-tests-junit-shard-6 hand-off from this run (generated)
+        id: nikatru-restore-8
+        timeout-minutes: 6
+        uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333
+        with:
+          name: nikatru-handoff-guard-tests-junit-shard-6
+          path: .nikatru-handoff/sealed
+      - name: Unseal the guard-tests-junit-shard-6 hand-off (generated)
+        id: nikatru-unseal-8
+        if: ${{ (success()) && steps.nikatru-restore-8.outcome == 'success' }}
+        shell: bash
+        working-directory: ${{ github.workspace }}
+        env:
+          NIKATRU_HANDOFF_KEY_FILE: ${{ github.workspace }}/../.nikatru-shell/handoff.key
+          NIKATRU_HANDOFF_KEY: nikatru-handoff-guard-tests-junit-shard-6-${{ github.run_id }}-run
+          NIKATRU_HANDOFF_PREFIX: nikatru-handoff-guard-tests-junit-shard-6-${{ github.run_id }}-
+        run: node tooling/ci/shell-handoff.mjs unseal
+      - name: Place the guard-tests-junit-shard-6 hand-off where download-artifact put it (generated)
+        if: ${{ (success()) && steps.nikatru-unseal-8.outcome == 'success' }}
+        shell: bash
+        working-directory: ${{ github.workspace }}
+        env:
+          NIKATRU_TO: ${{ runner.temp }}/guard-tests-shards/guard-tests-junit-shard-6
+        run: |
+          mkdir -p "$NIKATRU_TO"
+          cp -a .nikatru-handoff/x/. "$NIKATRU_TO/"
+          rm -rf .nikatru-handoff/x
       - name: The shards ran the whole suite exactly once (guard-test-shards --merge)
         run: |
           NIKATRU_QUIET="$(mktemp "${RUNNER_TEMP:-/tmp}/nikatru-step.XXXXXX")"
           cat > "$NIKATRU_QUIET" <<'NIKATRU_QUIET_EOF'
-          node tooling/ci/guard-test-shards.mjs --merge --shards 4 --dir "${{ runner.temp }}/guard-tests-shards" --out "${{ runner.temp }}/guard-tests.junit.xml"
+          node tooling/ci/guard-test-shards.mjs --merge --shards 6 --dir "${{ runner.temp }}/guard-tests-shards" --out "${{ runner.temp }}/guard-tests.junit.xml"
           NIKATRU_QUIET_EOF
           NIKATRU_SHELL="${BASH:-bash}"; if command -v cygpath >/dev/null 2>&1; then NIKATRU_SHELL="$(cygpath -w "$NIKATRU_SHELL")"; fi
           node "$GITHUB_WORKSPACE/../.nikatru-shell/quiet-step.mjs" --name lane-guards.guard-tests-floor.4 -- "$NIKATRU_SHELL" -e "$NIKATRU_QUIET"
