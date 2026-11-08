@@ -42,6 +42,16 @@
 //     its timeout-minutes with an empty log. The pipes get DRAIN_MS after the
 //     exit, then are cut, and the capture says so.
 //
+//   · ⏱ 2026-11-07 · O-SCHEDULED-RUN-RED-DETAIL-NEVER-DELIVERED (club-1107-1): THE FORCED-RED DRILL. The door that
+//     files a manual or scheduled run's red detail (services/gh-bridge/src/dispatch-detail.ts) had no control: nothing
+//     could make a green run red on purpose to prove the detail arrives. A dispatchable reporting root (the generator's
+//     `dispatchable`, the bridge's DISPATCH_DETAIL_WORKFLOWS) now takes a `red_drill` dispatch input, bound to
+//     RED_DRILL_ENV at the workflow's top level. When it names THIS step (`--name`, exactly) on a `workflow_dispatch`
+//     run, and the command exited 0, the step goes red (exit 1): its public line says `(drill)` and its detail
+//     section opens with RED_DRILL_BANNER above the real tail. It can only turn a green step red, never a red one
+//     green; any other event, or any other name, leaves the step as it was. It reaches the root's own jobs only (a
+//     workflow's env does not pass into a called workflow). Cases: tooling/ci/test/quiet-step-red-drill.test.mjs.
+//
 //   node tooling/ci/quiet-step.mjs --name <name> [--public] -- <cmd> [args...]
 //   node tooling/ci/quiet-step.mjs --name <name> [--public] --default-shell <script-file>
 //
@@ -68,6 +78,11 @@ export const STEP_NAME = /^[A-Za-z0-9][A-Za-z0-9._()-]{0,99}$/;
 export const PUBLIC_PREFIX = '::nikatru-public::';
 /** A line a script hands to the private detail on purpose, green or red: its text, masked. */
 export const DETAIL_PREFIX = '::nikatru-detail::';
+/** ⏱ 2026-11-07 · the forced-red drill (header): the step name a `workflow_dispatch` run's `red_drill` input names. */
+export const RED_DRILL_ENV = 'NIKATRU_RED_DRILL';
+export const RED_DRILL_BANNER = 'RED DRILL: forced red by the dispatch input red_drill. The command itself exited 0; the tail below is its real output.';
+/** PURE. Whether this step is the one a drill forces red: a `workflow_dispatch` run whose RED_DRILL_ENV is exactly `name`. */
+export const isRedDrill = (env, name) => env.GITHUB_EVENT_NAME === 'workflow_dispatch' && typeof env[RED_DRILL_ENV] === 'string' && env[RED_DRILL_ENV].trim() !== '' && env[RED_DRILL_ENV].trim() === name;
 /** An environment variable whose value is a credential by its name. */
 export const SECRET_NAME = /(TOKEN|SECRET|PASSWORD|PASSWD|PRIVATE|CREDENTIAL|_KEY$|^KEY$|DSN|SALT|AUTH|COOKIE|SIGNING|P12|KEYSTORE)/i;
 const MIN_MASK = 6;
@@ -377,9 +392,9 @@ export function noteSection(name, notes, values) {
  * The detail section for one red step. When the output holds test results, the failing tests and the counts
  * come FIRST and the tail follows under OUTPUT_TAIL_MARK; masking covers every part, the names included.
  */
-export function detailSection(name, code, captured, summary, values, resultFiles = []) {
+export function detailSection(name, code, captured, summary, values, resultFiles = [], drill = false) {
   const t = tail(captured);
-  const parts = [`### RED ${name} exit ${code}`, ''];
+  const parts = [`### RED ${name} exit ${code}`, '', ...(drill ? [RED_DRILL_BANNER, ''] : [])];
   // Masked BEFORE it is read, so a clipped line can never leave half a secret showing.
   const found = testFailures(mask(captured, values), resultFiles.map((r) => ({ name: r.name, text: mask(r.text, values) })));
   if (found) parts.push(...failuresBlock(found).map((l) => mask(l, values)), OUTPUT_TAIL_MARK, '');
@@ -514,16 +529,26 @@ export async function runQuiet(opts, io = {}) {
   if (pending !== '') scan('\n');
   await new Promise((r) => log.end(r));
   const ms = Date.now() - started;
+  // ⏱ 2026-11-07 · the forced-red drill (header): a green step the drill names goes red; a red one stays as it is.
+  const drill = code === 0 && isRedDrill(env, opts.name);
+  if (drill) return redStep({ opts, code: 1, logPath, summaryPath, runnerTemp, work, env, added, resultsDir, say, drill, notes });
   if (code === 0) {
     if (notes.length) appendFileSync(join(runnerTemp ?? work, DETAIL_FILE), noteSection(opts.name, notes, maskValues(env, added)));
     const line = `ok ${opts.name} ${ms}`;
     say(`${line}\n`);
     return { code, line };
   }
+  return redStep({ opts, code, logPath, summaryPath, runnerTemp, work, env, added, resultsDir, say, drill: false, notes });
+}
+
+/** A red step's detail section and public line (`(drill)` when the drill forced it). */
+function redStep({ opts, code, logPath, summaryPath, runnerTemp, work, env, added, resultsDir, say, drill, notes }) {
   const captured = existsSync(logPath) ? readFileSync(logPath, 'utf8') : '';
   const summary = readFileSync(summaryPath, 'utf8');
-  appendFileSync(join(runnerTemp ?? work, DETAIL_FILE), detailSection(opts.name, code, captured, summary, maskValues(env, added), resultFiles(resultsDir)));
-  const line = `RED ${opts.name} exit ${code}`;
+  // A drilled step was green, so a `::nikatru-detail::` note it printed is kept, as its green run would have.
+  if (drill && notes.length) appendFileSync(join(runnerTemp ?? work, DETAIL_FILE), noteSection(opts.name, notes, maskValues(env, added)));
+  appendFileSync(join(runnerTemp ?? work, DETAIL_FILE), detailSection(opts.name, code, captured, summary, maskValues(env, added), resultFiles(resultsDir), drill));
+  const line = `RED ${opts.name} exit ${code}${drill ? ' (drill)' : ''}`;
   say(`${line}\n`);
   return { code, line };
 }

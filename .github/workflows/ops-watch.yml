@@ -706,7 +706,7 @@ jobs:
           node tooling/ci/assert-timeout-budget.mjs --advisory
           NIKATRU_QUIET_EOF
           NIKATRU_SHELL="${BASH:-bash}"; if command -v cygpath >/dev/null 2>&1; then NIKATRU_SHELL="$(cygpath -w "$NIKATRU_SHELL")"; fi
-          node "$GITHUB_WORKSPACE/../.nikatru-shell/quiet-step.mjs" --name ops-watch.heartbeats.31 -- "$NIKATRU_SHELL" -e "$NIKATRU_QUIET"
+          node "$GITHUB_WORKSPACE/../.nikatru-shell/quiet-step.mjs" --name ops-watch.heartbeats.31 --public -- "$NIKATRU_SHELL" -e "$NIKATRU_QUIET"
       - name: File the pipeline watches' warnings against one durable issue
         if: ${{ !cancelled() }}
         env:

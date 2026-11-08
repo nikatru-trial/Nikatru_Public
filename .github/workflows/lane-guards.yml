@@ -552,6 +552,14 @@ jobs:
           NIKATRU_QUIET_EOF
           NIKATRU_SHELL="${BASH:-bash}"; if command -v cygpath >/dev/null 2>&1; then NIKATRU_SHELL="$(cygpath -w "$NIKATRU_SHELL")"; fi
           node "$GITHUB_WORKSPACE/../.nikatru-shell/quiet-step.mjs" --name lane-guards.guard-tests-floor.4 -- "$NIKATRU_SHELL" -e "$NIKATRU_QUIET"
+      - name: The plan, timed by what this run measured, is within 60% of the shards' timeout (guard-test-shards --ceiling)
+        run: |
+          NIKATRU_QUIET="$(mktemp "${RUNNER_TEMP:-/tmp}/nikatru-step.XXXXXX")"
+          cat > "$NIKATRU_QUIET" <<'NIKATRU_QUIET_EOF'
+          node tooling/ci/guard-test-shards.mjs --ceiling --shards 6 --timeout-minutes 30 --weights-from "${{ runner.temp }}/guard-tests.junit.xml"
+          NIKATRU_QUIET_EOF
+          NIKATRU_SHELL="${BASH:-bash}"; if command -v cygpath >/dev/null 2>&1; then NIKATRU_SHELL="$(cygpath -w "$NIKATRU_SHELL")"; fi
+          node "$GITHUB_WORKSPACE/../.nikatru-shell/quiet-step.mjs" --name lane-guards.guard-tests-floor.5 -- "$NIKATRU_SHELL" -e "$NIKATRU_QUIET"
       - name: Store guard-tests-junit in the bridge's private home (generated)
         if: (github.event.client_payload.event || github.event_name) == 'push' && (github.event.client_payload.ref || 'refs/heads/main') == 'refs/heads/main'
         shell: bash
@@ -570,7 +578,7 @@ jobs:
           node tooling/ci/assert-case-count-honest.mjs --junit "${{ runner.temp }}/guard-tests.junit.xml" --executed-floor tooling/ci/test/executed-floor.json --enforce-freshness
           NIKATRU_QUIET_EOF
           NIKATRU_SHELL="${BASH:-bash}"; if command -v cygpath >/dev/null 2>&1; then NIKATRU_SHELL="$(cygpath -w "$NIKATRU_SHELL")"; fi
-          node "$GITHUB_WORKSPACE/../.nikatru-shell/quiet-step.mjs" --name lane-guards.guard-tests-floor.6 -- "$NIKATRU_SHELL" -e "$NIKATRU_QUIET"
+          node "$GITHUB_WORKSPACE/../.nikatru-shell/quiet-step.mjs" --name lane-guards.guard-tests-floor.7 -- "$NIKATRU_SHELL" -e "$NIKATRU_QUIET"
       - name: Hand this job's red detail to the report job, sealed (generated)
         id: nikatru-handoff
         if: always()
@@ -706,6 +714,14 @@ jobs:
           NIKATRU_QUIET_EOF
           NIKATRU_SHELL="${BASH:-bash}"; if command -v cygpath >/dev/null 2>&1; then NIKATRU_SHELL="$(cygpath -w "$NIKATRU_SHELL")"; fi
           node "$GITHUB_WORKSPACE/../.nikatru-shell/quiet-step.mjs" --name lane-guards.guard-meta.5 -- "$NIKATRU_SHELL" -e "$NIKATRU_QUIET"
+      - name: The shard plan predicts every shard within 60% of its timeout (guard-test-shards --ceiling)
+        run: |
+          NIKATRU_QUIET="$(mktemp "${RUNNER_TEMP:-/tmp}/nikatru-step.XXXXXX")"
+          cat > "$NIKATRU_QUIET" <<'NIKATRU_QUIET_EOF'
+          node tooling/ci/guard-test-shards.mjs --ceiling --shards 6 --timeout-minutes 30
+          NIKATRU_QUIET_EOF
+          NIKATRU_SHELL="${BASH:-bash}"; if command -v cygpath >/dev/null 2>&1; then NIKATRU_SHELL="$(cygpath -w "$NIKATRU_SHELL")"; fi
+          node "$GITHUB_WORKSPACE/../.nikatru-shell/quiet-step.mjs" --name lane-guards.guard-meta.6 -- "$NIKATRU_SHELL" -e "$NIKATRU_QUIET"
       - name: Guard tree walks cannot leave the tree
         run: |
           NIKATRU_QUIET="$(mktemp "${RUNNER_TEMP:-/tmp}/nikatru-step.XXXXXX")"
@@ -713,7 +729,15 @@ jobs:
           node tooling/ci/assert-walks-bounded.mjs
           NIKATRU_QUIET_EOF
           NIKATRU_SHELL="${BASH:-bash}"; if command -v cygpath >/dev/null 2>&1; then NIKATRU_SHELL="$(cygpath -w "$NIKATRU_SHELL")"; fi
-          node "$GITHUB_WORKSPACE/../.nikatru-shell/quiet-step.mjs" --name lane-guards.guard-meta.6 -- "$NIKATRU_SHELL" -e "$NIKATRU_QUIET"
+          node "$GITHUB_WORKSPACE/../.nikatru-shell/quiet-step.mjs" --name lane-guards.guard-meta.7 -- "$NIKATRU_SHELL" -e "$NIKATRU_QUIET"
+      - name: A whole-tree git listing is never read through Node's 1 MiB default buffer
+        run: |
+          NIKATRU_QUIET="$(mktemp "${RUNNER_TEMP:-/tmp}/nikatru-step.XXXXXX")"
+          cat > "$NIKATRU_QUIET" <<'NIKATRU_QUIET_EOF'
+          node tooling/ci/assert-git-spawn-buffer.mjs
+          NIKATRU_QUIET_EOF
+          NIKATRU_SHELL="${BASH:-bash}"; if command -v cygpath >/dev/null 2>&1; then NIKATRU_SHELL="$(cygpath -w "$NIKATRU_SHELL")"; fi
+          node "$GITHUB_WORKSPACE/../.nikatru-shell/quiet-step.mjs" --name lane-guards.guard-meta.8 -- "$NIKATRU_SHELL" -e "$NIKATRU_QUIET"
       - name: A local script reads a workflow through workflow-scan, or refuses when blind
         run: |
           NIKATRU_QUIET="$(mktemp "${RUNNER_TEMP:-/tmp}/nikatru-step.XXXXXX")"
@@ -721,7 +745,7 @@ jobs:
           node tooling/ci/assert-workflow-readers.mjs
           NIKATRU_QUIET_EOF
           NIKATRU_SHELL="${BASH:-bash}"; if command -v cygpath >/dev/null 2>&1; then NIKATRU_SHELL="$(cygpath -w "$NIKATRU_SHELL")"; fi
-          node "$GITHUB_WORKSPACE/../.nikatru-shell/quiet-step.mjs" --name lane-guards.guard-meta.7 -- "$NIKATRU_SHELL" -e "$NIKATRU_QUIET"
+          node "$GITHUB_WORKSPACE/../.nikatru-shell/quiet-step.mjs" --name lane-guards.guard-meta.9 -- "$NIKATRU_SHELL" -e "$NIKATRU_QUIET"
       - name: Every matrix job's fan-out is capped under its ceiling, or allow-listed with a reason (runner-budget limb F)
         run: |
           NIKATRU_QUIET="$(mktemp "${RUNNER_TEMP:-/tmp}/nikatru-step.XXXXXX")"
@@ -729,7 +753,7 @@ jobs:
           node tooling/ci/assert-runner-budget.mjs --fanout
           NIKATRU_QUIET_EOF
           NIKATRU_SHELL="${BASH:-bash}"; if command -v cygpath >/dev/null 2>&1; then NIKATRU_SHELL="$(cygpath -w "$NIKATRU_SHELL")"; fi
-          node "$GITHUB_WORKSPACE/../.nikatru-shell/quiet-step.mjs" --name lane-guards.guard-meta.8 -- "$NIKATRU_SHELL" -e "$NIKATRU_QUIET"
+          node "$GITHUB_WORKSPACE/../.nikatru-shell/quiet-step.mjs" --name lane-guards.guard-meta.10 -- "$NIKATRU_SHELL" -e "$NIKATRU_QUIET"
       - name: Every job a pull request runs is run by the parity preflight, or exempt with its reason
         run: |
           NIKATRU_QUIET="$(mktemp "${RUNNER_TEMP:-/tmp}/nikatru-step.XXXXXX")"
@@ -737,7 +761,7 @@ jobs:
           node tooling/ci/assert-preflight-parity.mjs
           NIKATRU_QUIET_EOF
           NIKATRU_SHELL="${BASH:-bash}"; if command -v cygpath >/dev/null 2>&1; then NIKATRU_SHELL="$(cygpath -w "$NIKATRU_SHELL")"; fi
-          node "$GITHUB_WORKSPACE/../.nikatru-shell/quiet-step.mjs" --name lane-guards.guard-meta.9 -- "$NIKATRU_SHELL" -e "$NIKATRU_QUIET"
+          node "$GITHUB_WORKSPACE/../.nikatru-shell/quiet-step.mjs" --name lane-guards.guard-meta.11 -- "$NIKATRU_SHELL" -e "$NIKATRU_QUIET"
       - name: No new test case is declared inside a loop, and the loop baseline only shrinks
         run: |
           NIKATRU_QUIET="$(mktemp "${RUNNER_TEMP:-/tmp}/nikatru-step.XXXXXX")"
@@ -745,7 +769,7 @@ jobs:
           node tooling/ci/assert-no-loop-cases.mjs
           NIKATRU_QUIET_EOF
           NIKATRU_SHELL="${BASH:-bash}"; if command -v cygpath >/dev/null 2>&1; then NIKATRU_SHELL="$(cygpath -w "$NIKATRU_SHELL")"; fi
-          node "$GITHUB_WORKSPACE/../.nikatru-shell/quiet-step.mjs" --name lane-guards.guard-meta.10 -- "$NIKATRU_SHELL" -e "$NIKATRU_QUIET"
+          node "$GITHUB_WORKSPACE/../.nikatru-shell/quiet-step.mjs" --name lane-guards.guard-meta.12 -- "$NIKATRU_SHELL" -e "$NIKATRU_QUIET"
       - name: A new mechanism claim arrives with its test or a recorded demotion, and the claim backlog only shrinks
         run: |
           NIKATRU_QUIET="$(mktemp "${RUNNER_TEMP:-/tmp}/nikatru-step.XXXXXX")"
@@ -753,7 +777,7 @@ jobs:
           node tooling/ci/assert-mechanism-claims.mjs
           NIKATRU_QUIET_EOF
           NIKATRU_SHELL="${BASH:-bash}"; if command -v cygpath >/dev/null 2>&1; then NIKATRU_SHELL="$(cygpath -w "$NIKATRU_SHELL")"; fi
-          node "$GITHUB_WORKSPACE/../.nikatru-shell/quiet-step.mjs" --name lane-guards.guard-meta.11 -- "$NIKATRU_SHELL" -e "$NIKATRU_QUIET"
+          node "$GITHUB_WORKSPACE/../.nikatru-shell/quiet-step.mjs" --name lane-guards.guard-meta.13 -- "$NIKATRU_SHELL" -e "$NIKATRU_QUIET"
       - name: An extension README's ungraded-fixture table says what the fixture-coverage baseline says
         run: |
           NIKATRU_QUIET="$(mktemp "${RUNNER_TEMP:-/tmp}/nikatru-step.XXXXXX")"
@@ -761,7 +785,7 @@ jobs:
           node tooling/ci/assert-ungraded-baseline-doc.mjs
           NIKATRU_QUIET_EOF
           NIKATRU_SHELL="${BASH:-bash}"; if command -v cygpath >/dev/null 2>&1; then NIKATRU_SHELL="$(cygpath -w "$NIKATRU_SHELL")"; fi
-          node "$GITHUB_WORKSPACE/../.nikatru-shell/quiet-step.mjs" --name lane-guards.guard-meta.12 -- "$NIKATRU_SHELL" -e "$NIKATRU_QUIET"
+          node "$GITHUB_WORKSPACE/../.nikatru-shell/quiet-step.mjs" --name lane-guards.guard-meta.14 -- "$NIKATRU_SHELL" -e "$NIKATRU_QUIET"
       - name: The enforcement index is what the tree says
         run: |
           NIKATRU_QUIET="$(mktemp "${RUNNER_TEMP:-/tmp}/nikatru-step.XXXXXX")"
@@ -769,7 +793,7 @@ jobs:
           node tooling/ci/assert-enforcement-index.mjs
           NIKATRU_QUIET_EOF
           NIKATRU_SHELL="${BASH:-bash}"; if command -v cygpath >/dev/null 2>&1; then NIKATRU_SHELL="$(cygpath -w "$NIKATRU_SHELL")"; fi
-          node "$GITHUB_WORKSPACE/../.nikatru-shell/quiet-step.mjs" --name lane-guards.guard-meta.13 -- "$NIKATRU_SHELL" -e "$NIKATRU_QUIET"
+          node "$GITHUB_WORKSPACE/../.nikatru-shell/quiet-step.mjs" --name lane-guards.guard-meta.15 -- "$NIKATRU_SHELL" -e "$NIKATRU_QUIET"
       - name: Every line of the app template is accounted for
         run: |
           NIKATRU_QUIET="$(mktemp "${RUNNER_TEMP:-/tmp}/nikatru-step.XXXXXX")"
@@ -777,7 +801,7 @@ jobs:
           node tooling/ci/assert-chassis-ledger.mjs
           NIKATRU_QUIET_EOF
           NIKATRU_SHELL="${BASH:-bash}"; if command -v cygpath >/dev/null 2>&1; then NIKATRU_SHELL="$(cygpath -w "$NIKATRU_SHELL")"; fi
-          node "$GITHUB_WORKSPACE/../.nikatru-shell/quiet-step.mjs" --name lane-guards.guard-meta.14 -- "$NIKATRU_SHELL" -e "$NIKATRU_QUIET"
+          node "$GITHUB_WORKSPACE/../.nikatru-shell/quiet-step.mjs" --name lane-guards.guard-meta.16 -- "$NIKATRU_SHELL" -e "$NIKATRU_QUIET"
       - name: Guards refuse an empty subject
         run: |
           NIKATRU_QUIET="$(mktemp "${RUNNER_TEMP:-/tmp}/nikatru-step.XXXXXX")"
@@ -785,7 +809,7 @@ jobs:
           node tooling/ci/assert-guards-refuse-empty.mjs
           NIKATRU_QUIET_EOF
           NIKATRU_SHELL="${BASH:-bash}"; if command -v cygpath >/dev/null 2>&1; then NIKATRU_SHELL="$(cygpath -w "$NIKATRU_SHELL")"; fi
-          node "$GITHUB_WORKSPACE/../.nikatru-shell/quiet-step.mjs" --name lane-guards.guard-meta.15 -- "$NIKATRU_SHELL" -e "$NIKATRU_QUIET"
+          node "$GITHUB_WORKSPACE/../.nikatru-shell/quiet-step.mjs" --name lane-guards.guard-meta.17 -- "$NIKATRU_SHELL" -e "$NIKATRU_QUIET"
       - name: No dead tracked files
         run: |
           NIKATRU_QUIET="$(mktemp "${RUNNER_TEMP:-/tmp}/nikatru-step.XXXXXX")"
@@ -793,7 +817,7 @@ jobs:
           node tooling/scripts/assert-no-dead-files.mjs
           NIKATRU_QUIET_EOF
           NIKATRU_SHELL="${BASH:-bash}"; if command -v cygpath >/dev/null 2>&1; then NIKATRU_SHELL="$(cygpath -w "$NIKATRU_SHELL")"; fi
-          node "$GITHUB_WORKSPACE/../.nikatru-shell/quiet-step.mjs" --name lane-guards.guard-meta.16 -- "$NIKATRU_SHELL" -e "$NIKATRU_QUIET"
+          node "$GITHUB_WORKSPACE/../.nikatru-shell/quiet-step.mjs" --name lane-guards.guard-meta.18 -- "$NIKATRU_SHELL" -e "$NIKATRU_QUIET"
       - name: Every tracked path is placed in the lane map, and every lane glob matches a file
         run: |
           NIKATRU_QUIET="$(mktemp "${RUNNER_TEMP:-/tmp}/nikatru-step.XXXXXX")"
@@ -801,7 +825,7 @@ jobs:
           node tooling/ci/lane-detect.mjs --check
           NIKATRU_QUIET_EOF
           NIKATRU_SHELL="${BASH:-bash}"; if command -v cygpath >/dev/null 2>&1; then NIKATRU_SHELL="$(cygpath -w "$NIKATRU_SHELL")"; fi
-          node "$GITHUB_WORKSPACE/../.nikatru-shell/quiet-step.mjs" --name lane-guards.guard-meta.17 -- "$NIKATRU_SHELL" -e "$NIKATRU_QUIET"
+          node "$GITHUB_WORKSPACE/../.nikatru-shell/quiet-step.mjs" --name lane-guards.guard-meta.19 -- "$NIKATRU_SHELL" -e "$NIKATRU_QUIET"
       - name: Main's newest merge carries its Rows line in the squash message
         if: ((github.event.client_payload.event || github.event_name) == 'push' || (github.event.client_payload.event || github.event_name) == 'workflow_dispatch') && (github.event.client_payload.ref || 'refs/heads/main') == 'refs/heads/main'
         run: |
@@ -810,7 +834,7 @@ jobs:
           node tooling/ci/assert-main-rows.mjs --ref "$NIKATRU_SHA"
           NIKATRU_QUIET_EOF
           NIKATRU_SHELL="${BASH:-bash}"; if command -v cygpath >/dev/null 2>&1; then NIKATRU_SHELL="$(cygpath -w "$NIKATRU_SHELL")"; fi
-          node "$GITHUB_WORKSPACE/../.nikatru-shell/quiet-step.mjs" --name lane-guards.guard-meta.18 -- "$NIKATRU_SHELL" -e "$NIKATRU_QUIET"
+          node "$GITHUB_WORKSPACE/../.nikatru-shell/quiet-step.mjs" --name lane-guards.guard-meta.20 -- "$NIKATRU_SHELL" -e "$NIKATRU_QUIET"
       - name: The CI docs match the workflows (gen-ci-map --check)
         run: |
           NIKATRU_QUIET="$(mktemp "${RUNNER_TEMP:-/tmp}/nikatru-step.XXXXXX")"
@@ -818,7 +842,7 @@ jobs:
           node tooling/ci/gen-ci-map.mjs --check
           NIKATRU_QUIET_EOF
           NIKATRU_SHELL="${BASH:-bash}"; if command -v cygpath >/dev/null 2>&1; then NIKATRU_SHELL="$(cygpath -w "$NIKATRU_SHELL")"; fi
-          node "$GITHUB_WORKSPACE/../.nikatru-shell/quiet-step.mjs" --name lane-guards.guard-meta.19 -- "$NIKATRU_SHELL" -e "$NIKATRU_QUIET"
+          node "$GITHUB_WORKSPACE/../.nikatru-shell/quiet-step.mjs" --name lane-guards.guard-meta.21 -- "$NIKATRU_SHELL" -e "$NIKATRU_QUIET"
       - name: The release runbook's arming lines match the register (channel-arming --check)
         run: |
           NIKATRU_QUIET="$(mktemp "${RUNNER_TEMP:-/tmp}/nikatru-step.XXXXXX")"
@@ -826,7 +850,7 @@ jobs:
           node tooling/ci/channel-arming.mjs --check
           NIKATRU_QUIET_EOF
           NIKATRU_SHELL="${BASH:-bash}"; if command -v cygpath >/dev/null 2>&1; then NIKATRU_SHELL="$(cygpath -w "$NIKATRU_SHELL")"; fi
-          node "$GITHUB_WORKSPACE/../.nikatru-shell/quiet-step.mjs" --name lane-guards.guard-meta.20 -- "$NIKATRU_SHELL" -e "$NIKATRU_QUIET"
+          node "$GITHUB_WORKSPACE/../.nikatru-shell/quiet-step.mjs" --name lane-guards.guard-meta.22 -- "$NIKATRU_SHELL" -e "$NIKATRU_QUIET"
       - name: The release runbook's §3 matches what a Release carries (gen-release-carries --check)
         run: |
           NIKATRU_QUIET="$(mktemp "${RUNNER_TEMP:-/tmp}/nikatru-step.XXXXXX")"
@@ -834,7 +858,7 @@ jobs:
           node tooling/ci/gen-release-carries.mjs --check
           NIKATRU_QUIET_EOF
           NIKATRU_SHELL="${BASH:-bash}"; if command -v cygpath >/dev/null 2>&1; then NIKATRU_SHELL="$(cygpath -w "$NIKATRU_SHELL")"; fi
-          node "$GITHUB_WORKSPACE/../.nikatru-shell/quiet-step.mjs" --name lane-guards.guard-meta.21 -- "$NIKATRU_SHELL" -e "$NIKATRU_QUIET"
+          node "$GITHUB_WORKSPACE/../.nikatru-shell/quiet-step.mjs" --name lane-guards.guard-meta.23 -- "$NIKATRU_SHELL" -e "$NIKATRU_QUIET"
       - name: The public shell is what the generator writes, and lets no outsider in (assert-public-shell)
         run: |
           NIKATRU_QUIET="$(mktemp "${RUNNER_TEMP:-/tmp}/nikatru-step.XXXXXX")"
@@ -842,7 +866,7 @@ jobs:
           node tooling/ci/assert-public-shell.mjs
           NIKATRU_QUIET_EOF
           NIKATRU_SHELL="${BASH:-bash}"; if command -v cygpath >/dev/null 2>&1; then NIKATRU_SHELL="$(cygpath -w "$NIKATRU_SHELL")"; fi
-          node "$GITHUB_WORKSPACE/../.nikatru-shell/quiet-step.mjs" --name lane-guards.guard-meta.22 -- "$NIKATRU_SHELL" -e "$NIKATRU_QUIET"
+          node "$GITHUB_WORKSPACE/../.nikatru-shell/quiet-step.mjs" --name lane-guards.guard-meta.24 -- "$NIKATRU_SHELL" -e "$NIKATRU_QUIET"
       - name: No shell workflow starts on an event that skips every job it has (assert-no-skipped-starts)
         run: |
           NIKATRU_QUIET="$(mktemp "${RUNNER_TEMP:-/tmp}/nikatru-step.XXXXXX")"
@@ -850,7 +874,7 @@ jobs:
           node tooling/ci/assert-no-skipped-starts.mjs
           NIKATRU_QUIET_EOF
           NIKATRU_SHELL="${BASH:-bash}"; if command -v cygpath >/dev/null 2>&1; then NIKATRU_SHELL="$(cygpath -w "$NIKATRU_SHELL")"; fi
-          node "$GITHUB_WORKSPACE/../.nikatru-shell/quiet-step.mjs" --name lane-guards.guard-meta.23 -- "$NIKATRU_SHELL" -e "$NIKATRU_QUIET"
+          node "$GITHUB_WORKSPACE/../.nikatru-shell/quiet-step.mjs" --name lane-guards.guard-meta.25 -- "$NIKATRU_SHELL" -e "$NIKATRU_QUIET"
       - name: Every source script reaches the public shell intact, read by a real YAML parser (shell-script-parity)
         run: |
           NIKATRU_QUIET="$(mktemp "${RUNNER_TEMP:-/tmp}/nikatru-step.XXXXXX")"
@@ -858,7 +882,7 @@ jobs:
           python3 -I tooling/ci/shell-script-parity.py .
           NIKATRU_QUIET_EOF
           NIKATRU_SHELL="${BASH:-bash}"; if command -v cygpath >/dev/null 2>&1; then NIKATRU_SHELL="$(cygpath -w "$NIKATRU_SHELL")"; fi
-          node "$GITHUB_WORKSPACE/../.nikatru-shell/quiet-step.mjs" --name lane-guards.guard-meta.24 -- "$NIKATRU_SHELL" -e "$NIKATRU_QUIET"
+          node "$GITHUB_WORKSPACE/../.nikatru-shell/quiet-step.mjs" --name lane-guards.guard-meta.26 -- "$NIKATRU_SHELL" -e "$NIKATRU_QUIET"
       - name: Guard headers cite code pinned to a commit, never by a bare line number
         env:
           GUARD_HEADER_CITATIONS_BASE: ${{ github.event.client_payload.base_ref && format('origin/{0}', github.event.client_payload.base_ref) || '' }}
@@ -868,7 +892,7 @@ jobs:
           node tooling/ci/assert-guard-header-citations.mjs
           NIKATRU_QUIET_EOF
           NIKATRU_SHELL="${BASH:-bash}"; if command -v cygpath >/dev/null 2>&1; then NIKATRU_SHELL="$(cygpath -w "$NIKATRU_SHELL")"; fi
-          node "$GITHUB_WORKSPACE/../.nikatru-shell/quiet-step.mjs" --name lane-guards.guard-meta.25 -- "$NIKATRU_SHELL" -e "$NIKATRU_QUIET"
+          node "$GITHUB_WORKSPACE/../.nikatru-shell/quiet-step.mjs" --name lane-guards.guard-meta.27 -- "$NIKATRU_SHELL" -e "$NIKATRU_QUIET"
       - name: Every changed path is mapped to a check, or declared ungraded (affected-guards --list)
         if: ${{ !cancelled() }}
         env:
@@ -879,7 +903,7 @@ jobs:
           node tooling/scripts/affected-guards.mjs --list --sha HEAD --base "${AFFECTED_BASE:-origin/main}"
           NIKATRU_QUIET_EOF
           NIKATRU_SHELL="${BASH:-bash}"; if command -v cygpath >/dev/null 2>&1; then NIKATRU_SHELL="$(cygpath -w "$NIKATRU_SHELL")"; fi
-          node "$GITHUB_WORKSPACE/../.nikatru-shell/quiet-step.mjs" --name lane-guards.guard-meta.26 -- "$NIKATRU_SHELL" -e "$NIKATRU_QUIET"
+          node "$GITHUB_WORKSPACE/../.nikatru-shell/quiet-step.mjs" --name lane-guards.guard-meta.28 -- "$NIKATRU_SHELL" -e "$NIKATRU_QUIET"
       - name: A pool account changes by data alone
         run: |
           NIKATRU_QUIET="$(mktemp "${RUNNER_TEMP:-/tmp}/nikatru-step.XXXXXX")"
@@ -887,7 +911,7 @@ jobs:
           node tooling/ci/assert-pool-portable.mjs
           NIKATRU_QUIET_EOF
           NIKATRU_SHELL="${BASH:-bash}"; if command -v cygpath >/dev/null 2>&1; then NIKATRU_SHELL="$(cygpath -w "$NIKATRU_SHELL")"; fi
-          node "$GITHUB_WORKSPACE/../.nikatru-shell/quiet-step.mjs" --name lane-guards.guard-meta.27 -- "$NIKATRU_SHELL" -e "$NIKATRU_QUIET"
+          node "$GITHUB_WORKSPACE/../.nikatru-shell/quiet-step.mjs" --name lane-guards.guard-meta.29 -- "$NIKATRU_SHELL" -e "$NIKATRU_QUIET"
       - name: Hand this job's red detail to the report job, sealed (generated)
         id: nikatru-handoff
         if: always()

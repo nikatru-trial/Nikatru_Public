@@ -52,9 +52,10 @@ verdict back to that repository. It is generated: a pull request here is not how
   `BRIDGE_ARTIFACT_SECRET` (signs a private artifact upload; held only by the private-artifact
   steps), plus what each workflow reads.
 
-## Workflows (54)
+## Workflows (55)
 
 - `apple-expiry-write.yml`
+- `artifact-drill.yml`
 - `autopilot-watch.yml`
 - `build-platforms.yml` — reports `all-platforms`
 - `catalog-sync.yml` — reports `catalog-sync`

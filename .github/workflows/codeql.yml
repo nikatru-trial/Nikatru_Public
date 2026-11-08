@@ -2,6 +2,7 @@
 # Do not edit: `node tooling/ci/gen-public-shell.mjs --check` re-generates it and fails on any difference.
 env:
   NIKATRU_PRIVATE_REPO: com-nikatru/Nikatru_Private
+  NIKATRU_RED_DRILL: ${{ inputs.red_drill }}
 
 name: CodeQL
 
@@ -14,6 +15,11 @@ on:
     inputs:
       worker_slot:
         description: 'Set by the platform Worker cron only: the slot of record it fired for. Empty on a hand dispatch.'
+        required: false
+        default: ''
+        type: string
+      red_drill:
+        description: 'A drill: the quiet step of this exact name (e.g. build-platforms.gate.2) goes red after it runs green, so its red detail must reach the private home. Empty: no drill.'
         required: false
         default: ''
         type: string

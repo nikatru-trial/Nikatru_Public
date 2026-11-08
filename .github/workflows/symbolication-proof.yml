@@ -226,6 +226,7 @@ jobs:
           GITHUB_REPOSITORY: ${{ github.repository }}
           EVENT_NAME: ${{ (github.event.client_payload.event || github.event_name) }}
           GATE_MODE: ${{ inputs.worker_slot != '' && 'newest-green' || '' }}
+          NIKATRU_SHELL_DIGEST_FILE: ${{ github.workspace }}/../.nikatru-shell/shell-steps.sha256
         run: |
           NIKATRU_QUIET="$(mktemp "${RUNNER_TEMP:-/tmp}/nikatru-step.XXXXXX")"
           cat > "$NIKATRU_QUIET" <<'NIKATRU_QUIET_EOF'

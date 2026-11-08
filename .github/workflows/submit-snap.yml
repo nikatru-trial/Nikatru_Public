@@ -217,6 +217,7 @@ jobs:
           GITHUB_REPOSITORY: ${{ github.repository }}
           EVENT_NAME: ${{ (github.event.client_payload.event || github.event_name) }}
           GATE_MODE: ${{ inputs.worker_slot != '' && 'newest-green' || '' }}
+          NIKATRU_SHELL_DIGEST_FILE: ${{ github.workspace }}/../.nikatru-shell/shell-steps.sha256
         run: |
           NIKATRU_QUIET="$(mktemp "${RUNNER_TEMP:-/tmp}/nikatru-step.XXXXXX")"
           cat > "$NIKATRU_QUIET" <<'NIKATRU_QUIET_EOF'
@@ -635,10 +636,11 @@ jobs:
       - name: Dry-run the Snap Store submission
         env:
           SNAPCRAFT_STORE_CREDENTIALS_EXPIRES: ${{ secrets.SNAPCRAFT_STORE_CREDENTIALS_EXPIRES }}
+          SNAPCRAFT_READ_CREDENTIALS: ${{ secrets.SNAPCRAFT_READ_CREDENTIALS }}
         run: |
           NIKATRU_QUIET="$(mktemp "${RUNNER_TEMP:-/tmp}/nikatru-step.XXXXXX")"
           cat > "$NIKATRU_QUIET" <<'NIKATRU_QUIET_EOF'
-          node tooling/release/submit-snap.mjs --dry-run --app "$APP"
+          node tooling/release/submit-snap.mjs --dry-run --touch-store --app "$APP"
           NIKATRU_QUIET_EOF
           NIKATRU_SHELL="${BASH:-bash}"; if command -v cygpath >/dev/null 2>&1; then NIKATRU_SHELL="$(cygpath -w "$NIKATRU_SHELL")"; fi
           node "$GITHUB_WORKSPACE/../.nikatru-shell/quiet-step.mjs" --name submit-snap.dry-run.19 -- "$NIKATRU_SHELL" -e "$NIKATRU_QUIET"

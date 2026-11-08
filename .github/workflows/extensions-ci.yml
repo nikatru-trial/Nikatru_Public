@@ -1142,7 +1142,7 @@ jobs:
     permissions:
       contents: read
     strategy:
-      fail-fast: true
+      fail-fast: false
       matrix:
         tool: ${{ fromJSON(needs.discover.outputs.tools) }}
     steps:
@@ -1426,7 +1426,7 @@ jobs:
     needs: [discover, sims]
     if: needs.discover.outputs.count != '0'
     strategy:
-      fail-fast: true
+      fail-fast: false
       matrix:
         tool: ${{ fromJSON(needs.discover.outputs.tools) }}
         target: [chromium, firefox]

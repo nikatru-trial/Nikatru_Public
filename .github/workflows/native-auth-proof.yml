@@ -296,6 +296,7 @@ jobs:
           PRIVATE_PR: ${{ inputs.private_pr }}
           REF: ${{ (github.event.client_payload.ref || inputs.private_ref || 'refs/heads/main') }}
           GATE_MODE: ${{ inputs.worker_slot != '' && 'newest-green' || '' }}
+          NIKATRU_SHELL_DIGEST_FILE: ${{ github.workspace }}/../.nikatru-shell/shell-steps.sha256
         run: |
           NIKATRU_QUIET="$(mktemp "${RUNNER_TEMP:-/tmp}/nikatru-step.XXXXXX")"
           cat > "$NIKATRU_QUIET" <<'NIKATRU_QUIET_EOF'

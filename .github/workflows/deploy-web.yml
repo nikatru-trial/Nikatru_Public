@@ -2,7 +2,7 @@
 # Do not edit: `node tooling/ci/gen-public-shell.mjs --check` re-generates it and fails on any difference.
 env:
   NIKATRU_PRIVATE_REPO: com-nikatru/Nikatru_Private
-  NIKATRU_SHELL_FINGERPRINT: d033d2036c9ffde60016603a91762ffe77dc4b0801b944004ee1373b8c2d1ece
+  NIKATRU_SHELL_FINGERPRINT: 79677dfe2ff8cb9695f38cbd106b85ea1c7cd74dc0c7c586a62d0caaabd0da86
 
 name: Part of CI · Deploy web
 
@@ -874,6 +874,7 @@ jobs:
       - name: Grade the committed status site
         if: steps.live.outputs.go == 'true'
         run: |
+          node tooling/status/build-status.mjs --sitemap
           node tooling/ci/check-site-integrity.mjs . --only sites/status
           node tooling/status/build-status.mjs --check
       - name: Read the surfaces and the live document, and build the site

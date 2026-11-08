@@ -2,6 +2,7 @@
 # Do not edit: `node tooling/ci/gen-public-shell.mjs --check` re-generates it and fails on any difference.
 env:
   NIKATRU_PRIVATE_REPO: com-nikatru/Nikatru_Private
+  NIKATRU_RED_DRILL: ${{ inputs.red_drill }}
 
 name: CI
 
@@ -17,6 +18,11 @@ on:
         type: choice
         options: [all, app, entity, email, extension]
         default: all
+      red_drill:
+        description: 'A drill: the quiet step of this exact name (e.g. build-platforms.gate.2) goes red after it runs green, so its red detail must reach the private home. Empty: no drill.'
+        required: false
+        default: ''
+        type: string
 
 concurrency:
   group: ci-${{ (github.event.client_payload.event || github.event_name) == 'pull_request' && (github.event.client_payload.pr || github.event.client_payload.ref || 'refs/heads/main') || github.run_id }}

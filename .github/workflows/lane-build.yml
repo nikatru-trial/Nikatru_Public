@@ -405,7 +405,7 @@ jobs:
       contents: read
     needs: [detect, prepare]
     strategy:
-      fail-fast: true
+      fail-fast: false
       matrix:
         app: ${{ fromJSON(needs.prepare.outputs.apps) }}
     steps:
@@ -1082,7 +1082,7 @@ jobs:
       contents: read
     needs: [detect, prepare]
     strategy:
-      fail-fast: true
+      fail-fast: false
       matrix:
         app: ${{ fromJSON(needs.prepare.outputs.apps) }}
         arch: [x64, arm64]
@@ -1239,7 +1239,7 @@ jobs:
       contents: read
     needs: [detect, prepare]
     strategy:
-      fail-fast: true
+      fail-fast: false
       matrix:
         app: ${{ fromJSON(needs.prepare.outputs.apps) }}
     steps:
@@ -1441,7 +1441,7 @@ jobs:
       contents: read
     needs: [detect, prepare]
     strategy:
-      fail-fast: true
+      fail-fast: false
       matrix:
         app: ${{ fromJSON(needs.prepare.outputs.apps) }}
     steps:

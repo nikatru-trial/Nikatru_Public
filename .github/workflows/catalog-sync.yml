@@ -2,6 +2,7 @@
 # Do not edit: `node tooling/ci/gen-public-shell.mjs --check` re-generates it and fails on any difference.
 env:
   NIKATRU_PRIVATE_REPO: com-nikatru/Nikatru_Private
+  NIKATRU_RED_DRILL: ${{ inputs.red_drill }}
 
 name: Catalog sync
 
@@ -19,6 +20,11 @@ on:
         type: string
       archive:
         description: 'Optional, space-separated <rail>:<app>/<productId> targets to ARCHIVE (refused for any product with live purchases, or where the rail cannot prove there are none). Empty archives nothing.'
+        required: false
+        default: ''
+        type: string
+      red_drill:
+        description: 'A drill: the quiet step of this exact name (e.g. build-platforms.gate.2) goes red after it runs green, so its red detail must reach the private home. Empty: no drill.'
         required: false
         default: ''
         type: string
@@ -241,7 +247,11 @@ jobs:
           ref: ${{ steps.live-build.outputs.build }}
           path: .live-build
           fetch-depth: 1
-          sparse-checkout: services/platform/src/lib/mor/store-skus.ts
+          sparse-checkout: |
+            services/platform/src/lib/mor/store-skus.ts
+            services/platform/src/app-config-data.json
+            catalog/bundles.json
+            tooling/catalog/offers.json
           sparse-checkout-cone-mode: false
           ssh-key: ${{ secrets.PRIVATE_DEPLOY_KEY }}
           persist-credentials: false
@@ -389,7 +399,11 @@ jobs:
           ref: ${{ steps.live-build.outputs.build }}
           path: .live-build
           fetch-depth: 1
-          sparse-checkout: services/platform/src/lib/mor/store-skus.ts
+          sparse-checkout: |
+            services/platform/src/lib/mor/store-skus.ts
+            services/platform/src/app-config-data.json
+            catalog/bundles.json
+            tooling/catalog/offers.json
           sparse-checkout-cone-mode: false
           ssh-key: ${{ secrets.PRIVATE_DEPLOY_KEY }}
           persist-credentials: false
