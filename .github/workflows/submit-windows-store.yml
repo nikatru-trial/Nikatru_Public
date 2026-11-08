@@ -1206,6 +1206,8 @@ jobs:
         run: node tooling/ci/assert-artifact-size.mjs --app "$APP" --channel windows-store "$MSIX"
       - name: Install the Microsoft Store Developer CLI (pinned by version AND by digest)
         shell: pwsh
+        env:
+          PINNED_TOOL_GITHUB_TOKEN: ${{ github.token }}
         run: |
           $ErrorActionPreference = 'Stop'
           $dir = Join-Path $env:RUNNER_TEMP 'msstore-cli'
@@ -1335,6 +1337,8 @@ jobs:
           esac
       - name: Install the Microsoft Store Developer CLI (pinned by version AND by digest)
         shell: pwsh
+        env:
+          PINNED_TOOL_GITHUB_TOKEN: ${{ github.token }}
         run: |
           $ErrorActionPreference = 'Stop'
           $dir = Join-Path $env:RUNNER_TEMP 'msstore-cli'

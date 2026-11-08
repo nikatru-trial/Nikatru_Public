@@ -3279,6 +3279,8 @@ jobs:
           path: ${{ runner.temp }}/pinned-tool-cache
           key: pinned-tools-${{ runner.os }}-${{ hashFiles('tooling/versions.json') }}
       - name: Install gitleaks (version and digest from tooling/versions.json)
+        env:
+          PINNED_TOOL_GITHUB_TOKEN: ${{ github.token }}
         run: |
           NIKATRU_QUIET="$(mktemp "${RUNNER_TEMP:-/tmp}/nikatru-step.XXXXXX")"
           cat > "$NIKATRU_QUIET" <<'NIKATRU_QUIET_EOF'
@@ -3311,6 +3313,8 @@ jobs:
           NIKATRU_SHELL="${BASH:-bash}"; if command -v cygpath >/dev/null 2>&1; then NIKATRU_SHELL="$(cygpath -w "$NIKATRU_SHELL")"; fi
           node "$GITHUB_WORKSPACE/../.nikatru-shell/quiet-step.mjs" --name lane-guards.security-scan.8 -- "$NIKATRU_SHELL" -e "$NIKATRU_QUIET"
       - name: Install zizmor (version and digest from tooling/versions.json)
+        env:
+          PINNED_TOOL_GITHUB_TOKEN: ${{ github.token }}
         run: |
           NIKATRU_QUIET="$(mktemp "${RUNNER_TEMP:-/tmp}/nikatru-step.XXXXXX")"
           cat > "$NIKATRU_QUIET" <<'NIKATRU_QUIET_EOF'
@@ -3329,6 +3333,8 @@ jobs:
           NIKATRU_SHELL="${BASH:-bash}"; if command -v cygpath >/dev/null 2>&1; then NIKATRU_SHELL="$(cygpath -w "$NIKATRU_SHELL")"; fi
           node "$GITHUB_WORKSPACE/../.nikatru-shell/quiet-step.mjs" --name lane-guards.security-scan.10 -- "$NIKATRU_SHELL" -e "$NIKATRU_QUIET"
       - name: Install OSV-Scanner (version and digest from tooling/versions.json)
+        env:
+          PINNED_TOOL_GITHUB_TOKEN: ${{ github.token }}
         run: |
           NIKATRU_QUIET="$(mktemp "${RUNNER_TEMP:-/tmp}/nikatru-step.XXXXXX")"
           cat > "$NIKATRU_QUIET" <<'NIKATRU_QUIET_EOF'
@@ -3355,6 +3361,8 @@ jobs:
           NIKATRU_SHELL="${BASH:-bash}"; if command -v cygpath >/dev/null 2>&1; then NIKATRU_SHELL="$(cygpath -w "$NIKATRU_SHELL")"; fi
           node "$GITHUB_WORKSPACE/../.nikatru-shell/quiet-step.mjs" --name lane-guards.security-scan.12 -- "$NIKATRU_SHELL" -e "$NIKATRU_QUIET"
       - name: Install Trivy (version and digest from tooling/versions.json)
+        env:
+          PINNED_TOOL_GITHUB_TOKEN: ${{ github.token }}
         run: |
           NIKATRU_QUIET="$(mktemp "${RUNNER_TEMP:-/tmp}/nikatru-step.XXXXXX")"
           cat > "$NIKATRU_QUIET" <<'NIKATRU_QUIET_EOF'

@@ -424,6 +424,8 @@ jobs:
         id: osv
         if: ${{ !cancelled() && (steps.osvdue.outputs.due == 'true' || inputs.dependency_advisories) }}
         timeout-minutes: 3
+        env:
+          PINNED_TOOL_GITHUB_TOKEN: ${{ github.token }}
         run: |
           NIKATRU_QUIET="$(mktemp "${RUNNER_TEMP:-/tmp}/nikatru-step.XXXXXX")"
           cat > "$NIKATRU_QUIET" <<'NIKATRU_QUIET_EOF'

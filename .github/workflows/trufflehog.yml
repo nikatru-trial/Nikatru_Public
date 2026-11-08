@@ -86,6 +86,8 @@ jobs:
           mv .nikatru-shell/.github/nikatru ../.nikatru-shell
           rm -rf .nikatru-shell
       - name: Install TruffleHog (version and digest from tooling/versions.json)
+        env:
+          PINNED_TOOL_GITHUB_TOKEN: ${{ github.token }}
         run: |
           NIKATRU_QUIET="$(mktemp "${RUNNER_TEMP:-/tmp}/nikatru-step.XXXXXX")"
           cat > "$NIKATRU_QUIET" <<'NIKATRU_QUIET_EOF'

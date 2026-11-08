@@ -406,6 +406,7 @@ jobs:
       - name: BASELINE — the peer merged with main, first pass as ci.yml runs it
         timeout-minutes: 19
         env:
+          PINNED_TOOL_GITHUB_TOKEN: ${{ github.token }}
           PEER: ${{ matrix.peer }}
         run: |
           NIKATRU_QUIET="$(mktemp "${RUNNER_TEMP:-/tmp}/nikatru-step.XXXXXX")"
@@ -417,6 +418,7 @@ jobs:
       - name: CANDIDATE — the peer merged with main and the machinery head
         timeout-minutes: 22
         env:
+          PINNED_TOOL_GITHUB_TOKEN: ${{ github.token }}
           MACHINERY: ${{ inputs.machinery_sha }}
           PEER: ${{ matrix.peer }}
         run: |

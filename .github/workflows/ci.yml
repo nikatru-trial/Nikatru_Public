@@ -490,6 +490,7 @@ jobs:
           node "$GITHUB_WORKSPACE/../.nikatru-shell/quiet-step.mjs" --name ci.first-pass.5 -- "$NIKATRU_SHELL" -e "$NIKATRU_QUIET"
       - name: The first pass (affected guards, secret and workflow scanners, Dart analyze and format)
         env:
+          PINNED_TOOL_GITHUB_TOKEN: ${{ github.token }}
           FP_BASE: ${{ (github.event.client_payload.event == 'pull_request' && github.event.client_payload.base_sha || '') || (github.event.client_payload.event == 'push' && github.event.client_payload.base_sha || '') }}
           FP_KIND: ${{ (github.event.client_payload.event || github.event_name) == 'pull_request' && 'pr' || 'push' }}
         run: |
