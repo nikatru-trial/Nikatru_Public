@@ -1191,6 +1191,7 @@ jobs:
     with:
       worker: all
       when: ${{ needs.money-plan.outputs.money == 'true' && 'always' || 'skip' }}
+      proof: 'true'
       nikatru_sha: ${{ needs.nikatru-pin.outputs.sha || 'nikatru-pin-did-not-succeed..' }}
     permissions:
       contents: read

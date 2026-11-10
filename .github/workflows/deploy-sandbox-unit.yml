@@ -33,6 +33,11 @@ on:
         required: false
         default: ''
         type: string
+      proof:
+        description: "'true' for a money proof's own install (ci.yml money-sandbox, money-sandbox-e2e deploy); 'false' never installs an ancestor over a newer build."
+        required: false
+        default: 'false'
+        type: string
     secrets:
       CLOUDFLARE_API_TOKEN:
         required: true
@@ -54,9 +59,9 @@ jobs:
     runs-on: ubuntu-24.04
     timeout-minutes: 5
     outputs:
-      workers: ${{ steps.set.outputs.workers }}
-      count: ${{ steps.set.outputs.count }}
-      platform: ${{ steps.set.outputs.platform }}
+      workers: ${{ steps.supersede.outputs.workers || steps.set.outputs.workers }}
+      count: ${{ steps.supersede.outputs.count || steps.set.outputs.count }}
+      platform: ${{ steps.supersede.outputs.platform || steps.set.outputs.platform }}
     steps:
       - name: Check out the private tree (generated)
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
@@ -166,6 +171,8 @@ jobs:
           repository: ${{ env.NIKATRU_PRIVATE_REPO }}
           ref: main
           path: .sandbox-main
+          fetch-depth: 0
+          filter: tree:0
           sparse-checkout: |
             services
             tooling/ci
@@ -181,6 +188,20 @@ jobs:
           NIKATRU_QUIET_EOF
           NIKATRU_SHELL="${BASH:-bash}"; if command -v cygpath >/dev/null 2>&1; then NIKATRU_SHELL="$(cygpath -w "$NIKATRU_SHELL")"; fi
           node "$GITHUB_WORKSPACE/../.nikatru-shell/quiet-step.mjs" --name deploy-sandbox-unit.workers.4 -- "$NIKATRU_SHELL" -e "$NIKATRU_QUIET"
+      - name: Never install an ancestor over a newer build (SUPERSEDED skips that target)
+        id: supersede
+        if: inputs.when != 'skip'
+        env:
+          WORKERS: ${{ steps.set.outputs.workers }}
+          PLATFORM: ${{ steps.set.outputs.platform }}
+          PROOF: ${{ inputs.proof || 'false' }}
+        run: |
+          NIKATRU_QUIET="$(mktemp "${RUNNER_TEMP:-/tmp}/nikatru-step.XXXXXX")"
+          cat > "$NIKATRU_QUIET" <<'NIKATRU_QUIET_EOF'
+          node tooling/ci/sandbox-supersede.mjs --ours "$(git rev-parse HEAD)" --history .sandbox-main --tree . --proof "$PROOF"
+          NIKATRU_QUIET_EOF
+          NIKATRU_SHELL="${BASH:-bash}"; if command -v cygpath >/dev/null 2>&1; then NIKATRU_SHELL="$(cygpath -w "$NIKATRU_SHELL")"; fi
+          node "$GITHUB_WORKSPACE/../.nikatru-shell/quiet-step.mjs" --name deploy-sandbox-unit.workers.5 -- "$NIKATRU_SHELL" -e "$NIKATRU_QUIET"
       - name: Hand this job's red detail to the report job, sealed (generated)
         id: nikatru-handoff
         if: always()
