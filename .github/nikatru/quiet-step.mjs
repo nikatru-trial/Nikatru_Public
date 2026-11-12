@@ -127,7 +127,19 @@ const RESULT_MAX_BYTES = 64 * 1024 * 1024;
 export const FAILURES_MAX_BYTES = 8 * 1024;
 const ANSI = /\x1b\[[0-9;?]*[ -/]*[@-~]/g;
 
-const clip = (s) => (s.length > LINE_CHARS ? `${s.slice(0, LINE_CHARS - 1)}…` : s);
+// ⏱ 2026-11-11 · fix1110b round 5 (lead re-review 11:42Z). ONE line is ONE line. tooling/ci/shell-report.py reads
+// the detail split on LINE_BREAK, the same set as here: a CR, LF, CRLF, U+2028 or U+2029 inside a test name, a file name
+// or a finding's text would otherwise start a line of its own and could fake a header or a mark. oneLine shows each as
+// a visible escape (`\r`, `\n`, `\u2028`, `\u2029`) instead.
+/** The line breaks the detail is split on, here and in tooling/ci/shell-report.py (LINE_BREAK). */
+export const LINE_BREAK = /\r\n|\r|\n|\u2028|\u2029/;
+const BREAK_SHOWN = { '\r': '\\r', '\n': '\\n', '\u2028': '\\u2028', '\u2029': '\\u2029' };
+/** PURE. `s` on one line: each break character shown as its escape. */
+export const oneLine = (s) => String(s).replace(/[\r\n\u2028\u2029]/g, (c) => BREAK_SHOWN[c]);
+const clip = (raw) => {
+  const s = oneLine(raw);
+  return s.length > LINE_CHARS ? `${s.slice(0, LINE_CHARS - 1)}…` : s;
+};
 
 // ⏱ 2026-10-12 · review of #447 (a ReDoS pass over the new readers): a step's output is untrusted text, and
 // `(.+?)\s*─*$`, `.*\d+ (?:failed|passed).*` and `(\d+) failed` each took over a second on one 40 000-character
@@ -379,28 +391,144 @@ export function failuresBlock(found) {
   }
   if (shown < found.failures.length) out.push(`(${found.failures.length - shown} more failing test(s) not shown; see the counts)`);
   if (found.failures.length === 0) out.push('(the runner reported failures, but no failing test could be read from its output)');
-  out.push('', '#### counts', '', ...(found.counts.length ? found.counts : ['(no counts in the output)']), '');
+  out.push('', '#### counts', '', ...(found.counts.length ? found.counts.map(oneLine) : ['(no counts in the output)']), '');
   return out;
 }
 
+// ⏱ 2026-11-11 · fix1110b #1 (row O-RED-DETAIL-COMPLETE). The failures-first head named failing TESTS only. A guard
+// runner (affected-guards: ~1,350 status lines) reports its one ✗ line in the MIDDLE of its output, so the 400-line
+// tail lost it on both club-1110 rehearsals and the fix lanes guessed. A red section now opens with every FINDING line
+// of the whole output, from any tool, by its line number, within FINDINGS_MAX_BYTES, the rest counted, never dropped
+// silently. A red step whose output matches no finding pattern names its last non-blank line instead (said so), so no
+// red section is ever without the line that most likely says why.
+/**
+ * What a finding line is: a guard's ✗/✖/❌, a FINDING or FAIL/FAILED verdict, a TAP `not ok`, an `Error:` (any case
+ * before the colon, at a word start), a TypeScript `error TS1234`, a runner `##[error]` / `::error`, and an `exit N`
+ * (N ≥ 1) verdict line. Literal alternatives, no nested quantifier: linear on a long line, and only the first
+ * FINDING_SCAN_CHARS of a line are read.
+ */
+export const FINDING = /(?:[✗✖❌]|\bFINDINGS?\b|\bFAIL(?:ED|URE)?\b|^\s*not ok\b|(?:^|[\s:(\[])(?:error|Error|ERROR):|\berror TS\d|##\[error\]|::error\b|\bexit(?:ed)?(?: with)?(?: code)? [1-9])/;
+const FINDING_SCAN_CHARS = 2000;
+/** The finding lines block stays within this; the rest are counted. */
+export const FINDINGS_MAX_BYTES = 6 * 1024;
+/** The mark each finding line carries in the detail (tooling/ci/shell-report.py FINDING_MARK keeps these lines first). */
+export const FINDING_MARK = '» ';
+/**
+ * ⏱ 2026-11-11 · fix1110b round 2 (lead re-review, part 2: FAIL CLOSED). The mark of the no-match fallback line. It is
+ * NOT FINDING_MARK: the last output line is a guess at why the step failed, not a finding, and shell-report.py
+ * has_detail counts only FINDING_MARK lines (and a stored full log) as detail.
+ */
+export const LAST_LINE_MARK = '(last line) ';
+
+/** PURE. Every finding line of `text`: [{n (1-based line number), text}], in output order. */
+export function findingLines(text) {
+  const out = [];
+  const lines = text.replace(ANSI, '').split('\n');
+  lines.forEach((l, i) => {
+    const s = l.replace(/\r$/, '');
+    if (s.trim() && FINDING.test(s.slice(0, FINDING_SCAN_CHARS))) out.push({ n: i + 1, text: s.trim() });
+  });
+  if (out.length === 0) {
+    for (let i = lines.length - 1; i >= 0; i -= 1) {
+      const s = lines[i].replace(/\r$/, '').trim();
+      if (s) return { lines: [{ n: i + 1, text: s }], fallback: true };
+    }
+  }
+  return { lines: out, fallback: false };
+}
+
+/** The finding lines block of a red section: within FINDINGS_MAX_BYTES, the rest counted ("N more finding lines"). */
+export function findingsBlock(found) {
+  if (found.lines.length === 0) return [];
+  const head = found.fallback ? '#### finding lines (none matched a finding pattern; the last output line)' : `#### finding lines (${found.lines.length})`;
+  const out = [head, ''];
+  let bytes = 0;
+  let shown = 0;
+  for (const f of found.lines) {
+    const line = `${found.fallback ? LAST_LINE_MARK : FINDING_MARK}L${f.n}: ${clip(f.text)}`;
+    const size = Buffer.byteLength(`${line}\n`);
+    if (bytes + size > FINDINGS_MAX_BYTES) break;
+    out.push(line);
+    bytes += size;
+    shown += 1;
+  }
+  if (shown < found.lines.length) out.push(`(${found.lines.length - shown} more finding lines in the full log)`);
+  out.push('');
+  return out;
+}
+
+// ⏱ 2026-11-11 · fix1110b #2 (row O-RED-DETAIL-COMPLETE). A red step's section is a summary; the owner's standard is
+// a log as complete as a public repository's job log, kept private. So a red step also leaves its WHOLE output, masked
+// as the section is, in $RUNNER_TEMP/RED_LOG_DIR/<name>.log, and its section says so on one RED_LOG_PENDING line. The
+// job's red-log step (tooling/ops/bridge-artifact.mjs red-logs) stores each such file in the bridge's private home
+// (POST /artifact) and writes a receipt beside it; the hand-off (tooling/ci/shell-report.py handoff) turns the line
+// into `full log: stored <key> …` or `full log: NOT stored (<why>)` before it seals the detail.
+/** The directory under RUNNER_TEMP a red step's full masked log is left in. */
+export const RED_LOG_DIR = 'nikatru-red-logs';
+/** The section line a red step's full log is named on until the hand-off says where it went. */
+export const RED_LOG_PENDING = 'full log: pending upload (red-log ';
+
+/**
+ * Writes the masked full log of a red step, exclusively (`wx`: a name already taken by an earlier step of the job is
+ * never overwritten); returns the file's base name (`<name>.log`, `<name>-2.log` …), or null when it could not write
+ * (the section then names no log, and the report says LOST DETAIL if nothing else names the failure).
+ */
+export function writeRedLog(dir, name, text) {
+  try {
+    mkdirSync(dir, { recursive: true });
+    for (let i = 1; i <= 100; i += 1) {
+      const base = i === 1 ? `${name}.log` : `${name}-${i}.log`;
+      try {
+        writeFileSync(join(dir, base), text, { flag: 'wx' });
+        return base;
+      } catch (e) {
+        if (e.code !== 'EEXIST') throw e;
+      }
+    }
+  } catch {
+    // no full log: the detail section stands without its line
+  }
+  return null;
+}
+
+// ⏱ 2026-11-11 · fix1110b round 4 (lead final re-review, BLOCKER). The detail's STRUCTURE is the lines this wrapper
+// writes: section headers (`### RED|NOTE`), `####` block heads, FINDING_MARK / LAST_LINE_MARK lines, `✖ ` failing tests
+// and the `full log: ` line. A step's own output (its tail, its step summary, a note) is untrusted text: a line of it
+// shaped like any of those would fake a section or a mark for tooling/ci/shell-report.py. Such a line is kept, prefixed
+// with OUTPUT_ESCAPE, so nothing the step printed can ever be read as structure.
+export const OUTPUT_ESCAPE = '  ';
+const STRUCTURE = /^(?:#{1,6} |» |✖ |full log: |\(last line\) )/;
+/** PURE. `text` with every line shaped like detail structure prefixed by OUTPUT_ESCAPE. */
+// fix1110b round 5: split on every LINE_BREAK (a progress bar's lone CR included), so a line hiding behind a CR is
+// escaped too; the lines are joined with '\n', so no other break reaches the detail.
+export const escapeOutput = (text) => text.split(LINE_BREAK).map((l) => (STRUCTURE.test(l) ? `${OUTPUT_ESCAPE}${l}` : l)).join('\n');
+
 /** The detail section for one GREEN step's `DETAIL_PREFIX` lines. */
 export function noteSection(name, notes, values) {
-  return `${[`### NOTE ${name}`, '', ...notes.map((n) => mask(n, values)), ''].join('\n')}\n`;
+  return `${[`### NOTE ${name}`, '', ...notes.map((n) => escapeOutput(mask(n, values))), ''].join('\n')}\n`;
 }
 
 /**
  * The detail section for one red step. When the output holds test results, the failing tests and the counts
  * come FIRST and the tail follows under OUTPUT_TAIL_MARK; masking covers every part, the names included.
  */
-export function detailSection(name, code, captured, summary, values, resultFiles = [], drill = false) {
+export function detailSection(name, code, captured, summary, values, resultFiles = [], drill = false, redLog = null) {
   const t = tail(captured);
   const parts = [`### RED ${name} exit ${code}`, '', ...(drill ? [RED_DRILL_BANNER, ''] : [])];
+
   // Masked BEFORE it is read, so a clipped line can never leave half a secret showing.
-  const found = testFailures(mask(captured, values), resultFiles.map((r) => ({ name: r.name, text: mask(r.text, values) })));
-  if (found) parts.push(...failuresBlock(found).map((l) => mask(l, values)), OUTPUT_TAIL_MARK, '');
+  const masked = mask(captured, values);
+  const found = testFailures(masked, resultFiles.map((r) => ({ name: r.name, text: mask(r.text, values) })));
+  if (found) parts.push(...failuresBlock(found).map((l) => mask(l, values)));
+  // fix1110b #1: then the finding lines of the WHOLE output, from any tool, above the tail, read from the masked text.
+  const findings = findingsBlock(findingLines(masked));
+  parts.push(...findings);
+  // fix1110b #2: where the whole output is, last above the tail (shell-report.py keeps the line in every cut).
+  if (redLog) parts.push(`${RED_LOG_PENDING}${redLog})`, '');
+  if (found || findings.length || redLog) parts.push(OUTPUT_TAIL_MARK, '');
   if (t.cut) parts.push(`(last ${TAIL_LINES} lines; ${t.cut} earlier line(s) not shown)`, '');
-  parts.push(mask(t.text, values), '');
-  if (summary.trim()) parts.push('#### step summary', '', mask(summary.trim(), values), '');
+  parts.push(escapeOutput(mask(t.text, values)), '');
+  if (summary.trim()) parts.push('#### step summary', '', escapeOutput(mask(summary.trim(), values)), '');
   return `${parts.join('\n')}\n`;
 }
 
@@ -547,7 +675,10 @@ function redStep({ opts, code, logPath, summaryPath, runnerTemp, work, env, adde
   const summary = readFileSync(summaryPath, 'utf8');
   // A drilled step was green, so a `::nikatru-detail::` note it printed is kept, as its green run would have.
   if (drill && notes.length) appendFileSync(join(runnerTemp ?? work, DETAIL_FILE), noteSection(opts.name, notes, maskValues(env, added)));
-  appendFileSync(join(runnerTemp ?? work, DETAIL_FILE), detailSection(opts.name, code, captured, summary, maskValues(env, added), resultFiles(resultsDir), drill));
+  const values = maskValues(env, added);
+  // fix1110b #2: the whole output, masked, for the job's red-log upload (only on a runner: off one nothing uploads).
+  const redLog = runnerTemp ? writeRedLog(join(runnerTemp, RED_LOG_DIR), opts.name, mask(captured, values)) : null;
+  appendFileSync(join(runnerTemp ?? work, DETAIL_FILE), detailSection(opts.name, code, captured, summary, values, resultFiles(resultsDir), drill, redLog));
   const line = `RED ${opts.name} exit ${code}${drill ? ' (drill)' : ''}`;
   say(`${line}\n`);
   return { code, line };

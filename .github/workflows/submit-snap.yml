@@ -352,6 +352,10 @@ jobs:
         working-directory: ${{ github.workspace }}
         run: printf '/.nikatru-trusted/\n' >> "$(git rev-parse --git-path info/exclude)"
       - uses: ./.nikatru-trusted/.github/actions/setup-flutter
+        env:
+          NIKATRU_REF: ${{ github.event.client_payload.ref || 'refs/heads/main' }}
+          NIKATRU_EVENT_NAME: ${{ github.event.client_payload.event || github.event_name }}
+          NIKATRU_PR: ${{ github.event.client_payload.pr }}
       - name: Linux build deps (the same list the Linux build lane installs)
         run: |
           NIKATRU_QUIET="$(mktemp "${RUNNER_TEMP:-/tmp}/nikatru-step.XXXXXX")"
@@ -511,6 +515,12 @@ jobs:
           echo "snapcraft ${got} (revision ${rev}) installed from ${track}; floor ${want} (tooling/versions.json snapcraft_version)"
           [ -n "$got" ] && [ -n "$rev" ] || { echo "::error title=snapcraft pin::could not read the installed snapcraft version (${got:-none}) or revision (${rev:-none})."; exit 1; }
           [ "$(printf '%s\n%s\n' "$want" "$got" | sort -V | sed -n 1p)" = "$want" ] || { echo "::error title=snapcraft pin::the ${track} track served snapcraft ${got}, BELOW the floor ${want} in tooling/versions.json: a rollback on the track, not a release to pack with."; exit 1; }
+          # why (review52-pipeline-028): the revision tooling/versions.json snapcraft_revision_<arch> pins, compared with
+          # what the track installed. DRIFT is a ::warning, never a refusal (`snap install --revision` needs developer
+          # access, so a moved track would otherwise red every run with no code change), the same rule as the content snaps.
+          arch="$(dpkg --print-architecture)"
+          pinned="$(KEY="snapcraft_revision_${arch}" node -p "require('./tooling/versions.json')[process.env.KEY] ?? ''")"
+          [ "$rev" = "$pinned" ] || echo "::warning title=snapcraft revision::${track} installed snapcraft ${got} at revision ${rev}, tooling/versions.json snapcraft_revision_${arch} pins ${pinned:-nothing}: the track moved; re-measure and move the pin in a reviewed commit."
           echo "version=${got}" >> "$GITHUB_OUTPUT"
           echo "revision=${rev}" >> "$GITHUB_OUTPUT"
           NIKATRU_QUIET_EOF
@@ -847,6 +857,12 @@ jobs:
           echo "snapcraft ${got} (revision ${rev}) installed from ${track}; floor ${want} (tooling/versions.json snapcraft_version)"
           [ -n "$got" ] && [ -n "$rev" ] || { echo "::error title=snapcraft pin::could not read the installed snapcraft version (${got:-none}) or revision (${rev:-none})."; exit 1; }
           [ "$(printf '%s\n%s\n' "$want" "$got" | sort -V | sed -n 1p)" = "$want" ] || { echo "::error title=snapcraft pin::the ${track} track served snapcraft ${got}, BELOW the floor ${want} in tooling/versions.json."; exit 1; }
+          # why (review52-pipeline-028): the revision tooling/versions.json snapcraft_revision_<arch> pins, compared with
+          # what the track installed. DRIFT is a ::warning, never a refusal (`snap install --revision` needs developer
+          # access, so a moved track would otherwise red every run with no code change), the same rule as the content snaps.
+          arch="$(dpkg --print-architecture)"
+          pinned="$(KEY="snapcraft_revision_${arch}" node -p "require('./tooling/versions.json')[process.env.KEY] ?? ''")"
+          [ "$rev" = "$pinned" ] || echo "::warning title=snapcraft revision::${track} installed snapcraft ${got} at revision ${rev}, tooling/versions.json snapcraft_revision_${arch} pins ${pinned:-nothing}: the track moved; re-measure and move the pin in a reviewed commit."
       - name: Promote latest/candidate to latest/stable
         id: promote
         env:
@@ -955,6 +971,10 @@ jobs:
       - uses: ./.nikatru-trusted/.github/actions/setup-flutter
         with:
           cache: 'false'
+        env:
+          NIKATRU_REF: ${{ github.event.client_payload.ref || 'refs/heads/main' }}
+          NIKATRU_EVENT_NAME: ${{ github.event.client_payload.event || github.event_name }}
+          NIKATRU_PR: ${{ github.event.client_payload.pr }}
       - name: Linux build deps (the same list the Linux build lane installs)
         run: |
           NIKATRU_QUIET="$(mktemp "${RUNNER_TEMP:-/tmp}/nikatru-step.XXXXXX")"
@@ -1055,6 +1075,12 @@ jobs:
           echo "snapcraft ${got} (revision ${rev}) installed from ${track}; floor ${want} (tooling/versions.json snapcraft_version)"
           [ -n "$got" ] && [ -n "$rev" ] || { echo "::error title=snapcraft pin::could not read the installed snapcraft version (${got:-none}) or revision (${rev:-none})."; exit 1; }
           [ "$(printf '%s\n%s\n' "$want" "$got" | sort -V | sed -n 1p)" = "$want" ] || { echo "::error title=snapcraft pin::the ${track} track served snapcraft ${got}, BELOW the floor ${want} in tooling/versions.json: a rollback on the track, not a release to pack with."; exit 1; }
+          # why (review52-pipeline-028): the revision tooling/versions.json snapcraft_revision_<arch> pins, compared with
+          # what the track installed. DRIFT is a ::warning, never a refusal (`snap install --revision` needs developer
+          # access, so a moved track would otherwise red every run with no code change), the same rule as the content snaps.
+          arch="$(dpkg --print-architecture)"
+          pinned="$(KEY="snapcraft_revision_${arch}" node -p "require('./tooling/versions.json')[process.env.KEY] ?? ''")"
+          [ "$rev" = "$pinned" ] || echo "::warning title=snapcraft revision::${track} installed snapcraft ${got} at revision ${rev}, tooling/versions.json snapcraft_revision_${arch} pins ${pinned:-nothing}: the track moved; re-measure and move the pin in a reviewed commit."
           echo "version=${got}" >> "$GITHUB_OUTPUT"
           NIKATRU_QUIET_EOF
           NIKATRU_SHELL="${BASH:-bash}"; if command -v cygpath >/dev/null 2>&1; then NIKATRU_SHELL="$(cygpath -w "$NIKATRU_SHELL")"; fi
@@ -1454,6 +1480,12 @@ jobs:
           echo "snapcraft ${got} (revision ${rev}) installed from ${track}; floor ${want} (tooling/versions.json snapcraft_version)"
           [ -n "$got" ] && [ -n "$rev" ] || { echo "::error title=snapcraft pin::could not read the installed snapcraft version (${got:-none}) or revision (${rev:-none})."; exit 1; }
           [ "$(printf '%s\n%s\n' "$want" "$got" | sort -V | sed -n 1p)" = "$want" ] || { echo "::error title=snapcraft pin::the ${track} track served snapcraft ${got}, BELOW the floor ${want} in tooling/versions.json: a rollback on the track, not a release to pack with."; exit 1; }
+          # why (review52-pipeline-028): the revision tooling/versions.json snapcraft_revision_<arch> pins, compared with
+          # what the track installed. DRIFT is a ::warning, never a refusal (`snap install --revision` needs developer
+          # access, so a moved track would otherwise red every run with no code change), the same rule as the content snaps.
+          arch="$(dpkg --print-architecture)"
+          pinned="$(KEY="snapcraft_revision_${arch}" node -p "require('./tooling/versions.json')[process.env.KEY] ?? ''")"
+          [ "$rev" = "$pinned" ] || echo "::warning title=snapcraft revision::${track} installed snapcraft ${got} at revision ${rev}, tooling/versions.json snapcraft_revision_${arch} pins ${pinned:-nothing}: the track moved; re-measure and move the pin in a reviewed commit."
           # The upload runs the snapcraft the dry run rehearsed, or nothing: a point release that landed between the two
           # jobs is refused here, and a re-dispatch converges (its dry run and submit then install the same revision).
           [ "$rev" = "$DRY_RUN_SNAPCRAFT_REVISION" ] || { echo "::error title=snapcraft pin::the submit job installed snapcraft ${got} (revision ${rev}), and the dry run packed and rehearsed with ${DRY_RUN_SNAPCRAFT_VERSION:-unknown} (revision ${DRY_RUN_SNAPCRAFT_REVISION:-unknown}). The ${track} track moved between the two jobs; dispatch again so both run one snapcraft."; exit 1; }

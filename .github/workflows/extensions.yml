@@ -64,7 +64,7 @@ permissions:
   contents: read
 
 concurrency:
-  group: extensions-${{ (github.event.client_payload.pr || github.event.client_payload.ref || 'refs/heads/main') }}
+  group: extensions-${{ inputs.lane == 'release' && inputs.tag != '' && format('release-{0}', inputs.tag) || (github.event.client_payload.pr || github.event.client_payload.ref || 'refs/heads/main') }}
   cancel-in-progress: ${{ (github.event.client_payload.pr || github.event.client_payload.ref || 'refs/heads/main') != 'refs/heads/main' && !startsWith((github.event.client_payload.pr || github.event.client_payload.ref || 'refs/heads/main'), 'refs/tags/') }}
 
 defaults:
@@ -417,6 +417,10 @@ jobs:
       - uses: ./.nikatru-trusted/.github/actions/setup-node
         with:
           cache-dependency-path: extensions/${{ matrix.suite.dir }}/test/e2e/package-lock.json
+        env:
+          NIKATRU_REF: ${{ github.event.client_payload.ref || 'refs/heads/main' }}
+          NIKATRU_EVENT_NAME: ${{ github.event.client_payload.event || github.event_name }}
+          NIKATRU_PR: ${{ github.event.client_payload.pr }}
       - name: Install e2e dependencies
         working-directory: extensions/${{ matrix.suite.dir }}/test/e2e
         run: |
@@ -445,6 +449,10 @@ jobs:
         with:
           install: npx playwright install --with-deps chromium
           working-directory: extensions/${{ matrix.suite.dir }}/test/e2e
+        env:
+          NIKATRU_REF: ${{ github.event.client_payload.ref || 'refs/heads/main' }}
+          NIKATRU_EVENT_NAME: ${{ github.event.client_payload.event || github.event_name }}
+          NIKATRU_PR: ${{ github.event.client_payload.pr }}
       - name: Firefox on the image
         run: |
           NIKATRU_QUIET="$(mktemp "${RUNNER_TEMP:-/tmp}/nikatru-step.XXXXXX")"
@@ -1302,6 +1310,10 @@ jobs:
       - uses: ./.nikatru-trusted/.github/actions/setup-node
         with:
           cache-dependency-path: extensions/${{ matrix.suite.dir }}/test/e2e/package-lock.json
+        env:
+          NIKATRU_REF: ${{ github.event.client_payload.ref || 'refs/heads/main' }}
+          NIKATRU_EVENT_NAME: ${{ github.event.client_payload.event || github.event_name }}
+          NIKATRU_PR: ${{ github.event.client_payload.pr }}
       - name: Install e2e dependencies
         working-directory: extensions/${{ matrix.suite.dir }}/test/e2e
         run: |
@@ -1502,6 +1514,10 @@ jobs:
         working-directory: ${{ github.workspace }}
         run: printf '/.nikatru-trusted/\n' >> "$(git rev-parse --git-path info/exclude)"
       - uses: ./.nikatru-trusted/.github/actions/setup-node
+        env:
+          NIKATRU_REF: ${{ github.event.client_payload.ref || 'refs/heads/main' }}
+          NIKATRU_EVENT_NAME: ${{ github.event.client_payload.event || github.event_name }}
+          NIKATRU_PR: ${{ github.event.client_payload.pr }}
       - name: The gate passed for this exact commit
         working-directory: .
         env:
@@ -1907,7 +1923,7 @@ jobs:
       - name: Release notes from CHANGELOG
         env:
           GH_REPO: ${{ github.repository }}
-          TAG: ${{ env.NIKATRU_REF_NAME }}
+          RUN_URL: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}
           TOOL: ${{ steps.tag.outputs.id }}
           VERSION: ${{ steps.tag.outputs.version }}
         run: |
@@ -1924,7 +1940,11 @@ jobs:
             echo ''
             echo "Check that this repository's release workflow built a download, from this tag (docs/release/verify-a-download.md):"
             echo ''
-            echo "    gh attestation verify <file> --repo ${GH_REPO} --signer-workflow ${GH_REPO}/.github/workflows/extensions.yml --source-ref refs/tags/${TAG}"
+            echo "    gh attestation verify <file> --repo ${GH_REPO} --signer-workflow ${GH_REPO}/.github/workflows/extensions.yml --source-ref refs/heads/main --format json --jq '.[].verificationResult.signature.certificate.runInvocationURI'"
+            echo ''
+            echo "It must succeed and print a URL that begins with the run that produced this release:"
+            echo ''
+            echo "    ${RUN_URL}"
           } >> notes.md
       - name: Describe the release, versioned per artefact
         working-directory: .
@@ -2008,11 +2028,26 @@ jobs:
           # release that uploads the manifest and not the file it covers fails
           # `post-deploy-smoke.mjs --release-manifest` on the first tag, and fails
           # it as "asset missing", which reads like a build problem.
-          gh release create "$NIKATRU_REF_NAME" \
-            extensions/dist/*.zip extensions/dist/SHA256SUMS.txt extensions/dist/SHA256SUMS \
-            extensions/dist/release.json \
-            --title "${TOOL} v${VERSION}" \
-            --notes-file extensions/notes.md
+          set -euo pipefail
+          # 🔴 --draft (review52-ext-010, 2026-11-10): the CI repository is PUBLIC, and a published
+          # Release handed the whole unminified package, Pro closed, to anyone the moment a tag landed —
+          # with no owner word, under the store lock. A draft is visible only to push access; the
+          # store-publish job still downloads it (gh release download reads drafts), and the smoke
+          # below reads it through tooling/ops/release-by-tag.mjs. Publishing it is an owner act.
+          # tooling/ci/test/extensions-release-draft.test.mjs reds this call without --draft.
+          assets=(extensions/dist/*.zip extensions/dist/SHA256SUMS.txt extensions/dist/SHA256SUMS extensions/dist/release.json)
+          # why: IDEMPOTENT ON A RE-RUN (review52-pipeline-013): a re-run after a later step failed answers
+          # `identical` when the release already serves exactly these bytes, instead of failing on it forever.
+          publish="$(node tooling/ci/release-publish-once.mjs --tag "$NIKATRU_REF_NAME" -- "${assets[@]}")"
+          if [ "$publish" = create ]; then
+            gh release create "$NIKATRU_REF_NAME" \
+              "${assets[@]}" \
+              --draft \
+              --title "${TOOL} v${VERSION}" \
+              --notes-file extensions/notes.md
+          else
+            echo "::notice title=Release ${NIKATRU_REF_NAME} already published::an earlier attempt of this run published exactly these bytes; continuing"
+          fi
       - name: The release must carry the assets this job just built
         if: (github.event.client_payload.event || github.event_name) == 'push' && inputs.dry_run != true
         working-directory: .
@@ -2152,6 +2187,8 @@ jobs:
         run: >
           node tooling/ci/verify-provenance.mjs --dir extensions/dist --repo "$REPO"
           --signer-workflow "${REPO}/.github/workflows/extensions.yml"
+          --source-ref refs/heads/main
+          --run-url "${GITHUB_SERVER_URL}/${GITHUB_REPOSITORY}/actions/runs/${GITHUB_RUN_ID}"
           --attestation-id "$ATTESTATION_ID" --attestation-url "$ATTESTATION_URL"
           --out "${RUNNER_TEMP}/provenance.json"
 
@@ -2167,6 +2204,7 @@ jobs:
     environment: store-publish
     permissions:
       contents: read
+      attestations: read
       deployments: write
     defaults:
       run:
@@ -2256,6 +2294,10 @@ jobs:
         working-directory: ${{ github.workspace }}
         run: printf '/.nikatru-trusted/\n' >> "$(git rev-parse --git-path info/exclude)"
       - uses: ./.nikatru-trusted/.github/actions/setup-node
+        env:
+          NIKATRU_REF: ${{ github.event.client_payload.ref || 'refs/heads/main' }}
+          NIKATRU_EVENT_NAME: ${{ github.event.client_payload.event || github.event_name }}
+          NIKATRU_PR: ${{ github.event.client_payload.pr }}
       - name: The tag this run publishes (fullshot-v1.10.1 → id + version)
         id: tag
         shell: bash
@@ -2291,6 +2333,23 @@ jobs:
           set -euo pipefail
           cd release-assets
           sha256sum -c SHA256SUMS.txt
+      - name: Every zip carries this workflow's signed provenance
+        shell: bash
+        timeout-minutes: 10
+        env:
+          GH_TOKEN: ${{ github.token }}
+          REPO: ${{ github.repository }}
+        run: |
+          set -euo pipefail
+          shopt -s nullglob
+          zips=(release-assets/*.zip)
+          if [ "${#zips[@]}" -eq 0 ]; then
+            echo "::error::NOT PUBLISHED: the Release carries no .zip asset to verify."
+            exit 1
+          fi
+          for z in "${zips[@]}"; do
+            gh attestation verify "$z" --repo "$REPO" --signer-workflow "${REPO}/.github/workflows/extensions.yml"
+          done
       - name: The Release still carries the bytes this job submits
         env:
           GH_TOKEN: ${{ github.token }}
@@ -2611,6 +2670,10 @@ jobs:
         working-directory: ${{ github.workspace }}
         run: printf '/.nikatru-trusted/\n' >> "$(git rev-parse --git-path info/exclude)"
       - uses: ./.nikatru-trusted/.github/actions/setup-node
+        env:
+          NIKATRU_REF: ${{ github.event.client_payload.ref || 'refs/heads/main' }}
+          NIKATRU_EVENT_NAME: ${{ github.event.client_payload.event || github.event_name }}
+          NIKATRU_PR: ${{ github.event.client_payload.pr }}
       - name: Mint a service-account token, or print the owner step
         env:
           CWS_SERVICE_ACCOUNT_JSON: ${{ secrets.CWS_SERVICE_ACCOUNT_JSON }}
@@ -2685,6 +2748,10 @@ jobs:
         working-directory: ${{ github.workspace }}
         run: printf '/.nikatru-trusted/\n' >> "$(git rev-parse --git-path info/exclude)"
       - uses: ./.nikatru-trusted/.github/actions/setup-node
+        env:
+          NIKATRU_REF: ${{ github.event.client_payload.ref || 'refs/heads/main' }}
+          NIKATRU_EVENT_NAME: ${{ github.event.client_payload.event || github.event_name }}
+          NIKATRU_PR: ${{ github.event.client_payload.pr }}
       - name: Probe the AMO and Edge keys, or print the owner step
         env:
           AMO_JWT_ISSUER: ${{ secrets.AMO_JWT_ISSUER }}
@@ -2778,6 +2845,10 @@ jobs:
         working-directory: ${{ github.workspace }}
         run: printf '/.nikatru-trusted/\n' >> "$(git rev-parse --git-path info/exclude)"
       - uses: ./.nikatru-trusted/.github/actions/setup-node
+        env:
+          NIKATRU_REF: ${{ github.event.client_payload.ref || 'refs/heads/main' }}
+          NIKATRU_EVENT_NAME: ${{ github.event.client_payload.event || github.event_name }}
+          NIKATRU_PR: ${{ github.event.client_payload.pr }}
       - name: The daily e2e proof must be RECENT, SCHEDULED and GREEN
         env:
           GH_TOKEN: ${{ github.token }}
@@ -3381,6 +3452,7 @@ jobs:
     timeout-minutes: 15
     permissions:
       contents: read
+      id-token: write
     steps:
       - name: Check out this shell repository only, no private code (generated)
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1

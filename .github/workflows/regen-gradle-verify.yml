@@ -371,6 +371,10 @@ jobs:
         with:
           cache: 'false'
           android-ndk: 'true'
+        env:
+          NIKATRU_REF: ${{ github.event.client_payload.ref || inputs.private_ref || 'refs/heads/main' }}
+          NIKATRU_EVENT_NAME: ${{ github.event.client_payload.event || github.event_name }}
+          NIKATRU_PR: ${{ github.event.client_payload.pr }}
       - name: Resolve the workspace
         timeout-minutes: 5
         run: |

@@ -2,7 +2,7 @@
 # Do not edit: `node tooling/ci/gen-public-shell.mjs --check` re-generates it and fails on any difference.
 env:
   NIKATRU_PRIVATE_REPO: com-nikatru/Nikatru_Private
-  NIKATRU_SHELL_FINGERPRINT: 613bd7b3932ee79840a5aee66ab3fcd0ba2da3fca2adaac3582b0b2218da76f3
+  NIKATRU_SHELL_FINGERPRINT: f654a64f3f4568bdcd0f6bb5c23c5105dc82063d54f648d23fd1abcb11fa0680
 
 name: Part of CI · Deploy workers
 
@@ -23,6 +23,10 @@ on:
         required: true
       SUPABASE_ANON_KEY:
         required: true
+      OWNER_PAGE_PUSH_URL:
+        required: false
+      OWNER_PAGE_PUSH_TOKEN:
+        required: false
       PRIVATE_DEPLOY_KEY:
         required: true
       NIKATRU_DETAIL_KEY:
@@ -229,6 +233,10 @@ jobs:
         run: printf '/.nikatru-trusted/\n' >> "$(git rev-parse --git-path info/exclude)"
       - uses: ./.nikatru-trusted/.github/actions/setup-node
         if: steps.plan.outputs.deploy == 'true'
+        env:
+          NIKATRU_REF: ${{ github.event.client_payload.ref || 'refs/heads/main' }}
+          NIKATRU_EVENT_NAME: ${{ github.event.client_payload.event || github.event_name }}
+          NIKATRU_PR: ${{ github.event.client_payload.pr }}
       - run: node "$GITHUB_WORKSPACE/tooling/ops/npm-ci-retry.mjs" -- npm ci --ignore-scripts
         if: steps.plan.outputs.deploy == 'true'
         working-directory: ${{ matrix.worker.dir }}
@@ -251,6 +259,36 @@ jobs:
           D1_TIME_TRAVEL_OUTPUT: ${{ steps.time_travel.outputs.command-output }}
           D1_DATABASE: ${{ matrix.worker.migrations }}
         run: node tooling/ops/d1-restore-bookmark.mjs --database "$D1_DATABASE"
+      - name: Name the export bucket (services/platform/wrangler.jsonc BACKUPS_R2)
+        id: export_bucket
+        if: steps.plan.outputs.deploy == 'true' && matrix.worker.migrations
+        run: node tooling/ops/pre-migration-export.mjs --bucket
+      - name: Read the newest export's manifest (the second copy before the apply)
+        id: export_manifest
+        if: steps.plan.outputs.deploy == 'true' && matrix.worker.migrations
+        uses: cloudflare/wrangler-action@953926a2e2182532811c01a25e53647d93bf07c0
+        with:
+          apiToken: ${{ secrets.CLOUDFLARE_API_TOKEN }}
+          wranglerVersion: '4.149.0'
+          accountId: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
+          workingDirectory: ${{ matrix.worker.dir }}
+          command: r2 object get ${{ steps.export_bucket.outputs.bucket }}/manifests/latest.json --remote --pipe
+      - name: Refuse the apply without a complete, fresh export
+        id: pre_export
+        if: steps.plan.outputs.deploy == 'true' && matrix.worker.migrations
+        env:
+          PRE_MIGRATION_MANIFEST: ${{ steps.export_manifest.outputs.command-output }}
+          PRE_MIGRATION_DATABASE: ${{ matrix.worker.worker }}/${{ matrix.worker.migrations }}
+        run: node tooling/ops/pre-migration-export.mjs
+      - name: Record this apply's rollback point in the migration ledger (refuse the apply without it)
+        id: ledger
+        if: steps.plan.outputs.deploy == 'true' && matrix.worker.migrations
+        env:
+          GH_TOKEN: ${{ github.token }}
+          PRE_MIGRATION_EXPORT_ID: ${{ steps.pre_export.outputs.export }}
+          RESTORE_BOOKMARK: ${{ steps.restore_point.outputs.bookmark }}
+          PRE_MIGRATION_DATABASE: ${{ matrix.worker.worker }}/${{ matrix.worker.migrations }}
+        run: node tooling/ops/pre-migration-export.mjs --record
       - name: Apply the Worker's D1 migrations (before deploy)
         if: steps.plan.outputs.deploy == 'true' && matrix.worker.migrations
         uses: cloudflare/wrangler-action@953926a2e2182532811c01a25e53647d93bf07c0
@@ -288,6 +326,15 @@ jobs:
           GH_TOKEN: ${{ github.token }}
           DEPLOY_OUTPUT: ${{ steps.deploy.outputs.command-output }}
         run: node tooling/ci/record-deployment.mjs ${{ matrix.worker.worker }} ${{ matrix.worker.origin }} --wrangler-output-env DEPLOY_OUTPUT --recipe deploy-workers.yml --smoke-outcome "${{ steps.smoke.outcome }}"
+      - name: Page the owner — this build is live and its smoke failed
+        if: failure() && steps.deploy.outcome == 'success' && steps.smoke.outcome == 'failure'
+        env:
+          OWNER_PAGE_PUSH_URL: ${{ secrets.OWNER_PAGE_PUSH_URL }}
+          OWNER_PAGE_PUSH_TOKEN: ${{ secrets.OWNER_PAGE_PUSH_TOKEN }}
+          RUN_URL: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}
+          DEPLOYED_SHA: ${{ env.NIKATRU_SHA }}
+          UNIT: ${{ matrix.worker.worker }}
+        run: node tooling/ci/deploy-smoke-page.mjs --unit "$UNIT"
 
   platform:
     name: Deploy platform
@@ -371,6 +418,10 @@ jobs:
         run: printf '/.nikatru-trusted/\n' >> "$(git rev-parse --git-path info/exclude)"
       - uses: ./.nikatru-trusted/.github/actions/setup-node
         if: steps.plan.outputs.deploy == 'true'
+        env:
+          NIKATRU_REF: ${{ github.event.client_payload.ref || 'refs/heads/main' }}
+          NIKATRU_EVENT_NAME: ${{ github.event.client_payload.event || github.event_name }}
+          NIKATRU_PR: ${{ github.event.client_payload.pr }}
       - run: node "$GITHUB_WORKSPACE/tooling/ops/npm-ci-retry.mjs" -- npm ci --ignore-scripts
         if: steps.plan.outputs.deploy == 'true'
         working-directory: services/platform
@@ -513,6 +564,10 @@ jobs:
         run: printf '/.nikatru-trusted/\n' >> "$(git rev-parse --git-path info/exclude)"
       - uses: ./.nikatru-trusted/.github/actions/setup-node
         if: steps.plan.outputs.deploy == 'true'
+        env:
+          NIKATRU_REF: ${{ github.event.client_payload.ref || 'refs/heads/main' }}
+          NIKATRU_EVENT_NAME: ${{ github.event.client_payload.event || github.event_name }}
+          NIKATRU_PR: ${{ github.event.client_payload.pr }}
       - run: node "$GITHUB_WORKSPACE/tooling/ops/npm-ci-retry.mjs" -- npm ci --ignore-scripts
         if: steps.plan.outputs.deploy == 'true'
         working-directory: services/edge-shield
@@ -530,19 +585,44 @@ jobs:
         if: steps.plan.outputs.deploy == 'true'
         run: node tooling/ops/check-edge-shield.mjs --settle --expect-release ${{ env.NIKATRU_SHA }}
       - name: Apply the zone's per-IP credential rule (tooling/edge-ratelimit-rule.json)
+        id: ratelimit
         if: steps.plan.outputs.deploy == 'true'
         env:
           CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
         run: node tooling/ops/edge-ratelimit-rule.mjs --apply
       - name: Apply the www -> apex redirect rule, then the www DNS record (tooling/edge/zone.json)
+        id: www
         if: steps.plan.outputs.deploy == 'true'
         env:
           CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
         run: node tooling/ops/www-redirect-rule.mjs --apply
+      - name: Smoke — this commit's shield is in path and both zone rules are applied
+        id: proven
+        if: always() && steps.deploy.outcome == 'success'
+        env:
+          SMOKE: ${{ steps.smoke.outcome }}
+          RATELIMIT: ${{ steps.ratelimit.outcome }}
+          WWW: ${{ steps.www.outcome }}
+        run: |
+          for o in "smoke=$SMOKE" "ratelimit=$RATELIMIT" "www=$WWW"; do
+            if [ "${o#*=}" != success ]; then
+              echo "::error title=edge-shield::step ${o%%=*} is '${o#*=}', so this deploy is recorded as failure and the next run re-applies"
+              exit 1
+            fi
+          done
       - name: Record the deployed SHA
         if: always() && steps.deploy.outcome == 'success'
         env:
           GH_TOKEN: ${{ github.token }}
           DEPLOY_OUTPUT: ${{ steps.deploy.outputs.command-output }}
           UNIT_ORIGIN: ${{ steps.target.outputs.origin }}
-        run: node tooling/ci/record-deployment.mjs edge-shield "$UNIT_ORIGIN" --wrangler-output-env DEPLOY_OUTPUT --recipe deploy-workers.yml --smoke-outcome "${{ steps.smoke.outcome }}"
+        run: node tooling/ci/record-deployment.mjs edge-shield "$UNIT_ORIGIN" --wrangler-output-env DEPLOY_OUTPUT --recipe deploy-workers.yml --smoke-outcome "${{ steps.proven.outcome }}"
+      - name: Page the owner — this build is live and its smoke failed
+        if: failure() && steps.deploy.outcome == 'success' && steps.smoke.outcome == 'failure'
+        env:
+          OWNER_PAGE_PUSH_URL: ${{ secrets.OWNER_PAGE_PUSH_URL }}
+          OWNER_PAGE_PUSH_TOKEN: ${{ secrets.OWNER_PAGE_PUSH_TOKEN }}
+          RUN_URL: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}
+          DEPLOYED_SHA: ${{ env.NIKATRU_SHA }}
+          UNIT: edge-shield
+        run: node tooling/ci/deploy-smoke-page.mjs --unit "$UNIT"

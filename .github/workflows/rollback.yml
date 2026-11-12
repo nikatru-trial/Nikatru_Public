@@ -15,7 +15,7 @@ on:
         required: true
         type: string
       deployment:
-        description: 'Id of the ledger Deployment whose Pages deployment or Worker version goes back live.'
+        description: 'Id of the ledger Deployment whose Pages deployment or Worker version goes back live, or last-known-good (the newest success before the last healthy ops-watch run).'
         required: true
         type: string
       dry_run:
@@ -235,6 +235,7 @@ jobs:
     permissions:
       contents: read
       deployments: write
+      actions: read
     steps:
       - name: Check out the private tree (generated)
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
@@ -291,6 +292,10 @@ jobs:
         working-directory: ${{ github.workspace }}
         run: printf '/.nikatru-trusted/\n' >> "$(git rev-parse --git-path info/exclude)"
       - uses: ./.nikatru-trusted/.github/actions/setup-node
+        env:
+          NIKATRU_REF: ${{ github.event.client_payload.ref || 'refs/heads/main' }}
+          NIKATRU_EVENT_NAME: ${{ github.event.client_payload.event || github.event_name }}
+          NIKATRU_PR: ${{ github.event.client_payload.pr }}
       - name: Install the wrangler island
         if: ${{ !inputs.dry_run }}
         run: node "$GITHUB_WORKSPACE/tooling/ops/npm-ci-retry.mjs" -- npm ci --ignore-scripts --prefix tooling/wrangler
@@ -321,7 +326,7 @@ jobs:
         env:
           GH_TOKEN: ${{ github.token }}
           UNIT: ${{ steps.rollback.outputs.unit }}
-          DEPLOYMENT: ${{ inputs.deployment }}
+          DEPLOYMENT: ${{ steps.rollback.outputs.ledger_id }}
           ENVIRONMENT_URL: ${{ steps.rollback.outputs.environment_url }}
           SHA: ${{ steps.rollback.outputs.sha }}
           ID_FLAG: ${{ steps.rollback.outputs.id_flag }}
@@ -423,6 +428,10 @@ jobs:
         working-directory: ${{ github.workspace }}
         run: printf '/.nikatru-trusted/\n' >> "$(git rev-parse --git-path info/exclude)"
       - uses: ./.nikatru-trusted/.github/actions/setup-node
+        env:
+          NIKATRU_REF: ${{ github.event.client_payload.ref || 'refs/heads/main' }}
+          NIKATRU_EVENT_NAME: ${{ github.event.client_payload.event || github.event_name }}
+          NIKATRU_PR: ${{ github.event.client_payload.pr }}
       - name: Plan every production unit back to its last known-good, changing nothing
         env:
           GH_TOKEN: ${{ github.token }}

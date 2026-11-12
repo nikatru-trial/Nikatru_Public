@@ -178,6 +178,9 @@ jobs:
             tooling/ci
           ssh-key: ${{ secrets.PRIVATE_DEPLOY_KEY }}
           persist-credentials: false
+      - name: Every setup step of this job succeeded (generated)
+        id: nikatru-setup-ok
+        run: echo "every setup step before the first check succeeded"
       - name: Every migration this deploy carries is private main's
         if: inputs.when != 'skip'
         working-directory: .sandbox-main
@@ -190,7 +193,7 @@ jobs:
           node "$GITHUB_WORKSPACE/../.nikatru-shell/quiet-step.mjs" --name deploy-sandbox-unit.workers.4 -- "$NIKATRU_SHELL" -e "$NIKATRU_QUIET"
       - name: Never install an ancestor over a newer build (SUPERSEDED skips that target)
         id: supersede
-        if: inputs.when != 'skip'
+        if: ${{ (success() || (!cancelled() && (github.event.client_payload.event == 'pull_request' && startsWith(github.event.client_payload.ref, 'refs/heads/rehearsal/')) && steps.nikatru-setup-ok.outcome == 'success')) && (inputs.when != 'skip') }}
         env:
           WORKERS: ${{ steps.set.outputs.workers }}
           PLATFORM: ${{ steps.set.outputs.platform }}
@@ -311,6 +314,10 @@ jobs:
         run: printf '/.nikatru-trusted/\n' >> "$(git rev-parse --git-path info/exclude)"
       - uses: ./.nikatru-trusted/.github/actions/setup-node
         if: needs.workers.outputs.platform == 'true'
+        env:
+          NIKATRU_REF: ${{ github.event.client_payload.ref || 'refs/heads/main' }}
+          NIKATRU_EVENT_NAME: ${{ github.event.client_payload.event || github.event_name }}
+          NIKATRU_PR: ${{ github.event.client_payload.pr }}
       - run: node "$GITHUB_WORKSPACE/tooling/ops/npm-ci-retry.mjs" -- npm ci --ignore-scripts
         if: needs.workers.outputs.platform == 'true'
         working-directory: services/platform
@@ -431,6 +438,10 @@ jobs:
         run: printf '/.nikatru-trusted/\n' >> "$(git rev-parse --git-path info/exclude)"
       - uses: ./.nikatru-trusted/.github/actions/setup-node
         if: matrix.worker.worker != 'none'
+        env:
+          NIKATRU_REF: ${{ github.event.client_payload.ref || 'refs/heads/main' }}
+          NIKATRU_EVENT_NAME: ${{ github.event.client_payload.event || github.event_name }}
+          NIKATRU_PR: ${{ github.event.client_payload.pr }}
       - run: node "$GITHUB_WORKSPACE/tooling/ops/npm-ci-retry.mjs" -- npm ci --ignore-scripts
         if: matrix.worker.worker != 'none'
         working-directory: ${{ matrix.worker.dir }}

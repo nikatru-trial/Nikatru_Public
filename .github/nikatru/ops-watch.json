@@ -1,0 +1,144 @@
+{
+  "_generated": "by tooling/ci/gen-public-shell.mjs; read by report.py beside it. Do not edit.",
+  "detailOnly": true,
+  "postTimeoutS": 30,
+  "prefix": "nikatru-detail-",
+  "slots": 8,
+  "sendBudgetS": 360,
+  "gate": {
+    "job": "heartbeats",
+    "context": "ops-watch",
+    "members": [
+      "ops-watch.heartbeats."
+    ]
+  },
+  "lanes": [
+    {
+      "job": "status",
+      "context": "ops-watch/status",
+      "members": [
+        "ops-watch.status."
+      ]
+    },
+    {
+      "job": "supabase-drift",
+      "context": "ops-watch/supabase-drift",
+      "members": [
+        "ops-watch.supabase-drift."
+      ]
+    },
+    {
+      "job": "prod-provenance",
+      "context": "ops-watch/prod-provenance",
+      "members": [
+        "ops-watch.prod-provenance."
+      ]
+    },
+    {
+      "job": "pages-deployments",
+      "context": "ops-watch/pages-deployments",
+      "members": [
+        "ops-watch.pages-deployments."
+      ]
+    },
+    {
+      "job": "worker-source-drift",
+      "context": "ops-watch/worker-source-drift",
+      "members": [
+        "ops-watch.worker-source-drift."
+      ]
+    },
+    {
+      "job": "runner-budget",
+      "context": "ops-watch/runner-budget",
+      "members": [
+        "ops-watch.runner-budget."
+      ]
+    },
+    {
+      "job": "shell-barriers",
+      "context": "ops-watch/shell-barriers",
+      "members": [
+        "ops-watch.shell-barriers."
+      ]
+    },
+    {
+      "job": "store-vitals-state",
+      "context": "ops-watch/store-vitals-state",
+      "members": [
+        "ops-watch.store-vitals-state."
+      ]
+    },
+    {
+      "job": "store-vitals",
+      "context": "ops-watch/store-vitals",
+      "members": [
+        "ops-watch.store-vitals."
+      ]
+    },
+    {
+      "job": "glitchtip",
+      "context": "ops-watch/glitchtip",
+      "members": [
+        "ops-watch.glitchtip."
+      ]
+    },
+    {
+      "job": "config-drift",
+      "context": "ops-watch/config-drift",
+      "members": [
+        "ops-watch.config-drift."
+      ]
+    },
+    {
+      "job": "edge-shield",
+      "context": "ops-watch/edge-shield",
+      "members": [
+        "ops-watch.edge-shield."
+      ]
+    },
+    {
+      "job": "failure-ledger",
+      "context": "ops-watch/failure-ledger",
+      "members": [
+        "ops-watch.failure-ledger."
+      ]
+    },
+    {
+      "job": "renovate-backlog",
+      "context": "ops-watch/renovate-backlog",
+      "members": [
+        "ops-watch.renovate-backlog."
+      ]
+    },
+    {
+      "job": "code-scanning-age",
+      "context": "ops-watch/code-scanning-age",
+      "members": [
+        "ops-watch.code-scanning-age."
+      ]
+    },
+    {
+      "job": "tech-currency",
+      "context": "ops-watch/tech-currency",
+      "members": [
+        "ops-watch.tech-currency."
+      ]
+    },
+    {
+      "job": "self-review",
+      "context": "ops-watch/self-review",
+      "members": [
+        "ops-watch.self-review."
+      ]
+    },
+    {
+      "job": "digest",
+      "context": "ops-watch/digest",
+      "members": [
+        "ops-watch.digest."
+      ]
+    }
+  ],
+  "dispatchDetailUrl": "https://gh-bridge.nikatru.workers.dev/dispatch-detail"
+}

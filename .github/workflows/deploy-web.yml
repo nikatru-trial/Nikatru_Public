@@ -2,7 +2,7 @@
 # Do not edit: `node tooling/ci/gen-public-shell.mjs --check` re-generates it and fails on any difference.
 env:
   NIKATRU_PRIVATE_REPO: com-nikatru/Nikatru_Private
-  NIKATRU_SHELL_FINGERPRINT: 79677dfe2ff8cb9695f38cbd106b85ea1c7cd74dc0c7c586a62d0caaabd0da86
+  NIKATRU_SHELL_FINGERPRINT: e30826bd95605bcc18ae6babdcc917c60daf9072d8c566de09be75b37974ceb6
 
 name: Part of CI · Deploy web
 
@@ -33,6 +33,10 @@ on:
         required: true
       LAUNCH_MAIL_RESEND_KEY:
         required: true
+      OWNER_PAGE_PUSH_URL:
+        required: false
+      OWNER_PAGE_PUSH_TOKEN:
+        required: false
       PRIVATE_DEPLOY_KEY:
         required: true
       NIKATRU_DETAIL_KEY:
@@ -236,6 +240,12 @@ jobs:
         run: printf '/.nikatru-trusted/\n' >> "$(git rev-parse --git-path info/exclude)"
       - uses: ./.nikatru-trusted/.github/actions/setup-flutter
         if: steps.plan.outputs.deploy == 'true'
+        with:
+          cache: 'false'
+        env:
+          NIKATRU_REF: ${{ github.event.client_payload.ref || 'refs/heads/main' }}
+          NIKATRU_EVENT_NAME: ${{ github.event.client_payload.event || github.event_name }}
+          NIKATRU_PR: ${{ github.event.client_payload.pr }}
       - run: flutter pub get --enforce-lockfile
         if: steps.plan.outputs.deploy == 'true'
       - name: Derive the release line from pubspec
@@ -280,6 +290,10 @@ jobs:
         run: printf '/.nikatru-trusted/\n' >> "$(git rev-parse --git-path info/exclude)"
       - uses: ./.nikatru-trusted/.github/actions/setup-node
         if: steps.plan.outputs.deploy == 'true'
+        env:
+          NIKATRU_REF: ${{ github.event.client_payload.ref || 'refs/heads/main' }}
+          NIKATRU_EVENT_NAME: ${{ github.event.client_payload.event || github.event_name }}
+          NIKATRU_PR: ${{ github.event.client_payload.pr }}
       - name: Self-host the engine's fallback fonts, pinned by sha256
         if: steps.plan.outputs.deploy == 'true'
         working-directory: .
@@ -323,7 +337,7 @@ jobs:
           # THE RELEASE STRING IS THE SDK'S, RECOMPOSED — and then CHECKED, so
           # this cannot silently drift from the build step above. `main.dart`
           # reports `AppConfig.telemetryRelease` = `<app id>@<APP_VERSION>`, and
-          # APP_VERSION is the `--dart-define` two steps up. version.json is
+          # APP_VERSION is composed by tooling/ci/flutter-release-build.mjs for the `Build web` step above (<BUILD_NAME>+<sha7>). version.json is
           # Flutter's own record of what it stamped, so comparing against it
           # catches an edit to either line.
           version="${RELEASE_LINE}.${RUN_NUMBER}"
@@ -399,6 +413,11 @@ jobs:
         id: target
         working-directory: .
         run: node tooling/ci/assert-catalog-reachable.mjs --emit-url ${{ matrix.app }} >> "$GITHUB_OUTPUT"
+      - name: Read the platform API's origin from the register
+        if: steps.plan.outputs.deploy == 'true'
+        id: platform
+        working-directory: .
+        run: node tooling/ci/site-target.mjs --origin platform >> "$GITHUB_OUTPUT"
       - name: Both APIs, as deployed, allow the headers this build sends
         if: steps.plan.outputs.deploy == 'true'
         working-directory: .
@@ -406,7 +425,7 @@ jobs:
           node tooling/web/deployed-preflight.mjs
           --origin ${{ steps.target.outputs.site_url }}
           --api "$API_BASE_URL"
-          --api-platform https://platform.nikatru.com
+          --api-platform ${{ steps.platform.outputs.origin }}
       - name: Deploy to Cloudflare Pages
         if: steps.plan.outputs.deploy == 'true'
         id: deploy
@@ -441,6 +460,16 @@ jobs:
           GH_TOKEN: ${{ github.token }}
           PAGES_DEPLOYMENT_ID: ${{ steps.deploy.outputs.pages-deployment-id }}
         run: node tooling/ci/record-deployment.mjs ${{ matrix.app }}-web ${{ steps.target.outputs.site_url }} --pages-deployment-id "$PAGES_DEPLOYMENT_ID" --recipe deploy-web.yml --smoke-outcome "${{ steps.smoke.outcome }}"
+      - name: Page the owner — this build is live and its smoke failed
+        if: failure() && steps.deploy.outcome == 'success' && steps.smoke.outcome == 'failure'
+        working-directory: .
+        env:
+          OWNER_PAGE_PUSH_URL: ${{ secrets.OWNER_PAGE_PUSH_URL }}
+          OWNER_PAGE_PUSH_TOKEN: ${{ secrets.OWNER_PAGE_PUSH_TOKEN }}
+          RUN_URL: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}
+          DEPLOYED_SHA: ${{ env.NIKATRU_SHA }}
+          UNIT: ${{ matrix.app }}-web
+        run: node tooling/ci/deploy-smoke-page.mjs --unit "$UNIT"
 
   site:
     name: Deploy the apex site to Cloudflare Pages (nikatru-apex)
@@ -517,6 +546,10 @@ jobs:
         working-directory: ${{ github.workspace }}
         run: printf '/.nikatru-trusted/\n' >> "$(git rev-parse --git-path info/exclude)"
       - uses: ./.nikatru-trusted/.github/actions/setup-node
+        env:
+          NIKATRU_REF: ${{ github.event.client_payload.ref || 'refs/heads/main' }}
+          NIKATRU_EVENT_NAME: ${{ github.event.client_payload.event || github.event_name }}
+          NIKATRU_PR: ${{ github.event.client_payload.pr }}
       - name: Read the apex's public origin from the register
         id: target
         run: node tooling/ci/site-target.mjs --emit nikatru-site >> "$GITHUB_OUTPUT"
@@ -719,6 +752,10 @@ jobs:
         run: printf '/.nikatru-trusted/\n' >> "$(git rev-parse --git-path info/exclude)"
       - uses: ./.nikatru-trusted/.github/actions/setup-node
         if: steps.plan.outputs.deploy == 'true'
+        env:
+          NIKATRU_REF: ${{ github.event.client_payload.ref || 'refs/heads/main' }}
+          NIKATRU_EVENT_NAME: ${{ github.event.client_payload.event || github.event_name }}
+          NIKATRU_PR: ${{ github.event.client_payload.pr }}
       - name: Read this unit's project, source and public origin from the register
         if: steps.plan.outputs.deploy == 'true'
         id: site
@@ -867,6 +904,10 @@ jobs:
         run: printf '/.nikatru-trusted/\n' >> "$(git rev-parse --git-path info/exclude)"
       - uses: ./.nikatru-trusted/.github/actions/setup-node
         if: steps.live.outputs.go == 'true'
+        env:
+          NIKATRU_REF: ${{ github.event.client_payload.ref || 'refs/heads/main' }}
+          NIKATRU_EVENT_NAME: ${{ github.event.client_payload.event || github.event_name }}
+          NIKATRU_PR: ${{ github.event.client_payload.pr }}
       - name: Read the status page's public origin from the register
         if: steps.live.outputs.go == 'true'
         id: target
@@ -891,6 +932,15 @@ jobs:
           mkdir -p build/status
           cp -R sites/status/. build/status/
           node tooling/status/build-status.mjs --out build/status --readings "$RUNNER_TEMP/readings.json" --prev "$RUNNER_TEMP/prev.json"
+      - name: Refuse a build with no readings or no readable live document
+        if: steps.live.outputs.go == 'true'
+        env:
+          STATUS_PAGE_LIVE: ${{ vars.STATUS_PAGE_LIVE }}
+          PUBLISH: 'true'
+          HEAD_SHA: ${{ env.NIKATRU_SHA }}
+          VOUCHED: ${{ env.NIKATRU_SHA }}
+          EVENT: ${{ (github.event.client_payload.event || github.event_name) }}
+        run: node tooling/status/publish-decision.mjs --readings "$RUNNER_TEMP/readings.json" --prev "$RUNNER_TEMP/prev.json"
       - name: Install the locked wrangler island
         if: steps.live.outputs.go == 'true'
         run: node "$GITHUB_WORKSPACE/tooling/ops/npm-ci-retry.mjs" -- npm ci --ignore-scripts --prefix tooling/wrangler

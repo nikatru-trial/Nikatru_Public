@@ -2,7 +2,7 @@
 # Do not edit: `node tooling/ci/gen-public-shell.mjs --check` re-generates it and fails on any difference.
 env:
   NIKATRU_PRIVATE_REPO: com-nikatru/Nikatru_Private
-  NIKATRU_SHELL_FINGERPRINT: 47f2587d311208dd4d6eb7fefd05e580b8550afb85e29c0dad7b3f92ddf5096b
+  NIKATRU_SHELL_FINGERPRINT: 78e7878092243c32c1a20a6c5afddbbbccf48b9fa3451eaa43cbddd2d2c19d85
 
 name: Part of CI · Migrate PLATFORM_DB
 
@@ -28,7 +28,7 @@ on:
         description: The PLATFORM_DB Time Travel bookmark read before this apply.
         value: ${{ jobs.migrate.outputs.restore_bookmark }}
       pre_migration_export:
-        description: The nightly off-vendor export (date@exportedAt) this apply sits on.
+        description: The nightly outside-D1 export (date@exportedAt) this apply sits on.
         value: ${{ jobs.migrate.outputs.pre_migration_export }}
 
 concurrency:
@@ -100,8 +100,17 @@ jobs:
         env:
           GH_TOKEN: ${{ github.token }}
         run: node tooling/ci/plan-deploy.mjs platform --recipe deploy-workers.yml
+      - name: Decide the apply (the platform plan publishes, or holds a rollback)
+        id: migrate
+        env:
+          PLAN_DEPLOY: ${{ steps.plan.outputs.deploy }}
+          PLAN_DECISION: ${{ steps.plan.outputs.decision }}
+        run: |
+          if [ "$PLAN_DEPLOY" = true ] || [ "$PLAN_DECISION" = rollback-hold ]; then apply=true; else apply=false; fi
+          echo "apply=${apply}" >> "$GITHUB_OUTPUT"
+          echo "migrate: plan decision=${PLAN_DECISION} deploy=${PLAN_DEPLOY} -> apply=${apply}"
       - name: Check out private main's composite actions (generated)
-        if: steps.plan.outputs.deploy == 'true'
+        if: steps.migrate.outputs.apply == 'true'
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
         with:
           repository: ${{ env.NIKATRU_PRIVATE_REPO }}
@@ -111,18 +120,22 @@ jobs:
           ssh-key: ${{ secrets.PRIVATE_DEPLOY_KEY }}
           persist-credentials: false
       - name: Keep private main's composite actions out of the branch's tree (generated)
-        if: steps.plan.outputs.deploy == 'true'
+        if: steps.migrate.outputs.apply == 'true'
         shell: bash
         working-directory: ${{ github.workspace }}
         run: printf '/.nikatru-trusted/\n' >> "$(git rev-parse --git-path info/exclude)"
       - uses: ./.nikatru-trusted/.github/actions/setup-node
-        if: steps.plan.outputs.deploy == 'true'
+        if: steps.migrate.outputs.apply == 'true'
+        env:
+          NIKATRU_REF: ${{ github.event.client_payload.ref || 'refs/heads/main' }}
+          NIKATRU_EVENT_NAME: ${{ github.event.client_payload.event || github.event_name }}
+          NIKATRU_PR: ${{ github.event.client_payload.pr }}
       - run: node "$GITHUB_WORKSPACE/tooling/ops/npm-ci-retry.mjs" -- npm ci --ignore-scripts
-        if: steps.plan.outputs.deploy == 'true'
+        if: steps.migrate.outputs.apply == 'true'
         working-directory: services/platform
       - name: Read PLATFORM_DB's Time Travel bookmark (the restore point before the apply)
         id: time_travel
-        if: steps.plan.outputs.deploy == 'true'
+        if: steps.migrate.outputs.apply == 'true'
         uses: cloudflare/wrangler-action@953926a2e2182532811c01a25e53647d93bf07c0
         with:
           apiToken: ${{ secrets.CLOUDFLARE_API_TOKEN }}
@@ -132,17 +145,17 @@ jobs:
           command: d1 time-travel info PLATFORM_DB --json
       - name: Record the restore bookmark (refuse the apply without one)
         id: restore_point
-        if: steps.plan.outputs.deploy == 'true'
+        if: steps.migrate.outputs.apply == 'true'
         env:
           D1_TIME_TRAVEL_OUTPUT: ${{ steps.time_travel.outputs.command-output }}
         run: node tooling/ops/d1-restore-bookmark.mjs --database PLATFORM_DB
       - name: Name the export bucket (services/platform/wrangler.jsonc BACKUPS_R2)
         id: export_bucket
-        if: steps.plan.outputs.deploy == 'true'
+        if: steps.migrate.outputs.apply == 'true'
         run: node tooling/ops/pre-migration-export.mjs --bucket
-      - name: Read the newest export's manifest (the off-vendor copy before the apply)
+      - name: Read the newest export's manifest (the outside-D1 copy before the apply)
         id: export_manifest
-        if: steps.plan.outputs.deploy == 'true'
+        if: steps.migrate.outputs.apply == 'true'
         uses: cloudflare/wrangler-action@953926a2e2182532811c01a25e53647d93bf07c0
         with:
           apiToken: ${{ secrets.CLOUDFLARE_API_TOKEN }}
@@ -152,20 +165,20 @@ jobs:
           command: r2 object get ${{ steps.export_bucket.outputs.bucket }}/manifests/latest.json --remote --pipe
       - name: Refuse the apply without a complete, fresh export
         id: pre_export
-        if: steps.plan.outputs.deploy == 'true'
+        if: steps.migrate.outputs.apply == 'true'
         env:
           PRE_MIGRATION_MANIFEST: ${{ steps.export_manifest.outputs.command-output }}
         run: node tooling/ops/pre-migration-export.mjs
       - name: Record this apply's rollback point in the migration ledger (refuse the apply without it)
         id: ledger
-        if: steps.plan.outputs.deploy == 'true'
+        if: steps.migrate.outputs.apply == 'true'
         env:
           GH_TOKEN: ${{ github.token }}
           PRE_MIGRATION_EXPORT_ID: ${{ steps.pre_export.outputs.export }}
           RESTORE_BOOKMARK: ${{ steps.restore_point.outputs.bookmark }}
         run: node tooling/ops/pre-migration-export.mjs --record
       - name: Apply PLATFORM_DB migrations (before every deploy that reads it)
-        if: steps.plan.outputs.deploy == 'true'
+        if: steps.migrate.outputs.apply == 'true'
         uses: cloudflare/wrangler-action@953926a2e2182532811c01a25e53647d93bf07c0
         with:
           apiToken: ${{ secrets.CLOUDFLARE_API_TOKEN }}
@@ -174,7 +187,7 @@ jobs:
           workingDirectory: services/platform
           command: d1 migrations apply PLATFORM_DB --remote
       - name: The deployed SQL is SQL live D1 will run
-        if: steps.plan.outputs.deploy == 'true'
+        if: steps.migrate.outputs.apply == 'true'
         env:
           CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
           CLOUDFLARE_ACCOUNT_ID: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}

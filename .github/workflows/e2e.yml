@@ -192,6 +192,7 @@ jobs:
       SELFHOSTED_SUPABASE_SERVICE_ROLE_KEY: ${{ secrets.SELFHOSTED_SUPABASE_SERVICE_ROLE_KEY }}
       CLOUDFLARE_ACCOUNT_ID: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
       CLOUDFLARE_D1_TOKEN: ${{ secrets.CLOUDFLARE_D1_TOKEN }}
+      TEST_INBOX_READ_TOKEN: ${{ secrets.TEST_INBOX_READ_TOKEN }}
       PRIVATE_DEPLOY_KEY: ${{ secrets.PRIVATE_DEPLOY_KEY }}
       NIKATRU_DETAIL_KEY: ${{ secrets.NIKATRU_DETAIL_KEY }}
       BRIDGE_ARTIFACT_SECRET: ${{ (github.event.client_payload.event || github.event_name) != 'pull_request' && secrets.BRIDGE_ARTIFACT_SECRET || '' }}
@@ -277,6 +278,10 @@ jobs:
         working-directory: ${{ github.workspace }}
         run: printf '/.nikatru-trusted/\n' >> "$(git rev-parse --git-path info/exclude)"
       - uses: ./.nikatru-trusted/.github/actions/setup-node
+        env:
+          NIKATRU_REF: ${{ github.event.client_payload.ref || 'refs/heads/main' }}
+          NIKATRU_EVENT_NAME: ${{ github.event.client_payload.event || github.event_name }}
+          NIKATRU_PR: ${{ github.event.client_payload.pr }}
       - name: Stamp the run on every asserted leg e2e.yml runs
         env:
           GH_TOKEN: ${{ github.token }}
@@ -426,6 +431,10 @@ jobs:
         working-directory: ${{ github.workspace }}
         run: printf '/.nikatru-trusted/\n' >> "$(git rev-parse --git-path info/exclude)"
       - uses: ./.nikatru-trusted/.github/actions/setup-node
+        env:
+          NIKATRU_REF: ${{ github.event.client_payload.ref || 'refs/heads/main' }}
+          NIKATRU_EVENT_NAME: ${{ github.event.client_payload.event || github.event_name }}
+          NIKATRU_PR: ${{ github.event.client_payload.pr }}
       - name: File the failure against one durable issue
         env:
           TITLE: 'Nightly E2E (live) is failing against production'
@@ -815,6 +824,7 @@ jobs:
     timeout-minutes: 15
     permissions:
       contents: read
+      id-token: write
     steps:
       - name: Check out this shell repository only, no private code (generated)
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
@@ -846,29 +856,3 @@ jobs:
           NIKATRU_P_REF: ${{ github.event.client_payload.ref }}
           NIKATRU_RESULTS: '{"e2e": "${{ needs.e2e.result }}"}'
         run: /usr/bin/python3 -I .github/nikatru/report.py send .github/nikatru/e2e.json
-
-  nikatru-relay:
-    name: Start the workflows that follow this run (generated)
-    needs: [nikatru-approve, nikatru-pin, e2e, last-green, alert, nikatru-ran, nikatru-collect, nikatru-report]
-    if: always() && !github.event.client_payload.pr
-    runs-on: ubuntu-24.04
-    defaults:
-      run:
-        working-directory: ${{ github.workspace }}
-    timeout-minutes: 5
-    continue-on-error: true
-    permissions:
-      actions: write
-    steps:
-      - name: Start autopilot-watch.yml after this run (generated)
-        if: always()
-        env:
-          GH_TOKEN: ${{ github.token }}
-          NIKATRU_RELAY_RUN: ${{ github.run_id }}
-          NIKATRU_RELAY_ATTEMPT: ${{ github.run_attempt }}
-          NIKATRU_RELAY_NAME: E2E live
-          NIKATRU_RELAY_PATH: .github/workflows/e2e.yml
-          NIKATRU_RELAY_CONCLUSION: ${{ contains(needs.*.result, 'cancelled') && 'cancelled' || contains(needs.*.result, 'failure') && 'failure' || 'success' }}
-          NIKATRU_RELAY_HEAD_SHA: ${{ needs.nikatru-pin.outputs.sha }}
-          NIKATRU_RELAY_EVENT: ${{ github.event.client_payload.event || github.event_name }}
-        run: gh api --method POST "repos/$GITHUB_REPOSITORY/actions/workflows/autopilot-watch.yml/dispatches" -f ref=main -f "inputs[nikatru_relay_run]=$NIKATRU_RELAY_RUN" -f "inputs[nikatru_relay_attempt]=$NIKATRU_RELAY_ATTEMPT" -f "inputs[nikatru_relay_name]=$NIKATRU_RELAY_NAME" -f "inputs[nikatru_relay_path]=$NIKATRU_RELAY_PATH" -f "inputs[nikatru_relay_conclusion]=$NIKATRU_RELAY_CONCLUSION" -f "inputs[nikatru_relay_head_sha]=$NIKATRU_RELAY_HEAD_SHA" -f "inputs[nikatru_relay_event]=$NIKATRU_RELAY_EVENT" --silent || echo "::warning::could not start autopilot-watch.yml after run $NIKATRU_RELAY_RUN attempt $NIKATRU_RELAY_ATTEMPT"

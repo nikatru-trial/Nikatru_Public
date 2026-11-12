@@ -226,6 +226,10 @@ jobs:
         working-directory: ${{ github.workspace }}
         run: printf '/.nikatru-trusted/\n' >> "$(git rev-parse --git-path info/exclude)"
       - uses: ./.nikatru-trusted/.github/actions/setup-node
+        env:
+          NIKATRU_REF: ${{ github.event.client_payload.ref || inputs.private_ref || 'refs/heads/main' }}
+          NIKATRU_EVENT_NAME: ${{ github.event.client_payload.event || github.event_name }}
+          NIKATRU_PR: ${{ github.event.client_payload.pr }}
       - id: plan
         name: Plan the crawl cells
         env:
@@ -441,6 +445,10 @@ jobs:
         working-directory: ${{ github.workspace }}
         run: printf '/.nikatru-trusted/\n' >> "$(git rev-parse --git-path info/exclude)"
       - uses: ./.nikatru-trusted/.github/actions/setup-node
+        env:
+          NIKATRU_REF: ${{ github.event.client_payload.ref || inputs.private_ref || 'refs/heads/main' }}
+          NIKATRU_EVENT_NAME: ${{ github.event.client_payload.event || github.event_name }}
+          NIKATRU_PR: ${{ github.event.client_payload.pr }}
       - name: Install the fleet Playwright and its Chromium
         working-directory: _playwright
         timeout-minutes: 12
@@ -575,6 +583,10 @@ jobs:
         working-directory: ${{ github.workspace }}
         run: printf '/.nikatru-trusted/\n' >> "$(git rev-parse --git-path info/exclude)"
       - uses: ./.nikatru-trusted/.github/actions/setup-flutter
+        env:
+          NIKATRU_REF: ${{ github.event.client_payload.ref || inputs.private_ref || 'refs/heads/main' }}
+          NIKATRU_EVENT_NAME: ${{ github.event.client_payload.event || github.event_name }}
+          NIKATRU_PR: ${{ github.event.client_payload.pr }}
       - name: Give the demo build the pseudo right-to-left locale
         run: |
           NIKATRU_QUIET="$(mktemp "${RUNNER_TEMP:-/tmp}/nikatru-step.XXXXXX")"
@@ -635,6 +647,10 @@ jobs:
         working-directory: ${{ github.workspace }}
         run: printf '/.nikatru-trusted/\n' >> "$(git rev-parse --git-path info/exclude)"
       - uses: ./.nikatru-trusted/.github/actions/setup-node
+        env:
+          NIKATRU_REF: ${{ github.event.client_payload.ref || inputs.private_ref || 'refs/heads/main' }}
+          NIKATRU_EVENT_NAME: ${{ github.event.client_payload.event || github.event_name }}
+          NIKATRU_PR: ${{ github.event.client_payload.pr }}
       - name: Self-host the engine's fallback fonts, pinned by sha256
         run: |
           NIKATRU_QUIET="$(mktemp "${RUNNER_TEMP:-/tmp}/nikatru-step.XXXXXX")"
@@ -778,6 +794,10 @@ jobs:
         working-directory: ${{ github.workspace }}
         run: printf '/.nikatru-trusted/\n' >> "$(git rev-parse --git-path info/exclude)"
       - uses: ./.nikatru-trusted/.github/actions/setup-node
+        env:
+          NIKATRU_REF: ${{ github.event.client_payload.ref || inputs.private_ref || 'refs/heads/main' }}
+          NIKATRU_EVENT_NAME: ${{ github.event.client_payload.event || github.event_name }}
+          NIKATRU_PR: ${{ github.event.client_payload.pr }}
       - name: Restore the review-crawl-demo-web-${{ matrix.app }} hand-off from this run (generated)
         id: nikatru-restore-2
         timeout-minutes: 6
@@ -902,7 +922,7 @@ jobs:
       id-token: write
     strategy:
       fail-fast: false
-      max-parallel: 39
+      max-parallel: 35
       matrix:
         cell: ${{ fromJSON(needs.plan.outputs.demo) }}
     steps:
@@ -1005,6 +1025,10 @@ jobs:
         working-directory: ${{ github.workspace }}
         run: printf '/.nikatru-trusted/\n' >> "$(git rev-parse --git-path info/exclude)"
       - uses: ./.nikatru-trusted/.github/actions/setup-node
+        env:
+          NIKATRU_REF: ${{ github.event.client_payload.ref || inputs.private_ref || 'refs/heads/main' }}
+          NIKATRU_EVENT_NAME: ${{ github.event.client_payload.event || github.event_name }}
+          NIKATRU_PR: ${{ github.event.client_payload.pr }}
       - name: Install the fleet Playwright and its Chromium
         working-directory: _playwright
         timeout-minutes: 12
@@ -1092,6 +1116,10 @@ jobs:
         uses: ./.nikatru-trusted/.github/actions/setup-flutter
         with:
           cache: 'false'
+        env:
+          NIKATRU_REF: ${{ github.event.client_payload.ref || inputs.private_ref || 'refs/heads/main' }}
+          NIKATRU_EVENT_NAME: ${{ github.event.client_payload.event || github.event_name }}
+          NIKATRU_PR: ${{ github.event.client_payload.pr }}
       - name: Give the demo build the pseudo right-to-left locale (branch run)
         if: steps.bundle.outputs.kind == 'flutter-web' && (github.event.client_payload.ref || inputs.private_ref || 'refs/heads/main') != 'refs/heads/main' && needs.gate.result == 'success'
         run: |
@@ -1188,10 +1216,16 @@ jobs:
           # why: --deadline-s 80 min under the 90-min job cap, so the crawl writes its report and
           # INCOMPLETE rows itself; a crawl that is killed anyway (exit > 2) resumes ONCE from the
           # checkpoint it rewrites after every route (lead e19de7, item 14).
-          crawl=(nice -n 19 node tooling/e2e/review-crawl/crawl.mjs --target "$TARGET" --mode demo --phase "$PHASE" --matrix "$MATRIX" ${SHARD:+--shard "$SHARD"} "${prev[@]}" --deadline-s 4800 --out "$RUNNER_TEMP/review-crawl")
-          "${crawl[@]}"
+          # why (review52-pipeline-073): the resume leg gets what is LEFT of the 80 minutes, not a fresh 80, or it believes
+          # it may run past the 90-min cap and is cancelled before it writes its report; under 5 minutes left is exit 2.
+          crawl=(nice -n 19 node tooling/e2e/review-crawl/crawl.mjs --target "$TARGET" --mode demo --phase "$PHASE" --matrix "$MATRIX" ${SHARD:+--shard "$SHARD"} "${prev[@]}" --out "$RUNNER_TEMP/review-crawl")
+          "${crawl[@]}" --deadline-s 4800
           code=$?
-          if [ "$code" -gt 2 ]; then echo "::warning title=Review crawl resumed::the crawl exited $code (killed or crashed); resuming once from its checkpoint"; "${crawl[@]}" --resume; code=$?; fi
+          if [ "$code" -gt 2 ]; then
+            left=$(( 4800 - SECONDS ))
+            if [ "$left" -lt 300 ]; then echo "::warning title=Review crawl not resumed::the crawl exited $code with ${left}s of its budget left, too little to resume (COVERAGE LOST)"; code=2
+            else echo "::warning title=Review crawl resumed::the crawl exited $code (killed or crashed); resuming once from its checkpoint with ${left}s left"; "${crawl[@]}" --deadline-s "$left" --resume; code=$?; fi
+          fi
           set -e
           # why: no report in the step summary: in the public CI shell a summary is public. The
           # report is in the cell's private upload.
@@ -1302,7 +1336,7 @@ jobs:
       id-token: write
     strategy:
       fail-fast: false
-      max-parallel: 8
+      max-parallel: 12
       matrix:
         cell: ${{ fromJSON(needs.plan.outputs.public) }}
     steps:
@@ -1372,6 +1406,10 @@ jobs:
         working-directory: ${{ github.workspace }}
         run: printf '/.nikatru-trusted/\n' >> "$(git rev-parse --git-path info/exclude)"
       - uses: ./.nikatru-trusted/.github/actions/setup-node
+        env:
+          NIKATRU_REF: ${{ github.event.client_payload.ref || inputs.private_ref || 'refs/heads/main' }}
+          NIKATRU_EVENT_NAME: ${{ github.event.client_payload.event || github.event_name }}
+          NIKATRU_PR: ${{ github.event.client_payload.pr }}
       - name: Install the fleet Playwright and its Chromium
         working-directory: _playwright
         timeout-minutes: 12
@@ -1424,10 +1462,16 @@ jobs:
           # why: --deadline-s 80 min under the 90-min job cap, so the crawl writes its report and
           # INCOMPLETE rows itself; a crawl that is killed anyway (exit > 2) resumes ONCE from the
           # checkpoint it rewrites after every route (lead e19de7, item 14).
-          crawl=(nice -n 19 node tooling/e2e/review-crawl/crawl.mjs --target "$TARGET" --mode public --phase "$PHASE" --matrix "$MATRIX" ${SHARD:+--shard "$SHARD"} "${prev[@]}" --deadline-s 4800 --out "$RUNNER_TEMP/review-crawl")
-          "${crawl[@]}"
+          # why (review52-pipeline-073): the resume leg gets what is LEFT of the 80 minutes, not a fresh 80, or it believes
+          # it may run past the 90-min cap and is cancelled before it writes its report; under 5 minutes left is exit 2.
+          crawl=(nice -n 19 node tooling/e2e/review-crawl/crawl.mjs --target "$TARGET" --mode public --phase "$PHASE" --matrix "$MATRIX" ${SHARD:+--shard "$SHARD"} "${prev[@]}" --out "$RUNNER_TEMP/review-crawl")
+          "${crawl[@]}" --deadline-s 4800
           code=$?
-          if [ "$code" -gt 2 ]; then echo "::warning title=Review crawl resumed::the crawl exited $code (killed or crashed); resuming once from its checkpoint"; "${crawl[@]}" --resume; code=$?; fi
+          if [ "$code" -gt 2 ]; then
+            left=$(( 4800 - SECONDS ))
+            if [ "$left" -lt 300 ]; then echo "::warning title=Review crawl not resumed::the crawl exited $code with ${left}s of its budget left, too little to resume (COVERAGE LOST)"; code=2
+            else echo "::warning title=Review crawl resumed::the crawl exited $code (killed or crashed); resuming once from its checkpoint with ${left}s left"; "${crawl[@]}" --deadline-s "$left" --resume; code=$?; fi
+          fi
           set -e
           # why: no report in the step summary: in the public CI shell a summary is public. The
           # report is in the cell's private upload.

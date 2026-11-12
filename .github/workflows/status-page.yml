@@ -237,7 +237,7 @@ jobs:
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
         with:
           repository: ${{ env.NIKATRU_PRIVATE_REPO }}
-          ref: ${{ needs.nikatru-pin.outputs.sha || 'nikatru-pin-did-not-succeed..' }}
+          ref: ${{ needs.gate.outputs.sha }}
           fetch-depth: 0
           ssh-key: ${{ secrets.PRIVATE_DEPLOY_KEY }}
           persist-credentials: false
@@ -289,6 +289,10 @@ jobs:
         working-directory: ${{ github.workspace }}
         run: printf '/.nikatru-trusted/\n' >> "$(git rev-parse --git-path info/exclude)"
       - uses: ./.nikatru-trusted/.github/actions/setup-node
+        env:
+          NIKATRU_REF: ${{ github.event.client_payload.ref || 'refs/heads/main' }}
+          NIKATRU_EVENT_NAME: ${{ github.event.client_payload.event || github.event_name }}
+          NIKATRU_PR: ${{ github.event.client_payload.pr }}
       - name: Read the status page's public origin from the register
         id: target
         run: node tooling/ci/site-target.mjs --emit status-site >> "$GITHUB_OUTPUT"
@@ -322,7 +326,7 @@ jobs:
           VOUCHED: ${{ needs.gate.outputs.sha }}
           EVENT: ${{ inputs.worker_slot != '' && 'schedule' || (github.event.client_payload.event || github.event_name) }}
         run: |
-          HEAD_SHA=$(git rev-parse HEAD) node tooling/status/publish-decision.mjs --readings "$RUNNER_TEMP/readings.json" --prev "$RUNNER_TEMP/prev.json" --github-output "$GITHUB_OUTPUT"
+          HEAD_SHA=$(git rev-parse HEAD) node tooling/status/publish-decision.mjs --readings "$RUNNER_TEMP/readings.json" --prev "$RUNNER_TEMP/prev.json" --next build/status/status.json --github-output "$GITHUB_OUTPUT"
       - name: Deploy the status page to nikatru-status
         if: steps.live.outputs.go == 'true'
         id: deploy

@@ -5,7 +5,7 @@ env:
 
 name: "Store submit: Google Play"
 
-run-name: "Store submit: Google Play · ${{ inputs.app }} · ${{ inputs.confirm }}${{ inputs.track && format(' · track {0}', inputs.track) || '' }}${{ inputs.release_status && format(' · status {0}', inputs.release_status) || '' }}${{ inputs.rollout_fraction && inputs.release_status == 'inProgress' && format(' · rollout {0}', inputs.rollout_fraction) || '' }}${{ inputs.promote && inputs.promote != 'none' && format(' · promote {0}', inputs.promote) || '' }}${{ inputs.worker_slot && format(' [worker slot {0}]', inputs.worker_slot) || '' }}"
+run-name: "Store submit: Google Play · ${{ inputs.app }} · ${{ inputs.confirm }}${{ inputs.track && format(' · track {0}', inputs.track) || '' }}${{ inputs.release_status && format(' · status {0}', inputs.release_status) || '' }}${{ inputs.rollout_fraction && inputs.release_status == 'inProgress' && format(' · rollout {0}', inputs.rollout_fraction) || '' }}${{ inputs.promote && inputs.promote != 'none' && format(' · promote {0}', inputs.promote) || '' }}${{ inputs.server && inputs.server != 'production' && format(' · server {0}', inputs.server) || '' }}${{ inputs.worker_slot && format(' [worker slot {0}]', inputs.worker_slot) || '' }}"
 
 on:
   workflow_dispatch:
@@ -46,6 +46,12 @@ on:
         default: 'none'
         type: choice
         options: ['none', '0.5', '1.0', 'halt', 'resume']
+      server:
+        description: 'The Workers the build talks to: production (default), or sandbox (the capture runner''s sandbox hosts, pinned) — sandbox only on the internal track (internal or qa), status completed, promote none. The gate refuses any other value.'
+        required: false
+        default: 'production'
+        type: choice
+        options: [production, sandbox]
       listing_url:
         description: 'The Play listing URL this submission will be recorded against, e.g. https://play.google.com/store/apps/details?id=<applicationId>. Required for a real upload; ignored by the dry run.'
         required: false
@@ -168,6 +174,7 @@ jobs:
     outputs:
       sha: ${{ steps.verdict.outputs.sha }}
       app: ${{ steps.app.outputs.app }}
+      server: ${{ steps.server.outputs.server }}
     permissions:
       contents: read
       checks: read
@@ -266,6 +273,22 @@ jobs:
           NIKATRU_QUIET_EOF
           NIKATRU_SHELL="${BASH:-bash}"; if command -v cygpath >/dev/null 2>&1; then NIKATRU_SHELL="$(cygpath -w "$NIKATRU_SHELL")"; fi
           node "$GITHUB_WORKSPACE/../.nikatru-shell/quiet-step.mjs" --name submit-play.gate.3 -- "$NIKATRU_SHELL" -e "$NIKATRU_QUIET"
+      - name: The server input is production, or sandbox on the internal track only
+        id: server
+        env:
+          SERVER_INPUT: ${{ inputs.server || 'production' }}
+          PLAY_TRACK: ${{ inputs.track || 'internal' }}
+          RELEASE_STATUS: ${{ inputs.release_status || 'completed' }}
+          PROMOTE: ${{ inputs.promote || 'none' }}
+        run: |
+          NIKATRU_QUIET="$(mktemp "${RUNNER_TEMP:-/tmp}/nikatru-step.XXXXXX")"
+          cat > "$NIKATRU_QUIET" <<'NIKATRU_QUIET_EOF'
+          set -euo pipefail
+          node tooling/store/play-server.mjs --gate --server "$SERVER_INPUT" --track "$PLAY_TRACK" --status "$RELEASE_STATUS" --promote-choice "$PROMOTE"
+          echo "server=${SERVER_INPUT}" >> "$GITHUB_OUTPUT"
+          NIKATRU_QUIET_EOF
+          NIKATRU_SHELL="${BASH:-bash}"; if command -v cygpath >/dev/null 2>&1; then NIKATRU_SHELL="$(cygpath -w "$NIKATRU_SHELL")"; fi
+          node "$GITHUB_WORKSPACE/../.nikatru-shell/quiet-step.mjs" --name submit-play.gate.4 -- "$NIKATRU_SHELL" -e "$NIKATRU_QUIET"
       - name: Store this job's red detail in the bridge's private home (generated)
         if: always()
         continue-on-error: true
@@ -295,6 +318,7 @@ jobs:
       version_code: ${{ steps.code.outputs.build_number }}
     env:
       APP: ${{ needs.gate.outputs.app }}
+      SERVER: ${{ needs.gate.outputs.server }}
     steps:
       - name: Check out the private tree (generated)
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
@@ -374,6 +398,11 @@ jobs:
       - uses: ./.nikatru-trusted/.github/actions/setup-flutter
         with:
           android-ndk: 'true'
+          cache: 'false'
+        env:
+          NIKATRU_REF: ${{ github.event.client_payload.ref || 'refs/heads/main' }}
+          NIKATRU_EVENT_NAME: ${{ github.event.client_payload.event || github.event_name }}
+          NIKATRU_PR: ${{ github.event.client_payload.pr }}
       - name: Resolve the workspace
         run: |
           NIKATRU_QUIET="$(mktemp "${RUNNER_TEMP:-/tmp}/nikatru-step.XXXXXX")"
@@ -427,6 +456,27 @@ jobs:
           NIKATRU_QUIET_EOF
           NIKATRU_SHELL="${BASH:-bash}"; if command -v cygpath >/dev/null 2>&1; then NIKATRU_SHELL="$(cygpath -w "$NIKATRU_SHELL")"; fi
           node "$GITHUB_WORKSPACE/../.nikatru-shell/quiet-step.mjs" --name submit-play.dry-run.8 -- "$NIKATRU_SHELL" -e "$NIKATRU_QUIET"
+      - name: The sandbox hosts, when the server is sandbox
+        if: env.SERVER == 'sandbox'
+        env:
+          SUPABASE_URL: ${{ secrets.SUPABASE_URL }}
+        run: |
+          NIKATRU_QUIET="$(mktemp "${RUNNER_TEMP:-/tmp}/nikatru-step.XXXXXX")"
+          cat > "$NIKATRU_QUIET" <<'NIKATRU_QUIET_EOF'
+          node tooling/store/play-server.mjs --sandbox-build-env >> "$GITHUB_ENV"
+          NIKATRU_QUIET_EOF
+          NIKATRU_SHELL="${BASH:-bash}"; if command -v cygpath >/dev/null 2>&1; then NIKATRU_SHELL="$(cygpath -w "$NIKATRU_SHELL")"; fi
+          node "$GITHUB_WORKSPACE/../.nikatru-shell/quiet-step.mjs" --name submit-play.dry-run.9 -- "$NIKATRU_SHELL" -e "$NIKATRU_QUIET"
+      - name: The composed build points at the server the dispatch named
+        run: |
+          NIKATRU_QUIET="$(mktemp "${RUNNER_TEMP:-/tmp}/nikatru-step.XXXXXX")"
+          cat > "$NIKATRU_QUIET" <<'NIKATRU_QUIET_EOF'
+          set -euo pipefail
+          node tooling/ci/flutter-release-build.mjs "$APP" appbundle android-play --server="$SERVER" --print \
+            | node tooling/store/play-server.mjs --check-build-command --server "$SERVER"
+          NIKATRU_QUIET_EOF
+          NIKATRU_SHELL="${BASH:-bash}"; if command -v cygpath >/dev/null 2>&1; then NIKATRU_SHELL="$(cygpath -w "$NIKATRU_SHELL")"; fi
+          node "$GITHUB_WORKSPACE/../.nikatru-shell/quiet-step.mjs" --name submit-play.dry-run.10 -- "$NIKATRU_SHELL" -e "$NIKATRU_QUIET"
       - name: Build the app bundle
         env:
           RELEASE_LINE: ${{ steps.ver.outputs.release_line }}
@@ -436,10 +486,10 @@ jobs:
         run: |
           NIKATRU_QUIET="$(mktemp "${RUNNER_TEMP:-/tmp}/nikatru-step.XXXXXX")"
           cat > "$NIKATRU_QUIET" <<'NIKATRU_QUIET_EOF'
-          node tooling/ci/flutter-release-build.mjs "$APP" appbundle android-play
+          node tooling/ci/flutter-release-build.mjs "$APP" appbundle android-play --server="$SERVER"
           NIKATRU_QUIET_EOF
           NIKATRU_SHELL="${BASH:-bash}"; if command -v cygpath >/dev/null 2>&1; then NIKATRU_SHELL="$(cygpath -w "$NIKATRU_SHELL")"; fi
-          node "$GITHUB_WORKSPACE/../.nikatru-shell/quiet-step.mjs" --name submit-play.dry-run.9 -- "$NIKATRU_SHELL" -e "$NIKATRU_QUIET"
+          node "$GITHUB_WORKSPACE/../.nikatru-shell/quiet-step.mjs" --name submit-play.dry-run.11 -- "$NIKATRU_SHELL" -e "$NIKATRU_QUIET"
       - name: Stage symbols-${{ needs.gate.outputs.app }}-android-play-dry-run for this run's later jobs (generated)
         id: nikatru-stage-1
         shell: bash
@@ -467,6 +517,29 @@ jobs:
           retention-days: 30
           include-hidden-files: true
           overwrite: true
+      - name: Collect the unstripped native libraries for the crash sink
+        run: |
+          NIKATRU_QUIET="$(mktemp "${RUNNER_TEMP:-/tmp}/nikatru-step.XXXXXX")"
+          cat > "$NIKATRU_QUIET" <<'NIKATRU_QUIET_EOF'
+          set -euo pipefail
+          src="apps/${APP}/build/app/intermediates/merged_native_libs/release"
+          dest="apps/${APP}/build/native-symbols/android-aab"
+          rm -rf "$dest"
+          n=0
+          while IFS= read -r -d '' so; do
+            abi="$(basename "$(dirname "$so")")"
+            mkdir -p "${dest}/lib/${abi}"
+            cp "$so" "${dest}/lib/${abi}/"
+            n=$((n + 1))
+          done < <(find "$src" -type f -name '*.so' -print0 2>/dev/null)
+          if [ "$n" -eq 0 ]; then
+            echo "::error title=Native symbols::no .so under ${src} — the AGP intermediates path moved; native frames would ship unreadable"
+            exit 1
+          fi
+          echo "collected ${n} unstripped .so file(s) into ${dest}"
+          NIKATRU_QUIET_EOF
+          NIKATRU_SHELL="${BASH:-bash}"; if command -v cygpath >/dev/null 2>&1; then NIKATRU_SHELL="$(cygpath -w "$NIKATRU_SHELL")"; fi
+          node "$GITHUB_WORKSPACE/../.nikatru-shell/quiet-step.mjs" --name submit-play.dry-run.13 -- "$NIKATRU_SHELL" -e "$NIKATRU_QUIET"
       - name: Install glitchtip-cli (pinned by version AND by digest)
         run: |
           NIKATRU_QUIET="$(mktemp "${RUNNER_TEMP:-/tmp}/nikatru-step.XXXXXX")"
@@ -474,7 +547,7 @@ jobs:
           node tooling/ci/install-pinned-tool.mjs glitchtip-cli --out "$RUNNER_TEMP"
           NIKATRU_QUIET_EOF
           NIKATRU_SHELL="${BASH:-bash}"; if command -v cygpath >/dev/null 2>&1; then NIKATRU_SHELL="$(cygpath -w "$NIKATRU_SHELL")"; fi
-          node "$GITHUB_WORKSPACE/../.nikatru-shell/quiet-step.mjs" --name submit-play.dry-run.11 -- "$NIKATRU_SHELL" -e "$NIKATRU_QUIET"
+          node "$GITHUB_WORKSPACE/../.nikatru-shell/quiet-step.mjs" --name submit-play.dry-run.14 -- "$NIKATRU_SHELL" -e "$NIKATRU_QUIET"
       - name: Upload the native debug symbols to GlitchTip
         timeout-minutes: 12
         env:
@@ -489,10 +562,11 @@ jobs:
           node tooling/ops/upload-native-symbols.mjs \
             --cli "${RUNNER_TEMP}/glitchtip-cli" \
             --dir "apps/${APP}/build/symbols/android-aab" \
+            --dir "apps/${APP}/build/native-symbols/android-aab" \
             --org "$gt_org" --project "$gt_project"
           NIKATRU_QUIET_EOF
           NIKATRU_SHELL="${BASH:-bash}"; if command -v cygpath >/dev/null 2>&1; then NIKATRU_SHELL="$(cygpath -w "$NIKATRU_SHELL")"; fi
-          node "$GITHUB_WORKSPACE/../.nikatru-shell/quiet-step.mjs" --name submit-play.dry-run.12 -- "$NIKATRU_SHELL" -e "$NIKATRU_QUIET"
+          node "$GITHUB_WORKSPACE/../.nikatru-shell/quiet-step.mjs" --name submit-play.dry-run.15 -- "$NIKATRU_SHELL" -e "$NIKATRU_QUIET"
       - name: The .aab must be signed by the upload key, not the debug key
         run: |
           NIKATRU_QUIET="$(mktemp "${RUNNER_TEMP:-/tmp}/nikatru-step.XXXXXX")"
@@ -500,7 +574,7 @@ jobs:
           node tooling/ci/assert-artifact-signed.mjs "apps/${APP}/build/app/outputs/bundle/release/app-release.aab"
           NIKATRU_QUIET_EOF
           NIKATRU_SHELL="${BASH:-bash}"; if command -v cygpath >/dev/null 2>&1; then NIKATRU_SHELL="$(cygpath -w "$NIKATRU_SHELL")"; fi
-          node "$GITHUB_WORKSPACE/../.nikatru-shell/quiet-step.mjs" --name submit-play.dry-run.13 -- "$NIKATRU_SHELL" -e "$NIKATRU_QUIET"
+          node "$GITHUB_WORKSPACE/../.nikatru-shell/quiet-step.mjs" --name submit-play.dry-run.16 -- "$NIKATRU_SHELL" -e "$NIKATRU_QUIET"
       - name: Every native library is aligned for a 16 KB memory page
         run: |
           NIKATRU_QUIET="$(mktemp "${RUNNER_TEMP:-/tmp}/nikatru-step.XXXXXX")"
@@ -508,17 +582,17 @@ jobs:
           node --single-threaded tooling/ci/assert-elf-page-alignment.mjs "apps/${APP}/build/app/outputs/bundle/release/app-release.aab"
           NIKATRU_QUIET_EOF
           NIKATRU_SHELL="${BASH:-bash}"; if command -v cygpath >/dev/null 2>&1; then NIKATRU_SHELL="$(cygpath -w "$NIKATRU_SHELL")"; fi
-          node "$GITHUB_WORKSPACE/../.nikatru-shell/quiet-step.mjs" --name submit-play.dry-run.14 -- "$NIKATRU_SHELL" -e "$NIKATRU_QUIET"
+          node "$GITHUB_WORKSPACE/../.nikatru-shell/quiet-step.mjs" --name submit-play.dry-run.17 -- "$NIKATRU_SHELL" -e "$NIKATRU_QUIET"
       - name: Dry-run the Google Play submission offline (no Play key, no store call)
         env:
           PLAY_TRACK: ${{ inputs.track || 'internal' }}
         run: |
           NIKATRU_QUIET="$(mktemp "${RUNNER_TEMP:-/tmp}/nikatru-step.XXXXXX")"
           cat > "$NIKATRU_QUIET" <<'NIKATRU_QUIET_EOF'
-          node tooling/release/submit-play.mjs --dry-run --app "$APP"
+          node tooling/release/submit-play.mjs --dry-run --app "$APP" --server "$SERVER"
           NIKATRU_QUIET_EOF
           NIKATRU_SHELL="${BASH:-bash}"; if command -v cygpath >/dev/null 2>&1; then NIKATRU_SHELL="$(cygpath -w "$NIKATRU_SHELL")"; fi
-          node "$GITHUB_WORKSPACE/../.nikatru-shell/quiet-step.mjs" --name submit-play.dry-run.15 -- "$NIKATRU_SHELL" -e "$NIKATRU_QUIET"
+          node "$GITHUB_WORKSPACE/../.nikatru-shell/quiet-step.mjs" --name submit-play.dry-run.18 -- "$NIKATRU_SHELL" -e "$NIKATRU_QUIET"
       - name: Name clearance holds for android-play (owner HELD or PROVEN-FREE)
         run: |
           NIKATRU_QUIET="$(mktemp "${RUNNER_TEMP:-/tmp}/nikatru-step.XXXXXX")"
@@ -526,7 +600,7 @@ jobs:
           node tooling/ci/assert-name-clearance.mjs --for-submission=android-play
           NIKATRU_QUIET_EOF
           NIKATRU_SHELL="${BASH:-bash}"; if command -v cygpath >/dev/null 2>&1; then NIKATRU_SHELL="$(cygpath -w "$NIKATRU_SHELL")"; fi
-          node "$GITHUB_WORKSPACE/../.nikatru-shell/quiet-step.mjs" --name submit-play.dry-run.16 -- "$NIKATRU_SHELL" -e "$NIKATRU_QUIET"
+          node "$GITHUB_WORKSPACE/../.nikatru-shell/quiet-step.mjs" --name submit-play.dry-run.19 -- "$NIKATRU_SHELL" -e "$NIKATRU_QUIET"
       - name: Every supported language is translated by the pipeline (android-play, dry run)
         run: |
           NIKATRU_QUIET="$(mktemp "${RUNNER_TEMP:-/tmp}/nikatru-step.XXXXXX")"
@@ -534,7 +608,7 @@ jobs:
           node tooling/ci/assert-translations-generated.mjs --for-submission=android-play --real-submission
           NIKATRU_QUIET_EOF
           NIKATRU_SHELL="${BASH:-bash}"; if command -v cygpath >/dev/null 2>&1; then NIKATRU_SHELL="$(cygpath -w "$NIKATRU_SHELL")"; fi
-          node "$GITHUB_WORKSPACE/../.nikatru-shell/quiet-step.mjs" --name submit-play.dry-run.17 -- "$NIKATRU_SHELL" -e "$NIKATRU_QUIET"
+          node "$GITHUB_WORKSPACE/../.nikatru-shell/quiet-step.mjs" --name submit-play.dry-run.20 -- "$NIKATRU_SHELL" -e "$NIKATRU_QUIET"
       - name: The app's Play declarations are sworn, not preview (--for-submission)
         run: |
           NIKATRU_QUIET="$(mktemp "${RUNNER_TEMP:-/tmp}/nikatru-step.XXXXXX")"
@@ -542,7 +616,7 @@ jobs:
           node tooling/ci/assert-sworn-store-files.mjs --for-submission=android-play --app "$APP"
           NIKATRU_QUIET_EOF
           NIKATRU_SHELL="${BASH:-bash}"; if command -v cygpath >/dev/null 2>&1; then NIKATRU_SHELL="$(cygpath -w "$NIKATRU_SHELL")"; fi
-          node "$GITHUB_WORKSPACE/../.nikatru-shell/quiet-step.mjs" --name submit-play.dry-run.18 -- "$NIKATRU_SHELL" -e "$NIKATRU_QUIET"
+          node "$GITHUB_WORKSPACE/../.nikatru-shell/quiet-step.mjs" --name submit-play.dry-run.21 -- "$NIKATRU_SHELL" -e "$NIKATRU_QUIET"
       - name: The Play reviewer can sign in (App access names the reviewer accounts, android-play)
         run: |
           NIKATRU_QUIET="$(mktemp "${RUNNER_TEMP:-/tmp}/nikatru-step.XXXXXX")"
@@ -550,7 +624,7 @@ jobs:
           node tooling/ci/assert-reviewer-access.mjs --for-submission=android-play --app "$APP"
           NIKATRU_QUIET_EOF
           NIKATRU_SHELL="${BASH:-bash}"; if command -v cygpath >/dev/null 2>&1; then NIKATRU_SHELL="$(cygpath -w "$NIKATRU_SHELL")"; fi
-          node "$GITHUB_WORKSPACE/../.nikatru-shell/quiet-step.mjs" --name submit-play.dry-run.19 -- "$NIKATRU_SHELL" -e "$NIKATRU_QUIET"
+          node "$GITHUB_WORKSPACE/../.nikatru-shell/quiet-step.mjs" --name submit-play.dry-run.22 -- "$NIKATRU_SHELL" -e "$NIKATRU_QUIET"
       - name: A pending in-app purchase declaration is not submitted (android-play)
         run: |
           NIKATRU_QUIET="$(mktemp "${RUNNER_TEMP:-/tmp}/nikatru-step.XXXXXX")"
@@ -558,7 +632,7 @@ jobs:
           node tooling/ci/assert-app-yaml.mjs --for-submission=android-play --app "$APP"
           NIKATRU_QUIET_EOF
           NIKATRU_SHELL="${BASH:-bash}"; if command -v cygpath >/dev/null 2>&1; then NIKATRU_SHELL="$(cygpath -w "$NIKATRU_SHELL")"; fi
-          node "$GITHUB_WORKSPACE/../.nikatru-shell/quiet-step.mjs" --name submit-play.dry-run.20 -- "$NIKATRU_SHELL" -e "$NIKATRU_QUIET"
+          node "$GITHUB_WORKSPACE/../.nikatru-shell/quiet-step.mjs" --name submit-play.dry-run.23 -- "$NIKATRU_SHELL" -e "$NIKATRU_QUIET"
       - name: The Play screenshot set spans enough device types
         run: |
           NIKATRU_QUIET="$(mktemp "${RUNNER_TEMP:-/tmp}/nikatru-step.XXXXXX")"
@@ -566,7 +640,7 @@ jobs:
           node tooling/ci/assert-play-device-coverage.mjs --for-submission=android-play
           NIKATRU_QUIET_EOF
           NIKATRU_SHELL="${BASH:-bash}"; if command -v cygpath >/dev/null 2>&1; then NIKATRU_SHELL="$(cygpath -w "$NIKATRU_SHELL")"; fi
-          node "$GITHUB_WORKSPACE/../.nikatru-shell/quiet-step.mjs" --name submit-play.dry-run.21 -- "$NIKATRU_SHELL" -e "$NIKATRU_QUIET"
+          node "$GITHUB_WORKSPACE/../.nikatru-shell/quiet-step.mjs" --name submit-play.dry-run.24 -- "$NIKATRU_SHELL" -e "$NIKATRU_QUIET"
       - name: A build that cannot sign in reaches no public track (android-play)
         run: |
           NIKATRU_QUIET="$(mktemp "${RUNNER_TEMP:-/tmp}/nikatru-step.XXXXXX")"
@@ -574,7 +648,7 @@ jobs:
           node tooling/ci/assert-channel-register.mjs --for-submission=android-play
           NIKATRU_QUIET_EOF
           NIKATRU_SHELL="${BASH:-bash}"; if command -v cygpath >/dev/null 2>&1; then NIKATRU_SHELL="$(cygpath -w "$NIKATRU_SHELL")"; fi
-          node "$GITHUB_WORKSPACE/../.nikatru-shell/quiet-step.mjs" --name submit-play.dry-run.22 -- "$NIKATRU_SHELL" -e "$NIKATRU_QUIET"
+          node "$GITHUB_WORKSPACE/../.nikatru-shell/quiet-step.mjs" --name submit-play.dry-run.25 -- "$NIKATRU_SHELL" -e "$NIKATRU_QUIET"
       - name: Every target this channel ships to has its golden-path legs graded (android-play)
         run: |
           NIKATRU_QUIET="$(mktemp "${RUNNER_TEMP:-/tmp}/nikatru-step.XXXXXX")"
@@ -582,7 +656,7 @@ jobs:
           node tooling/ci/assert-e2e-legs.mjs --for-submission=android-play
           NIKATRU_QUIET_EOF
           NIKATRU_SHELL="${BASH:-bash}"; if command -v cygpath >/dev/null 2>&1; then NIKATRU_SHELL="$(cygpath -w "$NIKATRU_SHELL")"; fi
-          node "$GITHUB_WORKSPACE/../.nikatru-shell/quiet-step.mjs" --name submit-play.dry-run.23 -- "$NIKATRU_SHELL" -e "$NIKATRU_QUIET"
+          node "$GITHUB_WORKSPACE/../.nikatru-shell/quiet-step.mjs" --name submit-play.dry-run.26 -- "$NIKATRU_SHELL" -e "$NIKATRU_QUIET"
       - name: Hand the submit job this bundle's name and sha256
         id: bytes
         env:
@@ -597,7 +671,7 @@ jobs:
           echo "${sum}  ${AAB}"
           NIKATRU_QUIET_EOF
           NIKATRU_SHELL="${BASH:-bash}"; if command -v cygpath >/dev/null 2>&1; then NIKATRU_SHELL="$(cygpath -w "$NIKATRU_SHELL")"; fi
-          node "$GITHUB_WORKSPACE/../.nikatru-shell/quiet-step.mjs" --name submit-play.dry-run.24 -- "$NIKATRU_SHELL" -e "$NIKATRU_QUIET"
+          node "$GITHUB_WORKSPACE/../.nikatru-shell/quiet-step.mjs" --name submit-play.dry-run.27 -- "$NIKATRU_SHELL" -e "$NIKATRU_QUIET"
       - name: Stage ${{ steps.bytes.outputs.artifact }} for this run's later jobs (generated)
         id: nikatru-stage-2
         shell: bash
@@ -635,7 +709,7 @@ jobs:
           node tooling/ci/record-deployment.mjs "${APP}-android-play" --mode dry-run
           NIKATRU_QUIET_EOF
           NIKATRU_SHELL="${BASH:-bash}"; if command -v cygpath >/dev/null 2>&1; then NIKATRU_SHELL="$(cygpath -w "$NIKATRU_SHELL")"; fi
-          node "$GITHUB_WORKSPACE/../.nikatru-shell/quiet-step.mjs" --name submit-play.dry-run.26 -- "$NIKATRU_SHELL" -e "$NIKATRU_QUIET"
+          node "$GITHUB_WORKSPACE/../.nikatru-shell/quiet-step.mjs" --name submit-play.dry-run.29 -- "$NIKATRU_SHELL" -e "$NIKATRU_QUIET"
       - name: Store this job's red detail in the bridge's private home (generated)
         if: always()
         continue-on-error: true
@@ -667,6 +741,7 @@ jobs:
       id-token: write
     env:
       APP: ${{ needs.gate.outputs.app }}
+      SERVER: ${{ needs.gate.outputs.server }}
     steps:
       - name: Check out the private tree (generated)
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
@@ -896,7 +971,7 @@ jobs:
           CONFIRM: ${{ inputs.confirm }}
           GITHUB_TOKEN: ${{ github.token }}
         run: >
-          node tooling/release/submit-play.mjs --submit --app "$APP"
+          node tooling/release/submit-play.mjs --submit --app "$APP" --server "$SERVER"
           --confirm "$CONFIRM" --status "$RELEASE_STATUS"
           --rollout-fraction "$ROLLOUT_FRACTION" --rollout-confirm "$ROLLOUT_CONFIRM"
       - name: The Play track must carry the bundle this job just uploaded
@@ -981,8 +1056,8 @@ jobs:
 
             Written by .github/workflows/submit-play.yml's upload job (run ${{ github.run_id }}),
             from the ledger Deployment ${{ steps.mark.outputs.deployment }} it recorded, with
-            tooling/release/propose-play-mark.mjs. Until this merges, every dispatch stops at
-            --play-floor (the ledger is above the committed mark).
+            tooling/release/propose-play-mark.mjs. Until this merges, every dispatch warns at
+            --play-floor (the ledger is above the committed mark) and grades against the ledger.
           NIKATRU_PROPOSE_BODY_FILE: ${{ runner.temp }}/play-mark/pr-body.md
           NIKATRU_PROPOSE_ARTIFACT: proposal-submit-play.submit
           BRIDGE_ARTIFACT_SECRET: ${{ secrets.BRIDGE_ARTIFACT_SECRET }}

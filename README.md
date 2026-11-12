@@ -9,6 +9,7 @@ verdict back to that repository. It is generated: a pull request here is not how
   pull request, a push of main or a push of a tag in the private repository), plus `workflow_dispatch` and `schedule`.
   `e2e.yml` also runs on `e2e`, against the head of a private pull request (sent by the bridge on a `run-e2e` label of the pull request, or the maintainer).
   `new-user-e2e.yml` also runs on `new-user-e2e`, against the head of a private pull request (sent by the bridge on a `run-new-user-e2e` label of the pull request, or the maintainer).
+  `claude-review.yml` also runs on `claude-review`, against the head of a private pull request (sent by the bridge on a `run-claude-review` label of the pull request, or the maintainer).
   `pr-recheck.yml` runs on the bridge's `nikatru-pr-recheck` (a pull request body or base
   edit, or a draft conversion) and re-runs only the gate job of the ONE run named by the newest
   gate status on the pull request's current head (read live through the bridge); nothing when the
@@ -32,6 +33,10 @@ verdict back to that repository. It is generated: a pull request here is not how
   master), so that code can open or forge its own run's hand-offs and red detail, never another
   run's. A job that stages nothing (a release or submit job, never a pull request's) binds the
   master in its seal steps. Against a private pull request's own run it rests on review.
+  The same reach covers a later CHECKOUT of the private repository in such a job (private main's
+  composite actions, made right before each one, and a gate's own checkouts): it binds the
+  repository's read-only deploy key, which is NOT derived for this run, so that code can read it.
+  Against a private pull request's own run that too rests on review (review52-pipeline-065).
 - **Logs**: each script step prints one line (`ok <step> <ms>` or `RED <step> exit N`). The
   tail of a red step goes to the private pull request, not to this log.
 - **Artifacts**: only the sealed hand-offs above (`nikatru-handoff-*`, ciphertext). An artifact meant for a person (a public one is downloadable by anyone
@@ -52,7 +57,7 @@ verdict back to that repository. It is generated: a pull request here is not how
   `BRIDGE_ARTIFACT_SECRET` (signs a private artifact upload; held only by the private-artifact
   steps), plus what each workflow reads.
 
-## Workflows (55)
+## Workflows (56)
 
 - `apple-expiry-write.yml`
 - `artifact-drill.yml`
@@ -60,6 +65,7 @@ verdict back to that repository. It is generated: a pull request here is not how
 - `build-platforms.yml` — reports `all-platforms`
 - `catalog-sync.yml` — reports `catalog-sync`
 - `ci.yml` — reports `ci-gate`
+- `claude-review.yml` — reports `claude-review`
 - `codeql.yml` — reports `codeql`
 - `deploy-sandbox-unit.yml`
 - `deploy-sandbox.yml`

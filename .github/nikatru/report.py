@@ -245,6 +245,13 @@ DETAIL_OUTPUTS = 3
 HANDOFF_PREFIX = 'nikatru-detail-'
 DETAIL_FILE = 'report-detail.md'
 SEALED_FILE = 'detail.sealed'
+# ⏱ 2026-11-11 · fix1110b #4 (row O-RED-DETAIL-COMPLETE). NO WHOLE-JOB DROP. Each hand-off also seals its CORE (every
+# section's header, full-log line, failing tests and finding lines, within CORE_MAX_BYTES) beside the detail, bound to
+# `<key>` + CORE_SUFFIX. collect carries a job's core wherever its whole detail does not fit the outputs, so a run with
+# more red detail than DETAIL_OUTPUTS × SEALED_MAX_CHARS loses output tails, never a job's findings or its log link.
+CORE_FILE = 'detail.core.sealed'
+CORE_SUFFIX = '.core'
+CORE_MAX_BYTES = 3 * 1024
 BUNDLE_VERSION = 2
 SEAL_VERSION = b'\x01'
 NONCE_BYTES = 16
@@ -413,19 +420,58 @@ SECTION_FLOOR = 1024
 SMALL_TAIL_MIN = 256
 
 
-def fit_small(text, cap):
-    """A section in a share under SECTION_FLOOR: its `### ` header and its first `✖ ` failing test, then the end
-    of its output if SMALL_TAIL_MIN bytes are left. A section with neither keeps its tail, as before."""
-    lines = text.split('\n')
-    keep = lines[:1] if lines[0].startswith('### ') else []
+# ⏱ 2026-11-11 · fix1110b #1/#2/#4 (row O-RED-DETAIL-COMPLETE). The quiet-step wrapper marks each finding line of a red
+# section FINDING_MARK (`» L<n>: …`) and names the step's full log on a `full log: ` line (RED_LOG_LINE). A cut keeps
+# them before anything else of the section: a small share keeps the header, the full-log line, the first failing test
+# and as many finding lines as fit, the rest counted — so no red job loses its failing line or its log to a size cut.
+FINDING_MARK = '» '
+# fix1110b round 2: the quiet-step wrapper's no-match fallback (its last output line). Kept by a cut like a finding line,
+# but NOT a finding: has_detail never counts it.
+LAST_LINE_MARK = '(last line) '
+RED_LOG_LINE = 'full log: '
+
+
+def _must_keep(lines):
+    """The lines of a section no cut may lose: the `### ` header, the full-log line(s), the first `✖ ` failing test and
+    the first `» ` finding line."""
+    keep = lines[:1] if lines and lines[0].startswith('### ') else []
+    keep += [line for line in lines if line.startswith(RED_LOG_LINE)][:2]
     keep += [line for line in lines if line.startswith('✖ ')][:1]
-    if not keep:
-        return tail_bytes(text, cap)
+    keep += [line for line in lines if line.startswith(FINDING_MARK)][:1]
+    return keep
+
+
+def _priority(lines, room):
+    """`lines`' header, full-log line(s), `✖ ` failing tests and `» ` finding lines, in that order, as many as fit in
+    `room` bytes; the lines that do not fit are counted, never dropped silently. b'' when there are none."""
+    order = (lines[:1] if lines and lines[0].startswith('### ') else []) + [line for line in lines if line.startswith(RED_LOG_LINE)][:2]
+    order += [line for line in lines if line.startswith('✖ ')] + [line for line in lines if line.startswith((FINDING_MARK, LAST_LINE_MARK))]
+    if not order:
+        return b''
+    room -= 64
+    raw, dropped = b'', 0
+    for line in order:
+        b = (line + '\n').encode('utf-8')
+        if len(raw) + len(b) <= room:
+            raw += b
+        elif not raw:
+            raw = b[:max(0, room - 1)] + b'\n'
+        else:
+            dropped += 1
+    if dropped:
+        raw += f'({dropped} more failing or finding line(s) in the full log)\n'.encode('utf-8')
+    return raw
+
+
+def fit_small(text, cap):
+    """A section in a share under SECTION_FLOOR: its `### ` header, its full-log line, its `✖ ` failing tests and its
+    `» ` finding lines (as many as fit, the rest counted), then the end of its output if SMALL_TAIL_MIN bytes are left.
+    A section with none of them keeps its tail, as before."""
+    lines = lines_of(text)
     note = '(cut to fit the report)\n'
-    room = cap - len(note.encode('utf-8'))
-    raw = ('\n'.join(keep) + '\n').encode('utf-8')
-    if len(raw) > room:
-        raw = raw[:max(0, room - 1)] + b'\n'
+    raw = _priority(lines, cap - len(note.encode('utf-8')))
+    if not raw:
+        return tail_bytes(text, cap)
     head = raw.decode('utf-8', errors='ignore') + note
     left = cap - len(head.encode('utf-8'))
     mark = text.find('\n' + OUTPUT_TAIL_MARK + '\n')
@@ -450,7 +496,13 @@ def fit_section(text, cap):
     head, rest = text[:cut], text[cut:]
     head_cap = int(cap * HEAD_SHARE)
     if len(head.encode('utf-8')) > head_cap:
-        head = head_bytes(head, head_cap - len(OUTPUT_TAIL_MARK) - 1) + OUTPUT_TAIL_MARK + '\n'
+        room = head_cap - len(OUTPUT_TAIL_MARK) - 1
+        cut = head_bytes(head, room)
+        # fix1110b #4: a head cut from its end loses the full-log line (last above the tail) and any finding line past
+        # the cut; when it would lose one, the head is its must-keep lines instead, the rest counted.
+        if any(line not in lines_of(cut) for line in _must_keep(lines_of(head))):
+            cut = (_priority(lines_of(head), room) or cut.encode('utf-8')).decode('utf-8', errors='ignore')
+        head = cut + OUTPUT_TAIL_MARK + '\n'
     return head + tail_bytes(rest, cap - len(head.encode('utf-8')))
 
 
@@ -786,10 +838,61 @@ def handoff_key_ok(name, env):
 
 # ── handoff ──────────────────────────────────────────────────────────────────
 
+# ⏱ 2026-11-11 · fix1110b #2. The quiet-step wrapper leaves each red step's whole output in RED_LOG_DIR and names it
+# on a pending line; the job's red-log step (tooling/ops/bridge-artifact.mjs red-logs) stores it and leaves a receipt.
+# The hand-off turns each pending line into where the log IS, so the private detail links every red step's full log.
+RED_LOG_DIR = 'nikatru-red-logs'
+RED_LOG_PENDING = re.compile(r'(?m)^full log: pending upload \(red-log ([A-Za-z0-9][A-Za-z0-9._()-]{0,120}\.log)\)$')
+RED_LOG_STORED = 'full log: stored '
+STORED_KEY = re.compile(r'^[1-9][0-9]{0,19}/[1-9][0-9]{0,4}/[A-Za-z0-9][A-Za-z0-9._-]{0,119}$')
+RED_LOG_READER = 'node tooling/ops/read-red-log.mjs'
+# ⏱ 2026-11-11 · fix1110b round 3 (lead DECISION 10:46Z, option C). No red-log upload step is wired in this club: a
+# PR-run job may hold no bridge key (A7-05, opsOffPr, assert-public-shell limb M), and the trusted report job uploads
+# the handed-off logs after #1350 (row O-ACTIONS-RED-TRIAGE). A log with NO receipt (no upload step ran) says so on this
+# line, and send reports it as a NOTE, never a red. A receipt that says refused or lost (an upload that ran and
+# failed) stays `full log: NOT stored (…)`, which is red (LOG NOT STORED).
+RED_LOG_NOT_WIRED = 'full log: not stored: upload not wired yet (row O-RED-DETAIL-COMPLETE part 2)'
+
+
+def red_log_lines(text, env):
+    """`text` with each pending full-log line turned into the receipt's answer: stored (its key and how to read it)
+    or NOT stored (why). A log with no receipt is said so: the job ran no red-log upload."""
+    folder = os.path.join(env.get('RUNNER_TEMP', ''), RED_LOG_DIR)
+    member = member_of(env.get('NIKATRU_HANDOFF', ''), f'{HANDOFF_PREFIX}{run_of(env)}-') or env.get('GITHUB_JOB', '')
+
+    def one(m):
+        try:
+            with open(os.path.join(folder, m.group(1) + '.receipt.json'), encoding='utf-8') as f:
+                r = json.load(f)
+        except (OSError, ValueError):
+            return f'{RED_LOG_NOT_WIRED}: {m.group(1)} stayed on the runner'
+        key = r.get('stored') if isinstance(r, dict) else None
+        if isinstance(key, str) and STORED_KEY.match(key):
+            return (f"{RED_LOG_STORED}{key} · read it: {RED_LOG_READER} {env.get('GITHUB_RUN_ID', '')} {member}"
+                    " (its signed link is in the bridge's artifact comment)")
+        why = str((r.get('refused') or r.get('lost') or 'no answer') if isinstance(r, dict) else 'an unreadable receipt')
+        return f'full log: NOT stored ({m.group(1)}: {why[:200]})'
+    return RED_LOG_PENDING.sub(one, text)
+
+
+def core_of(text, cap=CORE_MAX_BYTES):
+    """fix1110b #4: each `### RED`/`### NOTE` section's must-keep lines (_priority) within `cap`, or '' when none has any."""
+    parts = [p for p in re.split(r'(?m)^(?=### (?:RED|NOTE) )', text) if p.startswith('### ')]
+    if not parts:
+        return ''
+    share = cap // len(parts)
+    out = ''.join(_priority(lines_of(p), share).decode('utf-8', errors='ignore') for p in parts)
+    if not out.strip():
+        return ''
+    out += '(output tail not carried: this run\'s red detail was over what the report can carry; the full log has it)\n'
+    return out if len(out.encode('utf-8')) <= cap + 256 else head_bytes(out, cap)
+
+
 def handoff(env):
     """Seal this job's red detail for the cache: plain text never reaches actions/cache/save."""
     try:
-        with open(os.path.join(env.get('RUNNER_TEMP', ''), DETAIL_FILE), encoding='utf-8', errors='replace') as f:
+        # fix1110b round 5: newline='' — a lone CR stays a character, never a line break the wrapper did not see.
+        with open(os.path.join(env.get('RUNNER_TEMP', ''), DETAIL_FILE), encoding='utf-8', errors='replace', newline='') as f:
             text = f.read()
     except OSError:
         text = ''
@@ -799,6 +902,7 @@ def handoff(env):
     name = env.get('NIKATRU_HANDOFF', '')
     if not handoff_key_ok(name, env):
         raise Lost(f'NIKATRU_HANDOFF {name[:100]!r} is not a hand-off key of this run and attempt: nothing handed over')
+    text = red_log_lines(text, env)
     key, derived = handoff_key(env)
     if not key:
         raise Lost(('the run key the staging step derives is absent' if derived else 'NIKATRU_DETAIL_KEY is not set')
@@ -807,6 +911,10 @@ def handoff(env):
     os.makedirs(DETAIL_DIR, exist_ok=True)
     with open(os.path.join(DETAIL_DIR, SEALED_FILE), 'w', encoding='ascii') as f:
         f.write(seal(key, name, plain))
+    core = core_of(text)
+    if core:
+        with open(os.path.join(DETAIL_DIR, CORE_FILE), 'w', encoding='ascii') as f:
+            f.write(seal(key, name + CORE_SUFFIX, core.encode('utf-8')))
     with open(env['GITHUB_OUTPUT'], 'a', encoding='utf-8') as f:
         f.write('has=true\n')
     print(f'ok handoff: {len(plain)} byte(s) of red detail sealed for {name}')
@@ -863,6 +971,9 @@ def place(key):
         return 1
     os.makedirs(COLLECTED_DIR, exist_ok=True)
     shutil.move(src, os.path.join(COLLECTED_DIR, f'{key}.sealed'))
+    core = os.path.join(DETAIL_DIR, CORE_FILE)
+    if os.path.isfile(core):
+        shutil.move(core, os.path.join(COLLECTED_DIR, f'{key}{CORE_SUFFIX}.sealed'))
     shutil.rmtree(DETAIL_DIR, ignore_errors=True)
     print(f'ok place: {key}')
     return 0
@@ -870,14 +981,15 @@ def place(key):
 
 # ── collect ──────────────────────────────────────────────────────────────────
 
-def collected(prefix):
-    """{key: sealed text} of this run+attempt's hand-offs in .nikatru-collected/, in key order.
-    Carried as they are: this job holds no key, so it can neither read nor reseal them."""
+def collected(prefix, cores=False):
+    """{key: sealed text} of this run+attempt's hand-offs in .nikatru-collected/, in key order (with `cores`, their
+    fix1110b #4 cores instead). Carried as they are: this job holds no key, so it can neither read nor reseal them."""
     out = {}
     if not os.path.isdir(COLLECTED_DIR):
         return out
+    tail = CORE_SUFFIX + '.sealed' if cores else '.sealed'
     for name in sorted(os.listdir(COLLECTED_DIR)):
-        key = name[:-len('.sealed')] if name.endswith('.sealed') else None
+        key = name[:-len(tail)] if name.endswith(tail) else None
         if key is None or member_of(key, prefix) is None:
             continue
         with open(os.path.join(COLLECTED_DIR, name), encoding='ascii', errors='replace') as f:
@@ -900,7 +1012,7 @@ def notes_of(detail):
 def sections_of(detail, header):
     """The sections of a detail whose `### ` line starts with `header`, joined."""
     out, keep = [], False
-    for line in detail.split('\n'):
+    for line in lines_of(detail):
         if line.startswith('### '):
             keep = line.startswith(header)
         if keep:
@@ -953,7 +1065,7 @@ def build(context, state, env, detail, gate=False):
     return body
 
 
-def post(url, secret, body, timeout, opener=urllib.request.urlopen, sleep=None, now=None, stamp=False, clock=None, jitter=None):
+def post(url, secret, body, timeout, opener=urllib.request.urlopen, sleep=None, now=None, stamp=False, clock=None, jitter=None, oidc=None):
     """(status, why) of the report: a transient answer retried, RETRY_DELAYS apart (each jittered by ±RETRY_JITTER,
     `jitter` a draw in [0, 1)), no attempt starting past RETRY_WINDOW_S after the first (`clock`, monotonic seconds),
     then the last. A 429 waits RATE_DELAYS instead, unjittered (each must outlast the bridge's bucket), and only
@@ -961,7 +1073,9 @@ def post(url, secret, body, timeout, opener=urllib.request.urlopen, sleep=None, 
     `timeout` is the config's postTimeoutS: above the bridge's whole budget for one report.
     ⏱ 2026-10-31 · O-BRIDGE-REPORT-REPLAY-WINDOW: with `stamp` (send's /report posts) every attempt carries its own
     `ts` (epoch seconds, `now`) and is signed afresh, so the bridge refuses a captured body outside its window and a replay of it (409), and a retry is
-    a new body, never a replay. A 409 is the bridge saying this body was already delivered (send counts it)."""
+    a new body, never a replay. A 409 is the bridge saying this body was already delivered (send counts it).
+    ⏱ 2026-11-09 · review52-platform-002: `oidc`, when given, is called before every attempt and its token (or None)
+    goes as X-Bridge-OIDC, so the bridge binds the report to THIS job (services/gh-bridge/src/report.ts)."""
     sleep = sleep or time.sleep
     now = now or time.time
     clock = clock or time.monotonic
@@ -969,7 +1083,7 @@ def post(url, secret, body, timeout, opener=urllib.request.urlopen, sleep=None, 
     started, waited = clock(), 0.0
     for attempt in range(len(RETRY_DELAYS) + 1):
         raw = json.dumps({**body, 'ts': int(now())} if stamp else body, ensure_ascii=False).encode('utf-8')
-        status, why, upstream = post_once(url, secret, raw, opener, timeout)
+        status, why, upstream = post_once(url, secret, raw, opener, timeout, oidc() if oidc else None)
         transient = status == 429 or (status in RETRY_STATUSES and (status != 502 or upstream is None or upstream in RETRY_UPSTREAMS))
         if not transient or attempt == len(RETRY_DELAYS) or (status == 429 and attempt >= len(RATE_DELAYS)):
             return status, why
@@ -988,13 +1102,16 @@ def post(url, secret, body, timeout, opener=urllib.request.urlopen, sleep=None, 
         waited += wait
 
 
-def post_once(url, secret, raw, opener, timeout):
+def post_once(url, secret, raw, opener, timeout, token=None):
     """(status, why, upstream): `upstream` is the GitHub status a bridge 502 names, or None."""
-    req = urllib.request.Request(url, data=raw, method='POST', headers={
+    headers = {
         'content-type': 'application/json',
         'user-agent': USER_AGENT,
         'x-bridge-signature': signature(secret, raw),
-    })
+    }
+    if token:
+        headers['x-bridge-oidc'] = token
+    req = urllib.request.Request(url, data=raw, method='POST', headers=headers)
     try:
         with opener(req, timeout=timeout) as r:
             return r.status, '', None
@@ -1023,35 +1140,57 @@ def collect(env, cfg):
     (in the first bundle), not carried."""
     prefix = run_prefix(cfg, env)
     handed = collected(prefix)
+    cores = collected(prefix, cores=True)
     unrestored = [k for k in env.get('NIKATRU_OVERFLOW', '').split(',') if k and member_of(k, prefix)]
     bundles = [{'v': BUNDLE_VERSION, 'handoffs': {}, 'unrestored': unrestored}]
     fits = lambda b: len(json.dumps(b, separators=(',', ':'))) <= SEALED_MAX_CHARS - 1024
-    for key, sealed in handed.items():
-        placed = False
+
+    def put(field, key, sealed):
         for b in bundles:
-            b['handoffs'][key] = sealed
+            b.setdefault(field, {})[key] = sealed
             if fits(b):
-                placed = True
-                break
-            del b['handoffs'][key]
-        if not placed and len(bundles) < DETAIL_OUTPUTS:
-            b = {'v': BUNDLE_VERSION, 'handoffs': {key: sealed}, 'unrestored': []}
+                return True
+            del b[field][key]
+        if len(bundles) < DETAIL_OUTPUTS:
+            b = {'v': BUNDLE_VERSION, 'handoffs': {}, 'unrestored': [], field: {key: sealed}}
             if fits(b):
                 bundles.append(b)
-                placed = True
+                return True
+        return False
+
+    # fix1110b #4: every job's core is placed FIRST (a few KiB each), then the whole details as room allows; a whole
+    # detail placed retires its core, which frees room for the next. Only a job whose core does not fit is named.
+    for key, sealed in cores.items():
+        if key in handed:
+            put('cores', key, sealed)
+    for key, sealed in handed.items():
+        placed = put('handoffs', key, sealed)
+        if placed:
+            for b in bundles:
+                b.get('cores', {}).pop(key, None)
+        elif any(key in b.get('cores', {}) for b in bundles):
+            continue
         if not placed:
             bundles[0]['unrestored'].append(key)
             if not fits(bundles[0]):
                 # The names alone overflow the first bundle: make room by naming its last carried hand-off too.
-                last = list(bundles[0]['handoffs'])[-1]
-                del bundles[0]['handoffs'][last]
-                bundles[0]['unrestored'].append(last)
+                field = 'handoffs' if bundles[0]['handoffs'] else 'cores'
+                if bundles[0].get(field):
+                    last = list(bundles[0][field])[-1]
+                    del bundles[0][field][last]
+                    bundles[0]['unrestored'].append(last)
     with open(env['GITHUB_OUTPUT'], 'a', encoding='utf-8') as f:
         f.write(detail_output(0) + '=' + (json.dumps(bundles[0], separators=(',', ':')) if handed or unrestored else '') + '\n')
         for i, b in enumerate(bundles[1:], start=1):
             f.write(detail_output(i) + '=' + json.dumps(b, separators=(',', ':')) + '\n')
+    for b in bundles:
+        if not b.get('cores'):
+            b.pop('cores', None)
     carried = sum(len(b['handoffs']) for b in bundles)
-    print(f'ok collect: {carried} sealed hand-off(s) carried in {len(bundles)} output(s), {len(bundles[0]["unrestored"])} named only')
+    by_core = sum(len(b.get('cores', {})) for b in bundles)
+    print(f'ok collect: {carried} sealed hand-off(s) carried in {len(bundles)} output(s)'
+          + (f', {by_core} by its core (findings and log link, no output tail)' if by_core else '')
+          + f', {len(bundles[0]["unrestored"])} named only')
     return 0
 
 
@@ -1088,6 +1227,9 @@ def parse_bundle(raw):
         raise Refused(f'not JSON this reporter can read ({type(e).__name__})')
     if not isinstance(bundle, dict) or bundle.get('v') != BUNDLE_VERSION or not isinstance(bundle.get('handoffs'), dict) or not isinstance(bundle.get('unrestored'), list):
         raise Refused(f'not a version-{BUNDLE_VERSION} hand-off bundle')
+    bundle.setdefault('cores', {})
+    if not isinstance(bundle['cores'], dict):
+        raise Refused(f'not a version-{BUNDLE_VERSION} hand-off bundle')
     return bundle
 
 
@@ -1103,11 +1245,18 @@ def read_bundle(raw, env, cfg, more=()):
             if name in bundle['handoffs']:
                 raise Refused(f'{name[:100]!r} is carried twice')
             bundle['handoffs'][name] = sealed
+        for name, sealed in b['cores'].items():
+            if name in bundle['cores']:
+                raise Refused(f'{name[:100]!r} is carried twice')
+            bundle['cores'][name] = sealed
+    if set(bundle['cores']) & set(bundle['handoffs']):
+        raise Refused('a hand-off is carried both whole and by its core')
     master = env.get('NIKATRU_DETAIL_KEY', '')
-    if bundle['handoffs'] and not master:
+    if (bundle['handoffs'] or bundle['cores']) and not master:
         raise Refused('NIKATRU_DETAIL_KEY is not set')
     details = {}
-    for name, sealed in bundle['handoffs'].items():
+    carried = [(n, s, '') for n, s in bundle['handoffs'].items()] + [(n, s, CORE_SUFFIX) for n, s in bundle['cores'].items()]
+    for name, sealed, bound in carried:
         member = run_member_of(name, cfg, env) if re.match(r'^[A-Za-z0-9._-]{1,400}$', name) else None
         if member is None or not isinstance(sealed, str):
             raise Refused(f'{name[:100]!r} is not a hand-off of this run (this attempt or an earlier one)')
@@ -1116,9 +1265,9 @@ def read_bundle(raw, env, cfg, more=()):
         attempt = name[len(f"{cfg['prefix']}{env['GITHUB_RUN_ID']}-"):].split('-', 1)[0]
         key = run_key(master, f"{env['GITHUB_RUN_ID']}-{attempt}")
         try:
-            plain = unseal(key, name, sealed)
+            plain = unseal(key, name + bound, sealed)
         except Refused as e:
-            raise Refused(f'hand-off {name!r}: {e}')
+            raise Refused(f'hand-off {name!r}{" (its core)" if bound else ""}: {e}')
         if len(plain) > HANDOFF_MAX_BYTES:
             raise Refused(f'hand-off {name!r} is over the {HANDOFF_MAX_BYTES}-byte cap')
         details.setdefault(member, []).append(plain.decode('utf-8', errors='replace'))
@@ -1205,6 +1354,100 @@ def send_dispatch(env, cfg, opener=urllib.request.urlopen):
     return 1
 
 
+# ⏱ 2026-11-09 · review52-platform-002: the report job holds `id-token: write` (gen-public-shell.mjs reportJob), and
+# every /report attempt carries a FRESH token of it (a retry may outlive one), so the bridge binds the report to this
+# job, not to whoever holds REPORT_SECRET. A token that cannot be minted is SAID and the post goes without one: the
+# bridge decides (it accepts none until its REPORT_OIDC.required flips, then refuses it 403 with its reason).
+REPORT_OIDC_TIMEOUT_S = 10
+
+
+def report_token(env, opener=urllib.request.urlopen):
+    """This job's OIDC token for one /report attempt, or None (printed when the runner would not mint one)."""
+    token, why = caller_token(env, opener, REPORT_OIDC_TIMEOUT_S)
+    if why:
+        print(f'-- X-Bridge-OIDC: {why}; this report goes without one', file=sys.stderr)
+    return token
+
+
+# ⏱ 2026-11-11 · fix1110b #3 (row O-RED-DETAIL-COMPLETE). NO SILENT LOSS. A red job whose detail carries neither a
+# finding line (the wrapper's `» ` or a `✖ ` failing test) nor a stored full log (`full log: stored …`) reached the
+# private PR as a red status and nothing a lane could act on, and the report job said ok. Now such a job makes the
+# report itself red: `x LOST DETAIL <context>` in this log, the same line in the job's posted detail, exit 1. The gate
+# is held to it only when it is the one red (a lane's red gate carries the lane's loss already).
+LOST_DETAIL = 'LOST DETAIL'
+# ⏱ 2026-11-11 · fix1110b round 2 (lead re-review, part 2: FAIL CLOSED; the owner's standard is complete logs, not best
+# effort). The wrapper's last-line fallback is no longer a finding (LAST_LINE_MARK), and every `### RED` section must
+# link its STORED full log: a section that says `full log: NOT stored`, still `pending upload` (no hand-off ran), or
+# names no full log at all is LOG NOT STORED, and the report goes red as for LOST DETAIL.
+LOG_NOT_STORED = 'LOG NOT STORED'
+
+
+# ⏱ 2026-11-11 · fix1110b round 4 (lead final re-review: a BLOCKER and a should-fix). Structure is read from each
+# section's HEAD only — the lines above its OUTPUT_TAIL_MARK (or `#### step summary`) — never from the step's output.
+# The quiet-step wrapper escapes any output line shaped like structure (its escapeOutput), and this reader never looks
+# past a head for a mark; a section header is a header only at a line start, which an escaped line never is. And the
+# report step's log is PUBLIC (it is not quiet-wrapped), so what it prints of a detail is COUNTS only, never a name.
+TAIL_HEADS = (OUTPUT_TAIL_MARK, '#### step summary')
+# ⏱ 2026-11-11 · fix1110b round 5 (lead re-review 11:42Z). The line breaks a detail is split on — the SAME set the
+# quiet-step wrapper splits (and escapes) on, its LINE_BREAK. Never str.splitlines (it also breaks on \x0b, \x0c,
+# \x1c-\x1e and \x85, which the wrapper keeps inside a line) and never a file read in universal-newline mode (handoff
+# opens with newline='').
+LINE_BREAK = re.compile('\r\n|\r|\n|\u2028|\u2029')
+
+
+def lines_of(text):
+    """`text` split on LINE_BREAK."""
+    return LINE_BREAK.split(text)
+
+
+def section_heads(detail):
+    """[(header or None, [head lines])]: the text before any section (None), then each `### RED`/`### NOTE` section's
+    header and its lines above the tail. A tail's lines are skipped, never parsed."""
+    out, in_tail = [(None, [])], False
+    for line in lines_of(detail):
+        if line.startswith((RED_HEADER, NOTE_HEADER)):
+            out.append((line, []))
+            in_tail = False
+        elif line in TAIL_HEADS:
+            in_tail = True
+        elif not in_tail:
+            out[-1][1].append(line)
+    return out
+
+
+def has_detail(detail):
+    """True when a section head of `detail` names a real finding line (FINDING_MARK, never the last-line fallback), a
+    failing test, or links a stored full log. The output tail is never read."""
+    return any(line.startswith((FINDING_MARK, '✖ ', RED_LOG_STORED)) for _, head in section_heads(detail) for line in head)
+
+
+def unstored_logs(detail):
+    """(red, unwired): how many `### RED` sections of `detail` link no STORED full log in their head — `unwired` those
+    whose log no upload step was there to store (RED_LOG_NOT_WIRED, a NOTE), `red` every other (an upload that failed,
+    a hand-off that never ran, no log at all). Counts, never names: the caller prints them in a public log."""
+    red = unwired = 0
+    for header, head in section_heads(detail):
+        if header is None or not header.startswith(RED_HEADER) or any(line.startswith(RED_LOG_STORED) for line in head):
+            continue
+        if any(line.startswith(RED_LOG_NOT_WIRED) for line in head):
+            unwired += 1
+        else:
+            red += 1
+    return red, unwired
+
+
+def held_to_detail(item, cfg, results):
+    """True when this item's red is its own to explain: a red lane, or a gate that is the one red (fix1110b #3)."""
+    if results.get(item['job']) != 'failure':
+        return False
+    return not is_gate(item, cfg) or all(results.get(lane['job']) == 'success' for lane in cfg['lanes'])
+
+
+def lost_detail(item, cfg, results, detail):
+    """True when a red job's detail cannot tell a reader why it is red (fix1110b #3)."""
+    return held_to_detail(item, cfg, results) and not has_detail(detail)
+
+
 def send(env, cfg, opener=urllib.request.urlopen, clock=time.monotonic):
     if env.get('GITHUB_EVENT_NAME') in UNDISPATCHED_EVENTS:
         return send_dispatch(env, cfg, opener)
@@ -1242,6 +1485,25 @@ def send(env, cfg, opener=urllib.request.urlopen, clock=time.monotonic):
                   f"(event {env.get('NIKATRU_P_EVENT', '')!r}, ref {env.get('NIKATRU_P_REF', '')!r}); only such a run may write the gate")
             continue
         detail = details.get(item['context'], '')
+        if not lost and lost_detail(item, cfg, results, detail) and not held(item, cfg, results, detail, lost):
+            # fix1110b #3: said here and on the private PR, and the report goes red. (A lost bundle is exit 2 already.)
+            failed += 1
+            print(f"x {LOST_DETAIL} {item['context']}: red, and its detail names no failing line and links no full log")
+            detail = (detail.rstrip('\n') + '\n\n' if detail.strip() else '') + (
+                f"{LOST_DETAIL} {item['context']}: this red job handed over no finding line and no stored full log. "
+                'Its job log is the public run\'s only record; read it with ' + RED_LOG_READER + ' ' + env.get('GITHUB_RUN_ID', '') + '.\n')
+        unstored, unwired = unstored_logs(detail) if not lost and held_to_detail(item, cfg, results) and not held(item, cfg, results, detail, lost) else (0, 0)
+        # fix1110b round 4: this log is PUBLIC — the context (the config's) and a count, never text of the detail.
+        if unwired:
+            # fix1110b round 3: no upload step is wired yet (option C lands after #1350): said, never a red.
+            print(f"-- NOTE {item['context']}: full log not stored: upload not wired yet (row O-RED-DETAIL-COMPLETE part 2): {unwired} red step(s)")
+        if unstored:
+            # fix1110b round 2: a red step's full log that was not stored is a red report, never best effort.
+            failed += 1
+            print(f"x {LOG_NOT_STORED} {item['context']}: {unstored} red step(s) whose full log was not stored in the bridge's private home")
+            detail = detail.rstrip('\n') + '\n\n' + (
+                f"{LOG_NOT_STORED} {item['context']}: {unstored} red step(s) whose full log was not stored "
+                '(see each section\'s `full log:` line); the report is red until every red step\'s log is.\n')
         if state == 'failure' and held(item, cfg, results, detail, lost):
             state = 'pending'
         elif state == 'success' and not cleared(item, cfg, env, detail):
@@ -1250,7 +1512,8 @@ def send(env, cfg, opener=urllib.request.urlopen, clock=time.monotonic):
             if state == 'failure':
                 print(f"x  {item['context']}: the gate job succeeded without pr-meta's clear "
                       f"(meta {env.get('NIKATRU_GATE_META', '')[:20]!r}, and no hold this report can read): posted failure, never success")
-        status, why = post(url, secret, build(item['context'], state, env, detail, is_gate(item, cfg)), cfg['postTimeoutS'], opener, stamp=True)
+        status, why = post(url, secret, build(item['context'], state, env, detail, is_gate(item, cfg)), cfg['postTimeoutS'], opener, stamp=True,
+                           oidc=lambda: report_token(env, opener))
         # A 409 is this very body already delivered (the bridge's seen-key, O-BRIDGE-REPORT-REPLAY-WINDOW): not a failure.
         ok = 200 <= status < 300 or status == 409
         failed += 0 if ok else 1
@@ -1316,7 +1579,7 @@ def pr_meta_message(number, sha, ts):
     return f'{number}.{sha}.{ts}'
 
 
-def caller_token(env, opener=urllib.request.urlopen):
+def caller_token(env, opener=urllib.request.urlopen, timeout=None):
     """(token | None, why | None): this job's OIDC token for the bridge, as actions-oidc.mjs callerToken. Neither
     ACTIONS_ID_TOKEN_REQUEST_URL nor _TOKEN: (None, None), the read goes without one and the bridge refuses it with
     its reason. An endpoint that will not mint: (None, why), lost, never a silent send without a token."""
@@ -1332,7 +1595,7 @@ def caller_token(env, opener=urllib.request.urlopen):
     req = urllib.request.Request(urllib.parse.urlunsplit((u.scheme, u.netloc, u.path, urllib.parse.urlencode(query), '')), method='GET', headers={
         'authorization': f'bearer {bearer}', 'accept': 'application/json; api-version=2.0', 'user-agent': USER_AGENT})
     try:
-        with opener(req, timeout=PR_META_TIMEOUT_S) as r:
+        with opener(req, timeout=timeout or PR_META_TIMEOUT_S) as r:
             value = json.loads(r.read().decode('utf-8')).get('value') if r.status == 200 else None
     except urllib.error.HTTPError as e:
         return None, f'the runner would not mint the OIDC token (HTTP {e.code})'
