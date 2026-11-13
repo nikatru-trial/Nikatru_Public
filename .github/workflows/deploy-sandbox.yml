@@ -238,6 +238,7 @@ jobs:
             tooling/ci
             tooling/ops
             tooling/generated
+            .github/workflows
           ssh-key: ${{ secrets.PRIVATE_DEPLOY_KEY }}
           persist-credentials: false
       - name: Require ci-gate to have passed for this commit
@@ -259,6 +260,18 @@ jobs:
           NIKATRU_QUIET_EOF
           NIKATRU_SHELL="${BASH:-bash}"; if command -v cygpath >/dev/null 2>&1; then NIKATRU_SHELL="$(cygpath -w "$NIKATRU_SHELL")"; fi
           node "$GITHUB_WORKSPACE/../.nikatru-shell/quiet-step.mjs" --name deploy-sandbox.gate.3 -- "$NIKATRU_SHELL" -e "$NIKATRU_QUIET"
+      - name: A branch deploy never runs an unreviewed head with account-wide secrets
+        working-directory: .gate-main
+        env:
+          REF: ${{ (github.event.client_payload.ref || inputs.private_ref || 'refs/heads/main') }}
+          PRIVATE_PR: ${{ inputs.private_pr }}
+        run: |
+          NIKATRU_QUIET="$(mktemp "${RUNNER_TEMP:-/tmp}/nikatru-step.XXXXXX")"
+          cat > "$NIKATRU_QUIET" <<'NIKATRU_QUIET_EOF'
+          node tooling/ci/refuse-branch-proof-secrets.mjs --ref "$REF" --pr "$PRIVATE_PR"
+          NIKATRU_QUIET_EOF
+          NIKATRU_SHELL="${BASH:-bash}"; if command -v cygpath >/dev/null 2>&1; then NIKATRU_SHELL="$(cygpath -w "$NIKATRU_SHELL")"; fi
+          node "$GITHUB_WORKSPACE/../.nikatru-shell/quiet-step.mjs" --name deploy-sandbox.gate.4 -- "$NIKATRU_SHELL" -e "$NIKATRU_QUIET"
       - name: Store this job's red detail in the bridge's private home (generated)
         if: always()
         continue-on-error: true
@@ -395,7 +408,8 @@ jobs:
       checks: read
       actions: read
     secrets:
-      CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
+      CLOUDFLARE_SANDBOX_WORKERS_TOKEN: ${{ secrets.CLOUDFLARE_SANDBOX_WORKERS_TOKEN }}
+      SANDBOX_ADMIN_ROUTE_SECRET: ${{ secrets.SANDBOX_ADMIN_ROUTE_SECRET }}
       CLOUDFLARE_ACCOUNT_ID: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
       PRIVATE_DEPLOY_KEY: ${{ secrets.PRIVATE_DEPLOY_KEY }}
       NIKATRU_DETAIL_KEY: ${{ secrets.NIKATRU_DETAIL_KEY }}

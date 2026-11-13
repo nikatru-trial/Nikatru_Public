@@ -38,9 +38,16 @@ on:
         required: false
         default: 'false'
         type: string
+      gate_rule:
+        description: "'gate' (default) or 'lanes': the rule the in-job gates apply to a pull request head (money-sandbox-e2e.yml's branch proof only)."
+        required: false
+        default: 'gate'
+        type: string
     secrets:
-      CLOUDFLARE_API_TOKEN:
-        required: true
+      CLOUDFLARE_SANDBOX_WORKERS_TOKEN:
+        required: false
+      SANDBOX_ADMIN_ROUTE_SECRET:
+        required: false
       CLOUDFLARE_ACCOUNT_ID:
         required: true
       PRIVATE_DEPLOY_KEY:
@@ -120,6 +127,23 @@ jobs:
           rm -rf .nikatru-shell
           py=python3; python3 -c '' >/dev/null 2>&1 || py=python
           "$py" -I "$GITHUB_WORKSPACE/../.nikatru-shell/report.py" derive
+      - name: "Check out private main beside it (the migrations to compare with, and the check itself) (generated: the private tree)"
+        if: inputs.when != 'skip'
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
+        with:
+          repository: ${{ env.NIKATRU_PRIVATE_REPO }}
+          ref: main
+          path: .sandbox-main
+          fetch-depth: 0
+          filter: tree:0
+          sparse-checkout: |
+            services
+            tooling/ci
+            tooling/store
+            tooling/e2e
+            tooling/app-yaml
+          ssh-key: ${{ secrets.PRIVATE_DEPLOY_KEY }}
+          persist-credentials: false
       - name: The matrix comes from worker-set.mjs, and the input names one of it
         id: set
         env:
@@ -139,7 +163,10 @@ jobs:
             { echo "workers=${none}"; echo "count=0"; echo "platform=false"; } >> "$GITHUB_OUTPUT"
             exit 0
           fi
-          all="$(node tooling/ci/worker-set.mjs --for-deploy --json --app-workers --env sandbox)"
+          # why: MAIN'S worker-set.mjs over MAIN's tree (⏱ 2026-11-12 · review of #1380 at 9b83ef42, MAJOR 2b): the matrix
+          # `dir` each publishing job deploys with the token is main's, never the deployed head's choice (a dir outside
+          # services/, or one limb T does not compare). Its root is its own checkout, .sandbox-main.
+          all="$(node .sandbox-main/tooling/ci/worker-set.mjs --for-deploy --json --app-workers --env sandbox)"
           if [ "$WORKER_INPUT" = "all" ]; then
             workers="$all"
             platform=true
@@ -163,21 +190,7 @@ jobs:
           } >> "$GITHUB_OUTPUT"
           NIKATRU_QUIET_EOF
           NIKATRU_SHELL="${BASH:-bash}"; if command -v cygpath >/dev/null 2>&1; then NIKATRU_SHELL="$(cygpath -w "$NIKATRU_SHELL")"; fi
-          node "$GITHUB_WORKSPACE/../.nikatru-shell/quiet-step.mjs" --name deploy-sandbox-unit.workers.2 -- "$NIKATRU_SHELL" -e "$NIKATRU_QUIET"
-      - name: "Check out private main beside it (the migrations to compare with, and the check itself) (generated: the private tree)"
-        if: inputs.when != 'skip'
-        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
-        with:
-          repository: ${{ env.NIKATRU_PRIVATE_REPO }}
-          ref: main
-          path: .sandbox-main
-          fetch-depth: 0
-          filter: tree:0
-          sparse-checkout: |
-            services
-            tooling/ci
-          ssh-key: ${{ secrets.PRIVATE_DEPLOY_KEY }}
-          persist-credentials: false
+          node "$GITHUB_WORKSPACE/../.nikatru-shell/quiet-step.mjs" --name deploy-sandbox-unit.workers.3 -- "$NIKATRU_SHELL" -e "$NIKATRU_QUIET"
       - name: Every setup step of this job succeeded (generated)
         id: nikatru-setup-ok
         run: echo "every setup step before the first check succeeded"
@@ -191,6 +204,16 @@ jobs:
           NIKATRU_QUIET_EOF
           NIKATRU_SHELL="${BASH:-bash}"; if command -v cygpath >/dev/null 2>&1; then NIKATRU_SHELL="$(cygpath -w "$NIKATRU_SHELL")"; fi
           node "$GITHUB_WORKSPACE/../.nikatru-shell/quiet-step.mjs" --name deploy-sandbox-unit.workers.4 -- "$NIKATRU_SHELL" -e "$NIKATRU_QUIET"
+      - name: The deployed tree's sandbox config is main's (every env.sandbox key, every inherited key; no build command)
+        if: ${{ (success() || (!cancelled() && (github.event.client_payload.event == 'pull_request' && startsWith(github.event.client_payload.ref, 'refs/heads/rehearsal/')) && steps.nikatru-setup-ok.outcome == 'success')) && (inputs.when != 'skip') }}
+        working-directory: .sandbox-main
+        run: |
+          NIKATRU_QUIET="$(mktemp "${RUNNER_TEMP:-/tmp}/nikatru-step.XXXXXX")"
+          cat > "$NIKATRU_QUIET" <<'NIKATRU_QUIET_EOF'
+          node tooling/ci/sandbox-deploy-preflight.mjs --tree .. --main . --history .
+          NIKATRU_QUIET_EOF
+          NIKATRU_SHELL="${BASH:-bash}"; if command -v cygpath >/dev/null 2>&1; then NIKATRU_SHELL="$(cygpath -w "$NIKATRU_SHELL")"; fi
+          node "$GITHUB_WORKSPACE/../.nikatru-shell/quiet-step.mjs" --name deploy-sandbox-unit.workers.5 -- "$NIKATRU_SHELL" -e "$NIKATRU_QUIET"
       - name: Never install an ancestor over a newer build (SUPERSEDED skips that target)
         id: supersede
         if: ${{ (success() || (!cancelled() && (github.event.client_payload.event == 'pull_request' && startsWith(github.event.client_payload.ref, 'refs/heads/rehearsal/')) && steps.nikatru-setup-ok.outcome == 'success')) && (inputs.when != 'skip') }}
@@ -201,10 +224,10 @@ jobs:
         run: |
           NIKATRU_QUIET="$(mktemp "${RUNNER_TEMP:-/tmp}/nikatru-step.XXXXXX")"
           cat > "$NIKATRU_QUIET" <<'NIKATRU_QUIET_EOF'
-          node tooling/ci/sandbox-supersede.mjs --ours "$(git rev-parse HEAD)" --history .sandbox-main --tree . --proof "$PROOF"
+          node .sandbox-main/tooling/ci/sandbox-supersede.mjs --ours "$(git rev-parse HEAD)" --history .sandbox-main --tree . --proof "$PROOF"
           NIKATRU_QUIET_EOF
           NIKATRU_SHELL="${BASH:-bash}"; if command -v cygpath >/dev/null 2>&1; then NIKATRU_SHELL="$(cygpath -w "$NIKATRU_SHELL")"; fi
-          node "$GITHUB_WORKSPACE/../.nikatru-shell/quiet-step.mjs" --name deploy-sandbox-unit.workers.5 -- "$NIKATRU_SHELL" -e "$NIKATRU_QUIET"
+          node "$GITHUB_WORKSPACE/../.nikatru-shell/quiet-step.mjs" --name deploy-sandbox-unit.workers.6 -- "$NIKATRU_SHELL" -e "$NIKATRU_QUIET"
       - name: Hand this job's red detail to the report job, sealed (generated)
         id: nikatru-handoff
         if: always()
@@ -278,11 +301,16 @@ jobs:
           repository: ${{ env.NIKATRU_PRIVATE_REPO }}
           ref: main
           path: .sandbox-main
+          fetch-depth: 0
+          filter: tree:0
           sparse-checkout: |
             tooling/ci
             tooling/ops
             tooling/generated
             tooling/app-yaml
+            tooling/e2e
+            tooling/store
+            services
           ssh-key: ${{ secrets.PRIVATE_DEPLOY_KEY }}
           persist-credentials: false
       - name: Refuse any ref but main
@@ -295,8 +323,24 @@ jobs:
           NIKATRU_JUDGED_TREE: ${{ github.workspace }}
           GITHUB_TOKEN: ${{ github.token }}
           GITHUB_REPOSITORY: ${{ github.repository }}
+          RULE: ${{ inputs.gate_rule || 'gate' }}
           PR: ${{ inputs.pr }}
-        run: node tooling/ci/assert-gate-passed.mjs "$(git -C "$GITHUB_WORKSPACE" rev-parse HEAD)" --pr "$PR"
+        run: node tooling/ci/assert-gate-passed.mjs "$(git -C "$GITHUB_WORKSPACE" rev-parse HEAD)" --pr "$PR" --rule "$RULE"
+      - name: The sandbox credentials are set and platform-sandbox accepts the admin bearer (main's copy, before any deploy)
+        if: inputs.when != 'skip'
+        working-directory: .sandbox-main
+        env:
+          CLOUDFLARE_SANDBOX_WORKERS_TOKEN: ${{ secrets.CLOUDFLARE_SANDBOX_WORKERS_TOKEN }}
+          SANDBOX_ADMIN_ROUTE_SECRET: ${{ secrets.SANDBOX_ADMIN_ROUTE_SECRET }}
+          CLOUDFLARE_ACCOUNT_ID: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
+        run: node tooling/ci/sandbox-deploy-preflight.mjs --probe-route --main .
+      - name: A branch proof's deploy token cannot reach production (main's copy, before any deploy)
+        if: inputs.when != 'skip' && (inputs.pr != '' || (github.event.client_payload.ref || 'refs/heads/main') != 'refs/heads/main')
+        working-directory: .sandbox-main
+        env:
+          CLOUDFLARE_SANDBOX_WORKERS_TOKEN: ${{ secrets.CLOUDFLARE_SANDBOX_WORKERS_TOKEN }}
+          CLOUDFLARE_ACCOUNT_ID: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
+        run: node tooling/ci/sandbox-deploy-preflight.mjs --probe-token --main .
       - name: Check out private main's composite actions (generated)
         if: needs.workers.outputs.platform == 'true'
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
@@ -318,30 +362,43 @@ jobs:
           NIKATRU_REF: ${{ github.event.client_payload.ref || 'refs/heads/main' }}
           NIKATRU_EVENT_NAME: ${{ github.event.client_payload.event || github.event_name }}
           NIKATRU_PR: ${{ github.event.client_payload.pr }}
-      - run: node "$GITHUB_WORKSPACE/tooling/ops/npm-ci-retry.mjs" -- npm ci --ignore-scripts
+      - run: node "$GITHUB_WORKSPACE/.sandbox-main/tooling/ops/npm-ci-retry.mjs" -- npm ci --ignore-scripts
         if: needs.workers.outputs.platform == 'true'
         working-directory: services/platform
-      - run: node "$GITHUB_WORKSPACE/tooling/ops/npm-ci-retry.mjs" -- npm ci --ignore-scripts --no-audit --no-fund --prefix services/_shared
+      - run: node "$GITHUB_WORKSPACE/.sandbox-main/tooling/ops/npm-ci-retry.mjs" -- npm ci --ignore-scripts --no-audit --no-fund --prefix services/_shared
         if: needs.workers.outputs.platform == 'true'
-      - name: Apply PLATFORM_DB migrations to the sandbox (before deploy)
+      - name: The deployed tree is still main's, in THIS job (limb T and the migrations), before any secret step
         if: needs.workers.outputs.platform == 'true'
-        uses: cloudflare/wrangler-action@953926a2e2182532811c01a25e53647d93bf07c0
-        with:
-          apiToken: ${{ secrets.CLOUDFLARE_API_TOKEN }}
-          wranglerVersion: '4.149.0'
-          accountId: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
-          workingDirectory: services/platform
-          command: d1 migrations apply PLATFORM_DB --env sandbox --remote
+        working-directory: .sandbox-main
+        run: node tooling/ci/sandbox-deploy-preflight.mjs --tree .. --main . --history . && node tooling/ci/assert-sandbox-migrations.mjs --main . --tree ..
+      - name: Bundle platform-sandbox with no token in the environment
+        if: needs.workers.outputs.platform == 'true'
+        working-directory: services/platform
+        run: npx --no-install wrangler deploy --dry-run --outdir "$RUNNER_TEMP/bundle" --config wrangler.jsonc --env sandbox --env-file /dev/null
+      - name: Apply PLATFORM_DB migrations to the sandbox BEFORE the deploy, through the serving platform-sandbox
+        id: premigrate
+        if: needs.workers.outputs.platform == 'true'
+        env:
+          SANDBOX_ADMIN_ROUTE_SECRET: ${{ secrets.SANDBOX_ADMIN_ROUTE_SECRET }}
+        working-directory: .sandbox-main
+        run: node tooling/ci/sandbox-admin.mjs --migrate --worker platform --binding PLATFORM_DB --bootstrap-ok --root "$GITHUB_WORKSPACE"
       - uses: cloudflare/wrangler-action@953926a2e2182532811c01a25e53647d93bf07c0
         if: needs.workers.outputs.platform == 'true'
         with:
-          apiToken: ${{ secrets.CLOUDFLARE_API_TOKEN }}
+          apiToken: ${{ secrets.CLOUDFLARE_SANDBOX_WORKERS_TOKEN }}
           wranglerVersion: '4.149.0'
           accountId: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
           workingDirectory: services/platform
-          command: deploy --env sandbox --var RELEASE:${{ env.NIKATRU_SHA }}
+          command: deploy ${{ runner.temp }}/bundle/index.js --no-bundle --config wrangler.jsonc --env-file /dev/null --env sandbox --var RELEASE:${{ env.NIKATRU_SHA }}
+      - name: Apply PLATFORM_DB migrations after the deploy (BOOTSTRAP only, the serving build had no route)
+        if: needs.workers.outputs.platform == 'true' && steps.premigrate.outputs.bootstrap == 'true'
+        env:
+          SANDBOX_ADMIN_ROUTE_SECRET: ${{ secrets.SANDBOX_ADMIN_ROUTE_SECRET }}
+        working-directory: .sandbox-main
+        run: node tooling/ci/sandbox-admin.mjs --migrate --worker platform --binding PLATFORM_DB --root "$GITHUB_WORKSPACE"
       - name: Smoke — the sandbox Worker answers at THIS commit
         if: needs.workers.outputs.platform == 'true'
+        working-directory: .sandbox-main
         run: |
           host="$(node tooling/store/capture-backend.mjs --print-host platform)"
           node tooling/ops/post-deploy-smoke.mjs --url "$host/v1/health" --field build --expect "$NIKATRU_SHA" --require-ok
@@ -402,11 +459,16 @@ jobs:
           repository: ${{ env.NIKATRU_PRIVATE_REPO }}
           ref: main
           path: .sandbox-main
+          fetch-depth: 0
+          filter: tree:0
           sparse-checkout: |
             tooling/ci
             tooling/ops
             tooling/generated
             tooling/app-yaml
+            tooling/e2e
+            tooling/store
+            services
           ssh-key: ${{ secrets.PRIVATE_DEPLOY_KEY }}
           persist-credentials: false
       - name: Refuse any ref but main
@@ -419,8 +481,9 @@ jobs:
           NIKATRU_JUDGED_TREE: ${{ github.workspace }}
           GITHUB_TOKEN: ${{ github.token }}
           GITHUB_REPOSITORY: ${{ github.repository }}
+          RULE: ${{ inputs.gate_rule || 'gate' }}
           PR: ${{ inputs.pr }}
-        run: node tooling/ci/assert-gate-passed.mjs "$(git -C "$GITHUB_WORKSPACE" rev-parse HEAD)" --pr "$PR"
+        run: node tooling/ci/assert-gate-passed.mjs "$(git -C "$GITHUB_WORKSPACE" rev-parse HEAD)" --pr "$PR" --rule "$RULE"
       - name: Check out private main's composite actions (generated)
         if: matrix.worker.worker != 'none'
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
@@ -442,32 +505,51 @@ jobs:
           NIKATRU_REF: ${{ github.event.client_payload.ref || 'refs/heads/main' }}
           NIKATRU_EVENT_NAME: ${{ github.event.client_payload.event || github.event_name }}
           NIKATRU_PR: ${{ github.event.client_payload.pr }}
-      - run: node "$GITHUB_WORKSPACE/tooling/ops/npm-ci-retry.mjs" -- npm ci --ignore-scripts
+      - run: node "$GITHUB_WORKSPACE/.sandbox-main/tooling/ops/npm-ci-retry.mjs" -- npm ci --ignore-scripts
         if: matrix.worker.worker != 'none'
         working-directory: ${{ matrix.worker.dir }}
-      - run: node "$GITHUB_WORKSPACE/tooling/ops/npm-ci-retry.mjs" -- npm ci --ignore-scripts --no-audit --no-fund --prefix services/_shared
+      - run: node "$GITHUB_WORKSPACE/.sandbox-main/tooling/ops/npm-ci-retry.mjs" -- npm ci --ignore-scripts --no-audit --no-fund --prefix services/_shared
         if: matrix.worker.worker != 'none'
-      - name: Apply the Worker's D1 migrations to the sandbox (before deploy)
+      - name: The deployed tree is still main's, in THIS job (limb T and the migrations), before any secret step
+        if: matrix.worker.worker != 'none'
+        working-directory: .sandbox-main
+        run: node tooling/ci/sandbox-deploy-preflight.mjs --tree .. --main . --history . && node tooling/ci/assert-sandbox-migrations.mjs --main . --tree ..
+      - name: Bundle the app Worker with no token in the environment
+        if: matrix.worker.worker != 'none'
+        working-directory: ${{ matrix.worker.dir }}
+        run: npx --no-install wrangler deploy --dry-run --outdir "$RUNNER_TEMP/bundle" --config wrangler.jsonc --env sandbox --env-file /dev/null
+      - name: The sandbox-only credentials are set (named, before any deploy)
+        if: matrix.worker.worker != 'none'
+        env:
+          CLOUDFLARE_SANDBOX_WORKERS_TOKEN: ${{ secrets.CLOUDFLARE_SANDBOX_WORKERS_TOKEN }}
+          SANDBOX_ADMIN_ROUTE_SECRET: ${{ secrets.SANDBOX_ADMIN_ROUTE_SECRET }}
+        run: |
+          missing=0
+          for n in CLOUDFLARE_SANDBOX_WORKERS_TOKEN SANDBOX_ADMIN_ROUTE_SECRET; do
+            if [ -z "${!n}" ]; then echo "::error title=Sandbox deploy cannot run::$n is not set in the sandbox environment (the lead sets it from the vault). Nothing was deployed."; missing=1; fi
+          done
+          exit "$missing"
+      - name: Apply the Worker's D1 migrations to the sandbox through platform-sandbox (before deploy)
         if: ${{ (matrix.worker.migrations) && matrix.worker.worker != 'none' }}
-        uses: cloudflare/wrangler-action@953926a2e2182532811c01a25e53647d93bf07c0
-        with:
-          apiToken: ${{ secrets.CLOUDFLARE_API_TOKEN }}
-          wranglerVersion: '4.149.0'
-          accountId: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
-          workingDirectory: ${{ matrix.worker.dir }}
-          command: d1 migrations apply ${{ matrix.worker.migrations }} --env sandbox --remote
+        env:
+          SANDBOX_ADMIN_ROUTE_SECRET: ${{ secrets.SANDBOX_ADMIN_ROUTE_SECRET }}
+          DIR: ${{ matrix.worker.dir }}
+          BINDING: ${{ matrix.worker.migrations }}
+        working-directory: .sandbox-main
+        run: node tooling/ci/sandbox-admin.mjs --migrate --worker "${DIR#services/}" --binding "$BINDING" --root "$GITHUB_WORKSPACE"
       - uses: cloudflare/wrangler-action@953926a2e2182532811c01a25e53647d93bf07c0
         if: matrix.worker.worker != 'none'
         with:
-          apiToken: ${{ secrets.CLOUDFLARE_API_TOKEN }}
+          apiToken: ${{ secrets.CLOUDFLARE_SANDBOX_WORKERS_TOKEN }}
           wranglerVersion: '4.149.0'
           accountId: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
           workingDirectory: ${{ matrix.worker.dir }}
-          command: deploy --env sandbox --var RELEASE:${{ env.NIKATRU_SHA }}
+          command: deploy ${{ runner.temp }}/bundle/index.js --no-bundle --config wrangler.jsonc --env-file /dev/null --env sandbox --var RELEASE:${{ env.NIKATRU_SHA }}
       - name: Smoke — the sandbox Worker answers at THIS commit
         if: matrix.worker.worker != 'none'
         env:
           WORKER: ${{ matrix.worker.worker }}
+        working-directory: .sandbox-main
         run: |
           host="$(node tooling/store/capture-backend.mjs --print-host "$WORKER")"
           node tooling/ops/post-deploy-smoke.mjs --url "$host/v1/health" --field build --expect "$NIKATRU_SHA" --require-ok

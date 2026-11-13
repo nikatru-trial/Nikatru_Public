@@ -45,9 +45,7 @@ on:
         required: false
       SUPABASE_SERVICE_ROLE_KEY:
         required: false
-      CLOUDFLARE_API_TOKEN:
-        required: false
-      CLOUDFLARE_ACCOUNT_ID:
+      SANDBOX_ADMIN_ROUTE_SECRET:
         required: false
       TEST_ACCOUNT_EMAIL:
         required: false
@@ -424,8 +422,7 @@ jobs:
       - name: Open the paywall on the SANDBOX Worker only
         if: needs.plan.outputs.money == 'true'
         env:
-          CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
-          CLOUDFLARE_ACCOUNT_ID: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
+          SANDBOX_ADMIN_ROUTE_SECRET: ${{ secrets.SANDBOX_ADMIN_ROUTE_SECRET }}
         run: node tooling/e2e/money/sandbox-paywall.mjs --open --by "$GITHUB_RUN_ID"
       - name: The harness, the sandbox Worker and the pinned commit are one commit
         if: needs.plan.outputs.money == 'true'
@@ -437,8 +434,7 @@ jobs:
           RAILS: ${{ needs.preflight.outputs.rails }}
           APP: subscriptiontracker
           MONEY_EVIDENCE_DIR: ${{ runner.temp }}/money-evidence
-          CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
-          CLOUDFLARE_ACCOUNT_ID: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
+          SANDBOX_ADMIN_ROUTE_SECRET: ${{ secrets.SANDBOX_ADMIN_ROUTE_SECRET }}
           SUPABASE_URL: ${{ secrets.SUPABASE_URL }}
           SUPABASE_ANON_KEY: ${{ secrets.SUPABASE_ANON_KEY }}
           SUPABASE_SERVICE_ROLE_KEY: ${{ secrets.SUPABASE_SERVICE_ROLE_KEY }}
@@ -484,8 +480,7 @@ jobs:
       - name: Close the sandbox paywall again
         if: ${{ (always()) && needs.plan.outputs.money == 'true' }}
         env:
-          CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
-          CLOUDFLARE_ACCOUNT_ID: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
+          SANDBOX_ADMIN_ROUTE_SECRET: ${{ secrets.SANDBOX_ADMIN_ROUTE_SECRET }}
         run: node tooling/e2e/money/sandbox-paywall.mjs --close --by "$GITHUB_RUN_ID"
       - name: Every leg's verdict into the job summary (no ids)
         if: ${{ (always()) && needs.plan.outputs.money == 'true' }}
@@ -651,8 +646,7 @@ jobs:
       - name: Open the paywall on the SANDBOX Worker only
         if: needs.plan.outputs.money == 'true'
         env:
-          CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
-          CLOUDFLARE_ACCOUNT_ID: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
+          SANDBOX_ADMIN_ROUTE_SECRET: ${{ secrets.SANDBOX_ADMIN_ROUTE_SECRET }}
         run: node tooling/e2e/money/sandbox-paywall.mjs --open --by "$GITHUB_RUN_ID"
       - name: The harness, the sandbox Worker and the pinned commit are one commit
         if: needs.plan.outputs.money == 'true'
@@ -682,8 +676,7 @@ jobs:
       - name: Close the sandbox paywall again
         if: ${{ (always()) && needs.plan.outputs.money == 'true' }}
         env:
-          CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
-          CLOUDFLARE_ACCOUNT_ID: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
+          SANDBOX_ADMIN_ROUTE_SECRET: ${{ secrets.SANDBOX_ADMIN_ROUTE_SECRET }}
         run: node tooling/e2e/money/sandbox-paywall.mjs --close --by "$GITHUB_RUN_ID"
 
   desktop-windows:
@@ -810,8 +803,7 @@ jobs:
       - name: Open the paywall on the SANDBOX Worker only
         if: needs.plan.outputs.money == 'true'
         env:
-          CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
-          CLOUDFLARE_ACCOUNT_ID: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
+          SANDBOX_ADMIN_ROUTE_SECRET: ${{ secrets.SANDBOX_ADMIN_ROUTE_SECRET }}
         run: node tooling/e2e/money/sandbox-paywall.mjs --open --by "$GITHUB_RUN_ID"
       - name: The harness, the sandbox Worker and the pinned commit are one commit
         if: needs.plan.outputs.money == 'true'
@@ -834,8 +826,7 @@ jobs:
       - name: Close the sandbox paywall again
         if: ${{ (always()) && needs.plan.outputs.money == 'true' }}
         env:
-          CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
-          CLOUDFLARE_ACCOUNT_ID: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
+          SANDBOX_ADMIN_ROUTE_SECRET: ${{ secrets.SANDBOX_ADMIN_ROUTE_SECRET }}
         run: node tooling/e2e/money/sandbox-paywall.mjs --close --by "$GITHUB_RUN_ID"
 
   verdict:
