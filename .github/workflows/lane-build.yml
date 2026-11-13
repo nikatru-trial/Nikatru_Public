@@ -1639,6 +1639,16 @@ jobs:
           NIKATRU_QUIET_EOF
           NIKATRU_SHELL="${BASH:-bash}"; if command -v cygpath >/dev/null 2>&1; then NIKATRU_SHELL="$(cygpath -w "$NIKATRU_SHELL")"; fi
           node "$GITHUB_WORKSPACE/../.nikatru-shell/quiet-step.mjs" --name lane-build.windows-artifacts.5 -- "$NIKATRU_SHELL" --noprofile --norc -eo pipefail "$NIKATRU_QUIET"
+      - name: The native toolchain this runner builds with (runner image and MSVC toolset)
+        id: toolchain
+        shell: bash
+        run: |
+          NIKATRU_QUIET="$(mktemp "${RUNNER_TEMP:-/tmp}/nikatru-step.XXXXXX")"
+          cat > "$NIKATRU_QUIET" <<'NIKATRU_QUIET_EOF'
+          node tooling/ops/native-toolchain-id.mjs >> "$GITHUB_OUTPUT"
+          NIKATRU_QUIET_EOF
+          NIKATRU_SHELL="${BASH:-bash}"; if command -v cygpath >/dev/null 2>&1; then NIKATRU_SHELL="$(cygpath -w "$NIKATRU_SHELL")"; fi
+          node "$GITHUB_WORKSPACE/../.nikatru-shell/quiet-step.mjs" --name lane-build.windows-artifacts.6 -- "$NIKATRU_SHELL" --noprofile --norc -eo pipefail "$NIKATRU_QUIET"
       - name: Restore the Windows build tree (CMake/MSVC objects and flutter_build)
         id: winbuild-cache
         uses: actions/cache/restore@55cc8345863c7cc4c66a329aec7e433d2d1c52a9
@@ -1646,7 +1656,7 @@ jobs:
           path: |
             apps/*/build/windows
             apps/*/.dart_tool/flutter_build
-          key: flutter-winbuild-arm64-${{ matrix.app }}-${{ steps.flutter.outputs.flutter-version }}-${{ hashFiles('pubspec.lock', 'apps/*/windows/**') }}
+          key: flutter-winbuild-arm64-${{ matrix.app }}-${{ steps.toolchain.outputs.id }}-${{ steps.flutter.outputs.flutter-version }}-${{ hashFiles('pubspec.lock', 'apps/*/windows/**') }}
       - name: The MSIX build number (windows-store rule, bounded at 65535)
         id: buildno
         shell: bash
@@ -1658,15 +1668,15 @@ jobs:
           node tooling/ci/flutter-release-build.mjs --emit-build-number "$APP" windows-store --above none >> "$GITHUB_OUTPUT"
           NIKATRU_QUIET_EOF
           NIKATRU_SHELL="${BASH:-bash}"; if command -v cygpath >/dev/null 2>&1; then NIKATRU_SHELL="$(cygpath -w "$NIKATRU_SHELL")"; fi
-          node "$GITHUB_WORKSPACE/../.nikatru-shell/quiet-step.mjs" --name lane-build.windows-artifacts.7 -- "$NIKATRU_SHELL" --noprofile --norc -eo pipefail "$NIKATRU_QUIET"
+          node "$GITHUB_WORKSPACE/../.nikatru-shell/quiet-step.mjs" --name lane-build.windows-artifacts.8 -- "$NIKATRU_SHELL" --noprofile --norc -eo pipefail "$NIKATRU_QUIET"
       - name: Build windows
-        if: ${{ success() || (!cancelled() && (github.event.client_payload.event == 'pull_request' && startsWith(github.event.client_payload.ref, 'refs/heads/rehearsal/')) && steps.nikatru-setup-ok.outcome == 'success' && steps.nikatru-setup-4.outcome == 'success' && steps.ver.outcome == 'success' && steps.winbuild-cache.outcome == 'success' && steps.buildno.outcome == 'success') }}
+        if: ${{ success() || (!cancelled() && (github.event.client_payload.event == 'pull_request' && startsWith(github.event.client_payload.ref, 'refs/heads/rehearsal/')) && steps.nikatru-setup-ok.outcome == 'success' && steps.nikatru-setup-4.outcome == 'success' && steps.ver.outcome == 'success' && steps.toolchain.outcome == 'success' && steps.winbuild-cache.outcome == 'success' && steps.buildno.outcome == 'success') }}
         env:
           RELEASE_LINE: ${{ steps.ver.outputs.release_line }}
-        shell: node ../.nikatru-shell/quiet-step.mjs --name lane-build.windows-artifacts.8 --default-shell {0}
+        shell: node ../.nikatru-shell/quiet-step.mjs --name lane-build.windows-artifacts.9 --default-shell {0}
         run: node tooling/ci/flutter-release-build.mjs ${{ matrix.app }} windows windows-store --lane pr
       - name: Save the Windows build tree (a run of main only, on a key miss)
-        if: ((env.NIKATRU_REF || (github.event.client_payload.ref || 'refs/heads/main')) == 'refs/heads/main' && contains(fromJSON('["push","schedule","workflow_dispatch"]'), env.NIKATRU_EVENT_NAME || (github.event.client_payload.event || github.event_name)) && !env.NIKATRU_PR) && steps.winbuild-cache.outputs.cache-hit != 'true'
+        if: ((env.NIKATRU_REF || (github.event.client_payload.ref || 'refs/heads/main')) == 'refs/heads/main' && contains(fromJSON('["push","schedule","workflow_dispatch"]'), env.NIKATRU_EVENT_NAME || (github.event.client_payload.event || github.event_name)) && !env.NIKATRU_PR) && steps.toolchain.outputs.known == 'true' && steps.winbuild-cache.outputs.cache-hit != 'true'
         uses: actions/cache/save@55cc8345863c7cc4c66a329aec7e433d2d1c52a9
         with:
           path: |
@@ -1674,7 +1684,7 @@ jobs:
             apps/*/.dart_tool/flutter_build
           key: ${{ steps.winbuild-cache.outputs.cache-primary-key }}
       - name: Package MSIX (arm64)
-        if: ${{ success() || (!cancelled() && (github.event.client_payload.event == 'pull_request' && startsWith(github.event.client_payload.ref, 'refs/heads/rehearsal/')) && steps.nikatru-setup-ok.outcome == 'success' && steps.nikatru-setup-4.outcome == 'success' && steps.ver.outcome == 'success' && steps.winbuild-cache.outcome == 'success' && steps.buildno.outcome == 'success') }}
+        if: ${{ success() || (!cancelled() && (github.event.client_payload.event == 'pull_request' && startsWith(github.event.client_payload.ref, 'refs/heads/rehearsal/')) && steps.nikatru-setup-ok.outcome == 'success' && steps.nikatru-setup-4.outcome == 'success' && steps.ver.outcome == 'success' && steps.toolchain.outcome == 'success' && steps.winbuild-cache.outcome == 'success' && steps.buildno.outcome == 'success') }}
         working-directory: apps/${{ matrix.app }}
         shell: bash
         run: |
@@ -1684,9 +1694,9 @@ jobs:
           node ../../tooling/store/msix-visual-name.mjs --app ${{ matrix.app }} build/windows/msix/${{ matrix.app }}-arm64.msix
           NIKATRU_QUIET_EOF
           NIKATRU_SHELL="${BASH:-bash}"; if command -v cygpath >/dev/null 2>&1; then NIKATRU_SHELL="$(cygpath -w "$NIKATRU_SHELL")"; fi
-          node "$GITHUB_WORKSPACE/../.nikatru-shell/quiet-step.mjs" --name lane-build.windows-artifacts.10 -- "$NIKATRU_SHELL" --noprofile --norc -eo pipefail "$NIKATRU_QUIET"
+          node "$GITHUB_WORKSPACE/../.nikatru-shell/quiet-step.mjs" --name lane-build.windows-artifacts.11 -- "$NIKATRU_SHELL" --noprofile --norc -eo pipefail "$NIKATRU_QUIET"
       - name: The MSIX carries the identity the register declares and says arm64, and every artifact this lane claims exists
-        if: ${{ success() || (!cancelled() && (github.event.client_payload.event == 'pull_request' && startsWith(github.event.client_payload.ref, 'refs/heads/rehearsal/')) && steps.nikatru-setup-ok.outcome == 'success' && steps.nikatru-setup-4.outcome == 'success' && steps.ver.outcome == 'success' && steps.winbuild-cache.outcome == 'success' && steps.buildno.outcome == 'success') }}
+        if: ${{ success() || (!cancelled() && (github.event.client_payload.event == 'pull_request' && startsWith(github.event.client_payload.ref, 'refs/heads/rehearsal/')) && steps.nikatru-setup-ok.outcome == 'success' && steps.nikatru-setup-4.outcome == 'success' && steps.ver.outcome == 'success' && steps.toolchain.outcome == 'success' && steps.winbuild-cache.outcome == 'success' && steps.buildno.outcome == 'success') }}
         shell: bash
         run: |
           NIKATRU_QUIET="$(mktemp "${RUNNER_TEMP:-/tmp}/nikatru-step.XXXXXX")"
@@ -1695,7 +1705,7 @@ jobs:
           node tooling/ci/assert-artifact-shape.mjs --app ${{ matrix.app }} --platform windows --arch arm64
           NIKATRU_QUIET_EOF
           NIKATRU_SHELL="${BASH:-bash}"; if command -v cygpath >/dev/null 2>&1; then NIKATRU_SHELL="$(cygpath -w "$NIKATRU_SHELL")"; fi
-          node "$GITHUB_WORKSPACE/../.nikatru-shell/quiet-step.mjs" --name lane-build.windows-artifacts.11 -- "$NIKATRU_SHELL" --noprofile --norc -eo pipefail "$NIKATRU_QUIET"
+          node "$GITHUB_WORKSPACE/../.nikatru-shell/quiet-step.mjs" --name lane-build.windows-artifacts.12 -- "$NIKATRU_SHELL" --noprofile --norc -eo pipefail "$NIKATRU_QUIET"
       - name: Hand this job's red detail to the report job, sealed (generated)
         id: nikatru-handoff
         if: always()
