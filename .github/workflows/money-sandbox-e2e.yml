@@ -252,6 +252,7 @@ jobs:
             tooling/ci
             tooling/ops
             tooling/generated
+            tooling/app-yaml
             .github/workflows
           ssh-key: ${{ secrets.PRIVATE_DEPLOY_KEY }}
           persist-credentials: false

@@ -311,6 +311,7 @@ jobs:
             tooling/e2e
             tooling/store
             services
+            contracts/entitlement
           ssh-key: ${{ secrets.PRIVATE_DEPLOY_KEY }}
           persist-credentials: false
       - name: Refuse any ref but main
@@ -469,6 +470,7 @@ jobs:
             tooling/e2e
             tooling/store
             services
+            contracts/entitlement
           ssh-key: ${{ secrets.PRIVATE_DEPLOY_KEY }}
           persist-credentials: false
       - name: Refuse any ref but main
