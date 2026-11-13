@@ -26,10 +26,10 @@
 //        · then one REMIND per `remindEveryMinutes` while it stays down    → REMIND (urgent)
 //        · a paged probe passing again                                     → RECOVER (default)
 //      every alert of one run rides ONE message (dedup across probes);
-//   3. the message goes to the owner's phone (PAGE_URL, the ntfy `nikatru-page` topic of
-//      tooling/ops/alarm-chains.json) and, as one JSON line, to the lead watch: appended to
+//   3. the message goes to the owner's phone (every leg of the page channel recorded in
+//      tooling/ops/alarm-chains.json `boxPageChannel`: PAGE_URL, then PAGE_URL_2) and, as one JSON line, to the lead watch: appended to
 //      `<STATE_DIR>/alerts.jsonl` and POSTed to LEAD_URL (an ntfy topic the lead tails with
-//      `/json`). An alert is marked SENT only when the owner page answered 2xx; an undelivered
+//      `/json`). An alert is marked SENT only when a leg of the owner page answered 2xx; an undelivered
 //      one is re-sent by the next run (exit 1 meanwhile);
 //   4. one JSON line per run to `<STATE_DIR>/runs.jsonl` (started over past RUNS_MAX_BYTES), and
 //      `lastAllGreenAt` in state.json — the moment rollback.mjs --break-glass --probe-state
@@ -41,9 +41,17 @@
 // `page-channel-deny-anon`: an anonymous read of a throwaway ntfy topic must be refused; a 200 pages).
 //
 // CONFIG: /etc/nikatru/live-probe.conf (LIVE_PROBE_CONF overrides; the tests do), KEY=VALUE lines:
-//   PAGE_URL=https://ntfy.nikatru.com/nikatru-page     the owner page (required unless --dry-run)
-//   PAGE_TOKEN_FILE=/etc/nikatru/ntfy-alert.token      mode 0600; optional
+//   PAGE_URL=https://ntfy.sh/<owner topic>             the owner page, leg 1 = the PRIMARY (required unless --dry-run)
+//   PAGE_TOKEN_FILE=<leg 1's token file>               mode 0600; optional; sent to leg 1 ONLY
+//   PAGE_URL_2=https://ntfy.nikatru.com/nikatru-page   the owner page, leg 2; optional
+//   PAGE_TOKEN_FILE_2=/etc/nikatru/ntfy-alert.token    mode 0600; sent to leg 2 ONLY
 //   LEAD_URL=https://ntfy.nikatru.com/<lead topic>     optional; the lead watch's machine stream
+//   LEAD_TOKEN_FILE=…                                  optional; default: the token of the page leg on LEAD_URL's origin, else none
+// ⏱ 2026-11-13 · O-BOXB-PAGE-CHANNEL-UNDECIDED (lead ruling lead-steps-1113 step 18: both legs, ntfy.sh primary):
+// this runner lives on the box that serves the self-hosted ntfy, so a page through that ntfy alone fails exactly
+// when the box does. Every alert goes to EVERY leg in parallel; it counts as DELIVERED when ANY leg answered 2xx,
+// and each leg's result is written to alerts.jsonl (`legs`). A token goes only to the leg it is named for.
+// The recorded channel: tooling/ops/alarm-chains.json `boxPageChannel`.
 //   STATE_DIR=/var/lib/nikatru/live-probe              optional
 //   HEARTBEAT_URL_FILE=/etc/nikatru/live-probe.heartbeat.url   optional; mode 0600
 //   PROBES_FILE=/opt/nikatru/live-probes.json          optional; default: next to this script
@@ -277,6 +285,24 @@ function fixtureAnswerer(file) {
   return async (row) => table[`${row.method} ${row.url}`] ?? { error: 'fixture has no answer' };
 }
 
+/** The owner page's legs, in order: leg 1 (PAGE_URL, the primary) and, when set, leg 2 (PAGE_URL_2). Each leg
+ *  carries ITS OWN token file only: a token is never sent to the other leg's host. */
+export function pageLegs(conf) {
+  return [
+    ...(conf.PAGE_URL ? [{ leg: 'primary', url: conf.PAGE_URL, tokenFile: conf.PAGE_TOKEN_FILE }] : []),
+    ...(conf.PAGE_URL_2 ? [{ leg: 'leg2', url: conf.PAGE_URL_2, tokenFile: conf.PAGE_TOKEN_FILE_2 }] : []),
+  ];
+}
+
+/** The lead stream's token: its own (LEAD_TOKEN_FILE), else the token of the page leg on the SAME ORIGIN as LEAD_URL,
+ *  else none. Chosen by host, never by which keys are set: a token never reaches a host it was not named for. */
+export function leadTokenFile(conf) {
+  if (conf.LEAD_TOKEN_FILE) return conf.LEAD_TOKEN_FILE;
+  const origin = (u) => { try { return new URL(u).origin; } catch { return null; } };
+  const lead = origin(conf.LEAD_URL);
+  return lead ? pageLegs(conf).find((l) => origin(l.url) === lead)?.tokenFile : undefined;
+}
+
 async function post(url, body, headers, timeoutMs) {
   try {
     const res = await fetch(url, { method: 'POST', body, headers, signal: AbortSignal.timeout(timeoutMs) });
@@ -302,6 +328,7 @@ export async function main(argv = process.argv.slice(2), env = process.env) {
   if (existsSync(confPath)) conf = parseConf(readFileSync(confPath, 'utf8'));
   else if (!dry) return lost(`no config at ${confPath} (PAGE_URL is required: a probe that cannot page is not a watcher)`);
   if (!dry && !conf.PAGE_URL) return lost(`${confPath} sets no PAGE_URL`);
+  if (!dry && conf.PAGE_URL_2 && conf.PAGE_URL_2 === conf.PAGE_URL) return lost(`${confPath} sets PAGE_URL_2 to PAGE_URL: two legs on one URL are one leg`);
 
   const probesPath = conf.PROBES_FILE ?? join(HERE, 'live-probes.json');
   let doc;
@@ -335,13 +362,19 @@ export async function main(argv = process.argv.slice(2), env = process.env) {
 
   let delivered = true;
   if (msg) {
-    const token = readSecretFile(conf.PAGE_TOKEN_FILE);
-    const headers = { title: msg.title, priority: msg.priority, tags: msg.tags, ...(token ? { authorization: `Bearer ${token}` } : {}) };
-    const sent = await post(conf.PAGE_URL, msg.text, headers, doc.alerting.timeoutMs);
+    const legs = pageLegs(conf);
+    const sentLegs = await Promise.all(legs.map(async (l) => {
+      const token = readSecretFile(l.tokenFile);
+      const headers = { title: msg.title, priority: msg.priority, tags: msg.tags, ...(token ? { authorization: `Bearer ${token}` } : {}) };
+      return { leg: l.leg, ...(await post(l.url, msg.text, headers, doc.alerting.timeoutMs)) };
+    }));
+    const sent = sentLegs.some((l) => l.ok) ? { ok: true } : { ok: false, why: sentLegs.map((l) => `${l.leg}: ${l.why}`).join('; ') };
     delivered = sent.ok;
-    const line = JSON.stringify({ ...msg.json, delivered: sent.ok, ...(sent.ok ? {} : { deliveryError: sent.why }) });
+    for (const l of sentLegs) if (!l.ok && sent.ok) console.error(`live-probe: page leg ${l.leg} did not take the alert (${l.why}); another leg did`);
+    const line = JSON.stringify({ ...msg.json, delivered: sent.ok, legs: sentLegs.map((l) => ({ leg: l.leg, ok: l.ok, ...(l.ok ? {} : { why: l.why }) })), ...(sent.ok ? {} : { deliveryError: sent.why }) });
     try { appendFileSync(join(stateDir, 'alerts.jsonl'), `${line}\n`); } catch (e) { console.error(`live-probe: alerts.jsonl not written (${e.message})`); }
     if (conf.LEAD_URL) {
+      const token = readSecretFile(leadTokenFile(conf));
       const lead = await post(conf.LEAD_URL, line, { title: msg.title, priority: msg.priority, ...(token ? { authorization: `Bearer ${token}` } : {}) }, doc.alerting.timeoutMs);
       if (!lead.ok) console.error(`live-probe: the lead stream did not take the alert (${lead.why}); alerts.jsonl holds it`);
     }
