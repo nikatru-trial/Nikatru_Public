@@ -303,6 +303,7 @@ jobs:
           NIKATRU_SHELL="${BASH:-bash}"; if command -v cygpath >/dev/null 2>&1; then NIKATRU_SHELL="$(cygpath -w "$NIKATRU_SHELL")"; fi
           node "$GITHUB_WORKSPACE/../.nikatru-shell/quiet-step.mjs" --name update-goldens.regenerate.9 -- "$NIKATRU_SHELL" -e "$NIKATRU_QUIET"
       - name: Stage the changed PNGs at their repository paths
+        id: stage
         if: steps.delta.outputs.count != '0'
         timeout-minutes: 2
         env:
@@ -327,6 +328,22 @@ jobs:
             for t in "${tests[@]}"; do printf 'test %s\n' "$t"; done
             while IFS= read -r f; do printf 'file %s %s\n' "$(sha256sum < "$f" | cut -c1-64)" "$f"; done < "$RUNNER_TEMP/changed.txt"
           } > "$RUNNER_TEMP/goldens/goldens-run.txt"
+          : > "$RUNNER_TEMP/deltas.txt"
+          while IFS= read -r f; do
+            after="$(wc -c < "$f" | tr -d ' ')"
+            if git cat-file -e "${SHA}:${f}" 2>/dev/null; then
+              printf 'delta modified %s %s %s\n' "$(git cat-file -s "${SHA}:${f}")" "$after" "$f"
+            else
+              printf 'delta new %s %s\n' "$after" "$f"
+            fi
+          done < "$RUNNER_TEMP/changed.txt" > "$RUNNER_TEMP/deltas.txt"
+          cat "$RUNNER_TEMP/deltas.txt" >> "$RUNNER_TEMP/goldens/goldens-run.txt"
+          cat "$RUNNER_TEMP/deltas.txt"
+          {
+            echo 'deltas<<NIKATRU_DELTAS_EOF'
+            cat "$RUNNER_TEMP/deltas.txt"
+            echo 'NIKATRU_DELTAS_EOF'
+          } >> "$GITHUB_OUTPUT"
           NIKATRU_QUIET_EOF
           NIKATRU_SHELL="${BASH:-bash}"; if command -v cygpath >/dev/null 2>&1; then NIKATRU_SHELL="$(cygpath -w "$NIKATRU_SHELL")"; fi
           node "$GITHUB_WORKSPACE/../.nikatru-shell/quiet-step.mjs" --name update-goldens.regenerate.10 -- "$NIKATRU_SHELL" -e "$NIKATRU_QUIET"
@@ -358,6 +375,12 @@ jobs:
             Rows: none - goldens re-rendered on Linux; the branch's own pull request carries the change.
 
             Re-rendered by `update-goldens.yml` run `${{ github.run_id }}` on the sha this pull request is based on, and the same tests passed WITHOUT `--update-goldens` after it. Tests: `${{ inputs.tests }}`. **Look at the images in the Files changed tab**, then merge this into the branch.
+
+            Per-file delta against the tested sha (`new <bytes>` or `modified <committed bytes> <re-rendered bytes>`):
+
+            ```
+            ${{ steps.stage.outputs.deltas }}
+            ```
           NIKATRU_PROPOSE_ARTIFACT: proposal-update-goldens.regenerate
           BRIDGE_ARTIFACT_SECRET: ${{ secrets.BRIDGE_ARTIFACT_SECRET }}
           NIKATRU_BRIDGE_ARTIFACT_URL: https://gh-bridge.nikatru.workers.dev/artifact

@@ -590,30 +590,32 @@ jobs:
         env:
           GH_TOKEN: ${{ github.token }}
           NIKATRU_ADVISORY_OUT: ${{ runner.temp }}/pipeline-watch.md
+          NIKATRU_PAGE_OUT: ${{ runner.temp }}/red-streak-pages.md
         run: |
           NIKATRU_QUIET="$(mktemp "${RUNNER_TEMP:-/tmp}/nikatru-step.XXXXXX")"
           cat > "$NIKATRU_QUIET" <<'NIKATRU_QUIET_EOF'
-          node tooling/ops/check-red-streak.mjs --advisory
+          node tooling/ops/check-red-streak.mjs --advisory --pages-out "$NIKATRU_PAGE_OUT"
           NIKATRU_QUIET_EOF
           NIKATRU_SHELL="${BASH:-bash}"; if command -v cygpath >/dev/null 2>&1; then NIKATRU_SHELL="$(cygpath -w "$NIKATRU_SHELL")"; fi
           node "$GITHUB_WORKSPACE/../.nikatru-shell/quiet-step.mjs" --name ops-watch.heartbeats.20 -- "$NIKATRU_SHELL" -e "$NIKATRU_QUIET"
       - name: A live-user, money, security or monthly workflow red on main pages its owner (red streak, page class)
         if: ${{ !cancelled() }}
-        timeout-minutes: 5
+        timeout-minutes: 1
         env:
-          GH_TOKEN: ${{ github.token }}
-          NIKATRU_PAGE_OUT: ${{ runner.temp }}/pipeline-pages.md
+          NIKATRU_PAGE_OUT: ${{ runner.temp }}/red-streak-pages.md
         run: |
           NIKATRU_QUIET="$(mktemp "${RUNNER_TEMP:-/tmp}/nikatru-step.XXXXXX")"
           cat > "$NIKATRU_QUIET" <<'NIKATRU_QUIET_EOF'
-          set +e
-          node tooling/ops/check-red-streak.mjs --pages
-          code=$?
-          set -e
-          if [ -s "$NIKATRU_PAGE_OUT" ]; then
-            echo "::error title=A page-class workflow is red on main::$(wc -l < "$NIKATRU_PAGE_OUT") PAGE line(s) above name the workflow and its owner area; alert files this run."
+          if [ ! -f "$NIKATRU_PAGE_OUT" ]; then
+            echo "::error title=The red-streak read did not complete::COVERAGE LOST: the read above wrote no page file, so no page-class workflow was graded."
+            exit 2
           fi
-          exit "$code"
+          if [ -s "$NIKATRU_PAGE_OUT" ]; then
+            cat "$NIKATRU_PAGE_OUT"
+            echo "::error title=A page-class workflow is red on main::$(wc -l < "$NIKATRU_PAGE_OUT") PAGE line(s) above name the workflow and its owner area; alert files this run."
+            exit 1
+          fi
+          echo "red streak (page class): no page-class workflow is red on main"
           NIKATRU_QUIET_EOF
           NIKATRU_SHELL="${BASH:-bash}"; if command -v cygpath >/dev/null 2>&1; then NIKATRU_SHELL="$(cygpath -w "$NIKATRU_SHELL")"; fi
           node "$GITHUB_WORKSPACE/../.nikatru-shell/quiet-step.mjs" --name ops-watch.heartbeats.21 -- "$NIKATRU_SHELL" -e "$NIKATRU_QUIET"

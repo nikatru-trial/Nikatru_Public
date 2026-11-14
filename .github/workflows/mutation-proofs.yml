@@ -15,12 +15,17 @@ on:
         required: false
         default: ''
         type: string
+      private_ref:
+        description: The PRIVATE ref this run builds, refs/heads/<branch> (generated; empty is the private main).
+        required: false
+        default: ''
+        type: string
 
 permissions:
   contents: read
 
 concurrency:
-  group: mutation-proofs
+  group: mutation-proofs-${{ (github.event.client_payload.pr || github.event.client_payload.ref || inputs.private_ref || 'refs/heads/main') }}
   cancel-in-progress: false
 
 jobs:
@@ -42,10 +47,27 @@ jobs:
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
         with:
           repository: ${{ env.NIKATRU_PRIVATE_REPO }}
-          ref: ${{ (github.event.client_payload.event == 'pull_request' && github.event.client_payload.bridge.merge_state == 'ready' && github.event.client_payload.bridge.merge_sha) || (github.event.client_payload.event == 'pull_request' && format('refs/pull/{0}/merge', github.event.client_payload.pr) || github.event.client_payload.sha || 'main') }}
+          ref: ${{ (github.event.client_payload.event == 'pull_request' && github.event.client_payload.bridge.merge_state == 'ready' && github.event.client_payload.bridge.merge_sha) || (github.event.client_payload.event == 'pull_request' && format('refs/pull/{0}/merge', github.event.client_payload.pr) || github.event.client_payload.sha || inputs.private_ref || 'main') }}
           sparse-checkout: .github/ISSUE_TEMPLATE
           ssh-key: ${{ secrets.PRIVATE_DEPLOY_KEY }}
           persist-credentials: false
+      - name: Refuse a private_ref that is not a plain branch other than main (generated)
+        shell: bash
+        env:
+          NIKATRU_PRIVATE_REF: ${{ inputs.private_ref }}
+        run: |
+          r="$NIKATRU_PRIVATE_REF"
+          if [ -z "$r" ]; then echo "private_ref is empty: this run builds private main"; exit 0; fi
+          lower="${r,,}"
+          case "$lower" in
+            main|refs/heads/main) echo "::error title=private_ref names main::$r names private main (in any case); dispatch with an EMPTY private_ref to build main"; exit 1 ;;
+          esac
+          re='^refs/heads/[A-Za-z0-9_][A-Za-z0-9._-]*(/[A-Za-z0-9_][A-Za-z0-9._-]*)*$'
+          # no pipe: a `grep -q` consumer under pipefail can exit before its producer (assert-pipe-consumers)
+          if [[ ! "$r" =~ $re ]] || [[ "$r" == *..* ]] || [[ "$r" == *.lock ]] || [[ "$r" == *.lock/* ]] || [[ "$r" == */ ]]; then
+            echo "::error title=private_ref is not a plain branch::$r is not refs/heads/<branch> (letters, digits, . _ - and /)"
+            exit 1
+          fi
       - name: Test the candidate commit, attempt 1 (generated)
         id: nikatru-pin-test-1
         shell: bash
@@ -124,6 +146,7 @@ jobs:
   execute:
     needs: [nikatru-pin]
     name: Every proven mutation still turns its test red, green control first
+    if: (github.event.client_payload.ref || inputs.private_ref || 'refs/heads/main') == 'refs/heads/main'
     runs-on: ubuntu-24.04
     timeout-minutes: 60
     permissions:
@@ -134,7 +157,7 @@ jobs:
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
         with:
           repository: ${{ env.NIKATRU_PRIVATE_REPO }}
-          ref: ${{ needs.nikatru-pin.outputs.sha || 'nikatru-pin-did-not-succeed..' }}
+          ref: main
           ssh-key: ${{ secrets.PRIVATE_DEPLOY_KEY }}
           persist-credentials: false
       - name: Name the private commit (generated)
@@ -142,7 +165,7 @@ jobs:
         working-directory: ${{ github.workspace }}
         env:
           NIKATRU_P_EVENT: ${{ github.event.client_payload.event || github.event_name }}
-          NIKATRU_P_REF: ${{ github.event.client_payload.ref || 'refs/heads/main' }}
+          NIKATRU_P_REF: ${{ github.event.client_payload.ref || inputs.private_ref || 'refs/heads/main' }}
           NIKATRU_P_BASE_SHA: ${{ github.event.client_payload.base_sha }}
           NIKATRU_P_BASE_REF: ${{ github.event.client_payload.base_ref }}
           NIKATRU_P_PR: ${{ github.event.client_payload.pr }}
@@ -150,13 +173,6 @@ jobs:
           NIKATRU_P_DRAFT: ${{ github.event.client_payload.draft }}
           NIKATRU_P_SHA: ${{ github.event.client_payload.sha }}
         run: |
-          if [ "$NIKATRU_P_EVENT" = pull_request ]; then
-            set -- $(git cat-file -p HEAD | sed -n '1,/^$/s/^parent //p')
-            if [ "${2:-}" != "$NIKATRU_P_SHA" ]; then
-              echo "::error::the checked-out merge of PR #$NIKATRU_P_PR is not the merge of the dispatched head $NIKATRU_P_SHA (its second parent is ${2:-none}); the nikatru-pin job pins it — re-run the whole workflow, not this job"
-              exit 1
-            fi
-          fi
           {
             echo "NIKATRU_SHA=$(git rev-parse HEAD)"
             echo "NIKATRU_HEAD_SHA=${NIKATRU_P_SHA:-$(git rev-parse HEAD)}"
@@ -197,7 +213,7 @@ jobs:
         run: printf '/.nikatru-trusted/\n' >> "$(git rev-parse --git-path info/exclude)"
       - uses: ./.nikatru-trusted/.github/actions/setup-node
         env:
-          NIKATRU_REF: ${{ github.event.client_payload.ref || 'refs/heads/main' }}
+          NIKATRU_REF: ${{ github.event.client_payload.ref || inputs.private_ref || 'refs/heads/main' }}
           NIKATRU_EVENT_NAME: ${{ github.event.client_payload.event || github.event_name }}
           NIKATRU_PR: ${{ github.event.client_payload.pr }}
       - name: Check out private main's composite actions (generated)
@@ -214,8 +230,10 @@ jobs:
         working-directory: ${{ github.workspace }}
         run: printf '/.nikatru-trusted/\n' >> "$(git rev-parse --git-path info/exclude)"
       - uses: ./.nikatru-trusted/.github/actions/setup-flutter
+        with:
+          cache: 'false'
         env:
-          NIKATRU_REF: ${{ github.event.client_payload.ref || 'refs/heads/main' }}
+          NIKATRU_REF: ${{ github.event.client_payload.ref || inputs.private_ref || 'refs/heads/main' }}
           NIKATRU_EVENT_NAME: ${{ github.event.client_payload.event || github.event_name }}
           NIKATRU_PR: ${{ github.event.client_payload.pr }}
       - name: flutter pub get
@@ -265,20 +283,27 @@ jobs:
           NIKATRU_BRIDGE_ARTIFACT_URL: https://gh-bridge.nikatru.workers.dev/artifact
         run: node tooling/ops/bridge-artifact.mjs upload
 
-  js-guards:
+  keys:
     needs: [nikatru-pin]
-    name: A planted defect in each sampled JS guard still turns its test red, green control first
+    name: Make this branch run's one-time key for the re-earned records
+    if: (github.event.client_payload.ref || inputs.private_ref || 'refs/heads/main') != 'refs/heads/main'
     runs-on: ubuntu-24.04
-    timeout-minutes: 30
+    timeout-minutes: 10
     permissions:
       contents: read
       id-token: write
+    outputs:
+      recipient: ${{ steps.pair.outputs.recipient }}
+      node: ${{ steps.pair.outputs.node }}
     steps:
       - name: Check out the private tree (generated)
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
         with:
           repository: ${{ env.NIKATRU_PRIVATE_REPO }}
-          ref: ${{ needs.nikatru-pin.outputs.sha || 'nikatru-pin-did-not-succeed..' }}
+          ref: main
+          sparse-checkout: |
+            tooling/ci
+            tooling/versions.json
           ssh-key: ${{ secrets.PRIVATE_DEPLOY_KEY }}
           persist-credentials: false
       - name: Name the private commit (generated)
@@ -286,7 +311,140 @@ jobs:
         working-directory: ${{ github.workspace }}
         env:
           NIKATRU_P_EVENT: ${{ github.event.client_payload.event || github.event_name }}
-          NIKATRU_P_REF: ${{ github.event.client_payload.ref || 'refs/heads/main' }}
+          NIKATRU_P_REF: ${{ github.event.client_payload.ref || inputs.private_ref || 'refs/heads/main' }}
+          NIKATRU_P_BASE_SHA: ${{ github.event.client_payload.base_sha }}
+          NIKATRU_P_BASE_REF: ${{ github.event.client_payload.base_ref }}
+          NIKATRU_P_PR: ${{ github.event.client_payload.pr }}
+          NIKATRU_P_PR_CREATED_AT: ${{ github.event.client_payload.pr_created_at }}
+          NIKATRU_P_DRAFT: ${{ github.event.client_payload.draft }}
+          NIKATRU_P_SHA: ${{ github.event.client_payload.sha }}
+        run: |
+          {
+            echo "NIKATRU_SHA=$(git rev-parse HEAD)"
+            echo "NIKATRU_HEAD_SHA=${NIKATRU_P_SHA:-$(git rev-parse HEAD)}"
+            echo "NIKATRU_EVENT_NAME=$NIKATRU_P_EVENT"
+            echo "NIKATRU_REF=$NIKATRU_P_REF"
+            echo "NIKATRU_REF_NAME=${NIKATRU_P_REF#refs/*/}"
+            echo "NIKATRU_BASE_SHA=$NIKATRU_P_BASE_SHA"
+            echo "NIKATRU_BASE_REF=$NIKATRU_P_BASE_REF"
+            echo "NIKATRU_PR=$NIKATRU_P_PR"
+            echo "NIKATRU_PR_CREATED_AT=$NIKATRU_P_PR_CREATED_AT"
+            echo "NIKATRU_DRAFT=$NIKATRU_P_DRAFT"
+          } >> "$GITHUB_ENV"
+      - name: Check out this shell repository's own step wrapper and reporter (generated)
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
+        with:
+          path: .nikatru-shell
+          sparse-checkout: .github/nikatru
+          persist-credentials: false
+      - name: Stage the shell's own copies outside the private checkout (generated)
+        shell: bash
+        working-directory: ${{ github.workspace }}
+        env:
+          NIKATRU_DETAIL_KEY: ${{ secrets.NIKATRU_DETAIL_KEY }}
+          NIKATRU_HANDOFF_KEY_FILE: ${{ github.workspace }}/../.nikatru-shell/handoff.key
+        run: |
+          rm -rf ../.nikatru-shell
+          mv .nikatru-shell/.github/nikatru ../.nikatru-shell
+          rm -rf .nikatru-shell
+          py=python3; python3 -c '' >/dev/null 2>&1 || py=python
+          "$py" -I "$GITHUB_WORKSPACE/../.nikatru-shell/report.py" derive
+      - name: Check out private main's composite actions (generated)
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
+        with:
+          repository: ${{ env.NIKATRU_PRIVATE_REPO }}
+          ref: refs/heads/main
+          path: .nikatru-trusted
+          sparse-checkout: .github/actions
+          ssh-key: ${{ secrets.PRIVATE_DEPLOY_KEY }}
+          persist-credentials: false
+      - name: Keep private main's composite actions out of the branch's tree (generated)
+        shell: bash
+        working-directory: ${{ github.workspace }}
+        run: printf '/.nikatru-trusted/\n' >> "$(git rev-parse --git-path info/exclude)"
+      - uses: ./.nikatru-trusted/.github/actions/setup-node
+        env:
+          NIKATRU_REF: ${{ github.event.client_payload.ref || inputs.private_ref || 'refs/heads/main' }}
+          NIKATRU_EVENT_NAME: ${{ github.event.client_payload.event || github.event_name }}
+          NIKATRU_PR: ${{ github.event.client_payload.pr }}
+      - name: Make the pair, the private half to a file
+        id: pair
+        run: |
+          NIKATRU_QUIET="$(mktemp "${RUNNER_TEMP:-/tmp}/nikatru-step.XXXXXX")"
+          cat > "$NIKATRU_QUIET" <<'NIKATRU_QUIET_EOF'
+          dir="$RUNNER_TEMP/mutation-proofs-key"
+          mkdir -p "$dir"
+          node tooling/ci/shell-handoff.mjs keygen --private-out "$dir/private.key" > "$RUNNER_TEMP/mutation-proofs-keygen.txt"
+          echo "recipient=$(tail -n 1 "$RUNNER_TEMP/mutation-proofs-keygen.txt")" >> "$GITHUB_OUTPUT"
+          echo "node=$(node -p "require('./tooling/versions.json').node")" >> "$GITHUB_OUTPUT"
+          NIKATRU_QUIET_EOF
+          NIKATRU_SHELL="${BASH:-bash}"; if command -v cygpath >/dev/null 2>&1; then NIKATRU_SHELL="$(cygpath -w "$NIKATRU_SHELL")"; fi
+          node "$GITHUB_WORKSPACE/../.nikatru-shell/quiet-step.mjs" --name mutation-proofs.keys.3 -- "$NIKATRU_SHELL" -e "$NIKATRU_QUIET"
+      - name: Stage mutation-proofs-refresh-key for this run's later jobs (generated)
+        id: nikatru-stage-1
+        shell: bash
+        working-directory: ${{ github.workspace }}
+        env:
+          NIKATRU_PATHS: ${{ runner.temp }}/mutation-proofs-key/
+          NIKATRU_IF_NO_FILES: error
+        run: node tooling/ci/shell-handoff.mjs stage
+      - name: Seal mutation-proofs-refresh-key for this run's later jobs (generated)
+        id: nikatru-seal-1
+        if: ${{ (success()) && steps.nikatru-stage-1.outputs.has == 'true' }}
+        shell: bash
+        working-directory: ${{ github.workspace }}
+        env:
+          NIKATRU_HANDOFF_KEY_FILE: ${{ github.workspace }}/../.nikatru-shell/handoff.key
+          NIKATRU_HANDOFF_KEY: nikatru-handoff-mutation-proofs-refresh-key-${{ github.run_id }}-run
+        run: node tooling/ci/shell-handoff.mjs seal
+      - name: Hand off mutation-proofs-refresh-key to this run's later jobs, sealed (generated)
+        if: ${{ (success()) && steps.nikatru-seal-1.outcome == 'success' }}
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9
+        with:
+          name: nikatru-handoff-mutation-proofs-refresh-key
+          path: .nikatru-handoff/sealed
+          if-no-files-found: error
+          retention-days: 1
+          include-hidden-files: true
+          overwrite: true
+      - name: Store this job's red detail in the bridge's private home (generated)
+        if: always()
+        continue-on-error: true
+        shell: bash
+        working-directory: ${{ github.workspace }}
+        env:
+          NIKATRU_PATHS: ${{ runner.temp }}/report-detail.md
+          NIKATRU_ARTIFACT_NAME: report-detail-mutation-proofs.keys.${{ strategy.job-index }}
+          NIKATRU_IF_NO_FILES: ignore
+          BRIDGE_ARTIFACT_SECRET: ${{ secrets.BRIDGE_ARTIFACT_SECRET }}
+          NIKATRU_BRIDGE_ARTIFACT_URL: https://gh-bridge.nikatru.workers.dev/artifact
+        run: node tooling/ops/bridge-artifact.mjs upload
+
+  refresh:
+    name: Re-earn the proven rows this branch moved (--refresh), green control first
+    needs: [nikatru-pin, keys]
+    if: (github.event.client_payload.ref || inputs.private_ref || 'refs/heads/main') != 'refs/heads/main'
+    runs-on: ubuntu-24.04
+    timeout-minutes: 60
+    permissions:
+      contents: read
+    outputs:
+      sealed: ${{ steps.seal.outputs.sealed }}
+    steps:
+      - name: Check out the private tree (generated)
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
+        with:
+          repository: ${{ env.NIKATRU_PRIVATE_REPO }}
+          ref: ${{ needs.nikatru-pin.outputs.sha || 'nikatru-pin-did-not-succeed..' }}
+          fetch-depth: 0
+          ssh-key: ${{ secrets.PRIVATE_DEPLOY_KEY }}
+          persist-credentials: false
+      - name: Name the private commit (generated)
+        shell: bash
+        working-directory: ${{ github.workspace }}
+        env:
+          NIKATRU_P_EVENT: ${{ github.event.client_payload.event || github.event_name }}
+          NIKATRU_P_REF: ${{ github.event.client_payload.ref || inputs.private_ref || 'refs/heads/main' }}
           NIKATRU_P_BASE_SHA: ${{ github.event.client_payload.base_sha }}
           NIKATRU_P_BASE_REF: ${{ github.event.client_payload.base_ref }}
           NIKATRU_P_PR: ${{ github.event.client_payload.pr }}
@@ -340,8 +498,347 @@ jobs:
         working-directory: ${{ github.workspace }}
         run: printf '/.nikatru-trusted/\n' >> "$(git rev-parse --git-path info/exclude)"
       - uses: ./.nikatru-trusted/.github/actions/setup-node
+        with:
+          node-version: ${{ needs.keys.outputs.node }}
         env:
-          NIKATRU_REF: ${{ github.event.client_payload.ref || 'refs/heads/main' }}
+          NIKATRU_REF: ${{ github.event.client_payload.ref || inputs.private_ref || 'refs/heads/main' }}
+          NIKATRU_EVENT_NAME: ${{ github.event.client_payload.event || github.event_name }}
+          NIKATRU_PR: ${{ github.event.client_payload.pr }}
+      - name: Check out private main's composite actions (generated)
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
+        with:
+          repository: ${{ env.NIKATRU_PRIVATE_REPO }}
+          ref: refs/heads/main
+          path: .nikatru-trusted
+          sparse-checkout: .github/actions
+          ssh-key: ${{ secrets.PRIVATE_DEPLOY_KEY }}
+          persist-credentials: false
+      - name: Keep private main's composite actions out of the branch's tree (generated)
+        shell: bash
+        working-directory: ${{ github.workspace }}
+        run: printf '/.nikatru-trusted/\n' >> "$(git rev-parse --git-path info/exclude)"
+      - uses: ./.nikatru-trusted/.github/actions/setup-flutter
+        with:
+          cache: 'false'
+        env:
+          NIKATRU_REF: ${{ github.event.client_payload.ref || inputs.private_ref || 'refs/heads/main' }}
+          NIKATRU_EVENT_NAME: ${{ github.event.client_payload.event || github.event_name }}
+          NIKATRU_PR: ${{ github.event.client_payload.pr }}
+      - name: flutter pub get
+        run: |
+          NIKATRU_QUIET="$(mktemp "${RUNNER_TEMP:-/tmp}/nikatru-step.XXXXXX")"
+          cat > "$NIKATRU_QUIET" <<'NIKATRU_QUIET_EOF'
+          flutter pub get --enforce-lockfile
+          NIKATRU_QUIET_EOF
+          NIKATRU_SHELL="${BASH:-bash}"; if command -v cygpath >/dev/null 2>&1; then NIKATRU_SHELL="$(cygpath -w "$NIKATRU_SHELL")"; fi
+          node "$GITHUB_WORKSPACE/../.nikatru-shell/quiet-step.mjs" --name mutation-proofs.refresh.4 -- "$NIKATRU_SHELL" -e "$NIKATRU_QUIET"
+      - name: Install mason_cli
+        run: |
+          NIKATRU_QUIET="$(mktemp "${RUNNER_TEMP:-/tmp}/nikatru-step.XXXXXX")"
+          cat > "$NIKATRU_QUIET" <<'NIKATRU_QUIET_EOF'
+          dart pub global activate mason_cli 0.1.4
+          NIKATRU_QUIET_EOF
+          NIKATRU_SHELL="${BASH:-bash}"; if command -v cygpath >/dev/null 2>&1; then NIKATRU_SHELL="$(cygpath -w "$NIKATRU_SHELL")"; fi
+          node "$GITHUB_WORKSPACE/../.nikatru-shell/quiet-step.mjs" --name mutation-proofs.refresh.5 -- "$NIKATRU_SHELL" -e "$NIKATRU_QUIET"
+      - name: Re-earn the proven rows this branch moved (--refresh), green control first
+        run: |
+          NIKATRU_QUIET="$(mktemp "${RUNNER_TEMP:-/tmp}/nikatru-step.XXXXXX")"
+          cat > "$NIKATRU_QUIET" <<'NIKATRU_QUIET_EOF'
+          export PATH="$PATH:$HOME/.pub-cache/bin"
+          out="$RUNNER_TEMP/mutation-proofs-refresh"
+          mkdir -p "$out"
+          set +e
+          (
+            base=$(git merge-base origin/main HEAD) || { echo "::error title=No merge-base with main::COVERAGE LOST: the branch shares no history with origin/main in this clone."; exit 2; }
+            echo "merge-base with main: $base"
+            node tooling/ci/assert-mutation-proofs.mjs . --refresh --base "$base" || exit $?
+            node tooling/ci/assert-mutation-proofs.mjs . --refresh --check --base "$base"
+          ) > "$out/full.log" 2>&1
+          code=$?
+          set -e
+          cat "$out/full.log"
+          tail -c 262144 "$out/full.log" > "$out/refresh.log"
+          rm -f "$out/full.log"
+          git diff --no-color -- '*dod.json' > "$out/refresh.patch"
+          size=$(wc -c < "$out/refresh.patch")
+          if [ "$size" -gt 262144 ]; then
+            echo "::error title=The re-earned patch is too large to hand over::$size bytes, above 262144; re-earn in parts with --only."
+            # The patch is withheld (an EMPTY refresh.patch), never cut, so the seal and upload still carry the log.
+            echo "REFRESH WITHHELD: the patch was $size bytes, above 262144; nothing to apply from this run." >> "$out/refresh.log"
+            : > "$out/refresh.patch"
+            exit 1
+          fi
+          if [ -s "$out/refresh.patch" ]; then
+            git diff --stat -- '*dod.json'
+          else
+            echo "::notice title=Nothing to re-earn::no proven row's effect file moved on this branch, or every record already describes its code."
+          fi
+          if [ "$code" -ne 0 ]; then echo "REFRESH RED (exit $code): do not apply this patch; the lines above say why." >> "$out/refresh.log"; fi
+          exit "$code"
+          NIKATRU_QUIET_EOF
+          NIKATRU_SHELL="${BASH:-bash}"; if command -v cygpath >/dev/null 2>&1; then NIKATRU_SHELL="$(cygpath -w "$NIKATRU_SHELL")"; fi
+          node "$GITHUB_WORKSPACE/../.nikatru-shell/quiet-step.mjs" --name mutation-proofs.refresh.6 -- "$NIKATRU_SHELL" -e "$NIKATRU_QUIET"
+      - name: Seal the re-earned records and their log to this run's key
+        id: seal
+        if: always()
+        env:
+          NIKATRU_HANDOFF_RECIPIENT: ${{ needs.keys.outputs.recipient }}
+          NIKATRU_HANDOFF_KEY: mutation-proofs-refresh/${{ github.run_id }}/${{ github.run_attempt }}
+          NIKATRU_IF_NO_FILES: error
+        run: |
+          NIKATRU_QUIET="$(mktemp "${RUNNER_TEMP:-/tmp}/nikatru-step.XXXXXX")"
+          cat > "$NIKATRU_QUIET" <<'NIKATRU_QUIET_EOF'
+          ws="$RUNNER_TEMP/mutation-proofs-seal"
+          rm -rf "$ws" && mkdir -p "$ws"
+          export NIKATRU_PATHS="$RUNNER_TEMP/mutation-proofs-refresh/"
+          (cd "$ws" && node "$GITHUB_WORKSPACE/tooling/ci/shell-handoff.mjs" stage && node "$GITHUB_WORKSPACE/tooling/ci/shell-handoff.mjs" seal)
+          echo "sealed=$(base64 -w0 "$ws/.nikatru-handoff/sealed/handoff.bin")" >> "$GITHUB_OUTPUT"
+          NIKATRU_QUIET_EOF
+          NIKATRU_SHELL="${BASH:-bash}"; if command -v cygpath >/dev/null 2>&1; then NIKATRU_SHELL="$(cygpath -w "$NIKATRU_SHELL")"; fi
+          node "$GITHUB_WORKSPACE/../.nikatru-shell/quiet-step.mjs" --name mutation-proofs.refresh.7 -- "$NIKATRU_SHELL" -e "$NIKATRU_QUIET"
+
+  upload:
+    name: Store the re-earned records privately, with private main's uploader
+    needs: [nikatru-pin, keys, refresh]
+    if: ${{ !cancelled() && (github.event.client_payload.ref || inputs.private_ref || 'refs/heads/main') != 'refs/heads/main' && needs.keys.result == 'success' }}
+    runs-on: ubuntu-24.04
+    timeout-minutes: 10
+    permissions:
+      contents: read
+      id-token: write
+    steps:
+      - name: Check out the private tree (generated)
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
+        with:
+          repository: ${{ env.NIKATRU_PRIVATE_REPO }}
+          ref: main
+          sparse-checkout: |
+            tooling/ops
+            tooling/ci
+          ssh-key: ${{ secrets.PRIVATE_DEPLOY_KEY }}
+          persist-credentials: false
+      - name: Name the private commit (generated)
+        shell: bash
+        working-directory: ${{ github.workspace }}
+        env:
+          NIKATRU_P_EVENT: ${{ github.event.client_payload.event || github.event_name }}
+          NIKATRU_P_REF: ${{ github.event.client_payload.ref || inputs.private_ref || 'refs/heads/main' }}
+          NIKATRU_P_BASE_SHA: ${{ github.event.client_payload.base_sha }}
+          NIKATRU_P_BASE_REF: ${{ github.event.client_payload.base_ref }}
+          NIKATRU_P_PR: ${{ github.event.client_payload.pr }}
+          NIKATRU_P_PR_CREATED_AT: ${{ github.event.client_payload.pr_created_at }}
+          NIKATRU_P_DRAFT: ${{ github.event.client_payload.draft }}
+          NIKATRU_P_SHA: ${{ github.event.client_payload.sha }}
+        run: |
+          {
+            echo "NIKATRU_SHA=$(git rev-parse HEAD)"
+            echo "NIKATRU_HEAD_SHA=${NIKATRU_P_SHA:-$(git rev-parse HEAD)}"
+            echo "NIKATRU_EVENT_NAME=$NIKATRU_P_EVENT"
+            echo "NIKATRU_REF=$NIKATRU_P_REF"
+            echo "NIKATRU_REF_NAME=${NIKATRU_P_REF#refs/*/}"
+            echo "NIKATRU_BASE_SHA=$NIKATRU_P_BASE_SHA"
+            echo "NIKATRU_BASE_REF=$NIKATRU_P_BASE_REF"
+            echo "NIKATRU_PR=$NIKATRU_P_PR"
+            echo "NIKATRU_PR_CREATED_AT=$NIKATRU_P_PR_CREATED_AT"
+            echo "NIKATRU_DRAFT=$NIKATRU_P_DRAFT"
+          } >> "$GITHUB_ENV"
+      - name: Check out this shell repository's own step wrapper and reporter (generated)
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
+        with:
+          path: .nikatru-shell
+          sparse-checkout: .github/nikatru
+          persist-credentials: false
+      - name: Stage the shell's own copies outside the private checkout (generated)
+        shell: bash
+        working-directory: ${{ github.workspace }}
+        env:
+          NIKATRU_DETAIL_KEY: ${{ secrets.NIKATRU_DETAIL_KEY }}
+          NIKATRU_HANDOFF_KEY_FILE: ${{ github.workspace }}/../.nikatru-shell/handoff.key
+        run: |
+          rm -rf ../.nikatru-shell
+          mv .nikatru-shell/.github/nikatru ../.nikatru-shell
+          rm -rf .nikatru-shell
+          py=python3; python3 -c '' >/dev/null 2>&1 || py=python
+          "$py" -I "$GITHUB_WORKSPACE/../.nikatru-shell/report.py" derive
+      - name: Check out private main's composite actions (generated)
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
+        with:
+          repository: ${{ env.NIKATRU_PRIVATE_REPO }}
+          ref: refs/heads/main
+          path: .nikatru-trusted
+          sparse-checkout: .github/actions
+          ssh-key: ${{ secrets.PRIVATE_DEPLOY_KEY }}
+          persist-credentials: false
+      - name: Keep private main's composite actions out of the branch's tree (generated)
+        shell: bash
+        working-directory: ${{ github.workspace }}
+        run: printf '/.nikatru-trusted/\n' >> "$(git rev-parse --git-path info/exclude)"
+      - uses: ./.nikatru-trusted/.github/actions/setup-node
+        env:
+          NIKATRU_REF: ${{ github.event.client_payload.ref || inputs.private_ref || 'refs/heads/main' }}
+          NIKATRU_EVENT_NAME: ${{ github.event.client_payload.event || github.event_name }}
+          NIKATRU_PR: ${{ github.event.client_payload.pr }}
+      - name: Restore the mutation-proofs-refresh-key hand-off from this run (generated)
+        id: nikatru-restore-2
+        timeout-minutes: 6
+        uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333
+        with:
+          name: nikatru-handoff-mutation-proofs-refresh-key
+          path: .nikatru-handoff/sealed
+      - name: Unseal the mutation-proofs-refresh-key hand-off (generated)
+        id: nikatru-unseal-2
+        if: ${{ (success()) && steps.nikatru-restore-2.outcome == 'success' }}
+        shell: bash
+        working-directory: ${{ github.workspace }}
+        env:
+          NIKATRU_HANDOFF_KEY_FILE: ${{ github.workspace }}/../.nikatru-shell/handoff.key
+          NIKATRU_HANDOFF_KEY: nikatru-handoff-mutation-proofs-refresh-key-${{ github.run_id }}-run
+          NIKATRU_HANDOFF_PREFIX: nikatru-handoff-mutation-proofs-refresh-key-${{ github.run_id }}-
+        run: node tooling/ci/shell-handoff.mjs unseal
+      - name: Place the mutation-proofs-refresh-key hand-off where download-artifact put it (generated)
+        if: ${{ (success()) && steps.nikatru-unseal-2.outcome == 'success' }}
+        shell: bash
+        working-directory: ${{ github.workspace }}
+        env:
+          NIKATRU_TO: ${{ runner.temp }}/mutation-proofs-key
+        run: |
+          mkdir -p "$NIKATRU_TO"
+          cp -a .nikatru-handoff/x/. "$NIKATRU_TO/"
+          rm -rf .nikatru-handoff/x
+      - name: Open the sealed records
+        env:
+          NIKATRU_SEALED_B64: ${{ needs.refresh.outputs.sealed }}
+          NIKATRU_HANDOFF_KEY: mutation-proofs-refresh/${{ github.run_id }}/${{ github.run_attempt }}
+        run: |
+          NIKATRU_QUIET="$(mktemp "${RUNNER_TEMP:-/tmp}/nikatru-step.XXXXXX")"
+          cat > "$NIKATRU_QUIET" <<'NIKATRU_QUIET_EOF'
+          ws="$RUNNER_TEMP/mutation-proofs-open"
+          rm -rf "$ws" && mkdir -p "$ws/.nikatru-handoff/sealed"
+          if [ -z "$NIKATRU_SEALED_B64" ]; then echo "::error title=No sealed records::the refresh job handed over nothing (it was skipped or failed before its seal step)."; exit 1; fi
+          printf '%s' "$NIKATRU_SEALED_B64" | base64 -d > "$ws/.nikatru-handoff/sealed/handoff.bin"
+          node --input-type=module -e "const { unsealStageWith } = await import('./tooling/ci/shell-handoff.mjs'); const fs = await import('node:fs'); await unsealStageWith(process.argv[1], fs.readFileSync(process.argv[2], 'utf8').trim(), process.env.NIKATRU_HANDOFF_KEY);" "$ws" "$RUNNER_TEMP/mutation-proofs-key/private.key"
+          rm -rf "$RUNNER_TEMP/mutation-proofs-key"
+          mkdir -p "$RUNNER_TEMP/mutation-proofs-refresh"
+          cp -a "$ws/.nikatru-handoff/x/." "$RUNNER_TEMP/mutation-proofs-refresh/"
+          rm -rf "$ws"
+          NIKATRU_QUIET_EOF
+          NIKATRU_SHELL="${BASH:-bash}"; if command -v cygpath >/dev/null 2>&1; then NIKATRU_SHELL="$(cygpath -w "$NIKATRU_SHELL")"; fi
+          node "$GITHUB_WORKSPACE/../.nikatru-shell/quiet-step.mjs" --name mutation-proofs.upload.4 -- "$NIKATRU_SHELL" -e "$NIKATRU_QUIET"
+      - name: The patch touches done-records only
+        run: |
+          NIKATRU_QUIET="$(mktemp "${RUNNER_TEMP:-/tmp}/nikatru-step.XXXXXX")"
+          cat > "$NIKATRU_QUIET" <<'NIKATRU_QUIET_EOF'
+          dir="$RUNNER_TEMP/mutation-proofs-refresh"
+          listing=$(cd "$dir" && find . -mindepth 1 | LC_ALL=C sort | tr '\n' ' ')
+          if [ "$listing" != "./refresh.log ./refresh.patch " ]; then echo "::error title=Unexpected hand-off layout::$listing"; exit 1; fi
+          for f in refresh.log refresh.patch; do
+            if [ ! -f "$dir/$f" ] || [ -L "$dir/$f" ]; then echo "::error title=Not a regular file::$f"; exit 1; fi
+            if [ "$(wc -c < "$dir/$f")" -gt 262144 ]; then echo "::error title=Over its cap::$f is above 262144 bytes"; exit 1; fi
+          done
+          bad=$(grep -E '^(diff --git|\+\+\+|---) ' "$dir/refresh.patch" | grep -vE '^(diff --git a/(\S+/)?dod\.json b/(\S+/)?dod\.json|\+\+\+ b/(\S+/)?dod\.json|--- a/(\S+/)?dod\.json)$' || true)
+          if [ -n "$bad" ]; then echo "::error title=The patch touches more than done-records::$bad"; exit 1; fi
+          odd=$(grep -E '^(rename|copy) (from|to) |^(new|deleted) file mode |^(old|new) mode |^GIT binary patch' "$dir/refresh.patch" || true)
+          if [ -n "$odd" ]; then echo "::error title=The patch does more than edit done-records::$odd"; exit 1; fi
+          moved=$(grep -E '^diff --git ' "$dir/refresh.patch" | awk '{ if (substr($3, 3) != substr($4, 3)) print }')
+          if [ -n "$moved" ]; then echo "::error title=The patch names two different files in one header::$moved"; exit 1; fi
+          echo "patch: $(grep -c '^diff --git' "$dir/refresh.patch" || true) done-record(s)"
+          NIKATRU_QUIET_EOF
+          NIKATRU_SHELL="${BASH:-bash}"; if command -v cygpath >/dev/null 2>&1; then NIKATRU_SHELL="$(cygpath -w "$NIKATRU_SHELL")"; fi
+          node "$GITHUB_WORKSPACE/../.nikatru-shell/quiet-step.mjs" --name mutation-proofs.upload.5 -- "$NIKATRU_SHELL" -e "$NIKATRU_QUIET"
+      - name: Store mutation-proofs-refresh in the bridge's private home (generated)
+        shell: bash
+        working-directory: ${{ github.workspace }}
+        env:
+          NIKATRU_PATHS: ${{ runner.temp }}/mutation-proofs-refresh/
+          NIKATRU_ARTIFACT_NAME: mutation-proofs-refresh
+          NIKATRU_IF_NO_FILES: error
+          BRIDGE_ARTIFACT_SECRET: ${{ secrets.BRIDGE_ARTIFACT_SECRET }}
+          NIKATRU_BRIDGE_ARTIFACT_URL: https://gh-bridge.nikatru.workers.dev/artifact
+        run: node tooling/ops/bridge-artifact.mjs upload
+      - name: Store this job's red detail in the bridge's private home (generated)
+        if: always()
+        continue-on-error: true
+        shell: bash
+        working-directory: ${{ github.workspace }}
+        env:
+          NIKATRU_PATHS: ${{ runner.temp }}/report-detail.md
+          NIKATRU_ARTIFACT_NAME: report-detail-mutation-proofs.upload.${{ strategy.job-index }}
+          NIKATRU_IF_NO_FILES: ignore
+          BRIDGE_ARTIFACT_SECRET: ${{ secrets.BRIDGE_ARTIFACT_SECRET }}
+          NIKATRU_BRIDGE_ARTIFACT_URL: https://gh-bridge.nikatru.workers.dev/artifact
+        run: node tooling/ops/bridge-artifact.mjs upload
+
+  js-guards:
+    needs: [nikatru-pin]
+    name: A planted defect in each sampled JS guard still turns its test red, green control first
+    if: (github.event.client_payload.ref || inputs.private_ref || 'refs/heads/main') == 'refs/heads/main'
+    runs-on: ubuntu-24.04
+    timeout-minutes: 30
+    permissions:
+      contents: read
+      id-token: write
+    steps:
+      - name: Check out the private tree (generated)
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
+        with:
+          repository: ${{ env.NIKATRU_PRIVATE_REPO }}
+          ref: main
+          ssh-key: ${{ secrets.PRIVATE_DEPLOY_KEY }}
+          persist-credentials: false
+      - name: Name the private commit (generated)
+        shell: bash
+        working-directory: ${{ github.workspace }}
+        env:
+          NIKATRU_P_EVENT: ${{ github.event.client_payload.event || github.event_name }}
+          NIKATRU_P_REF: ${{ github.event.client_payload.ref || inputs.private_ref || 'refs/heads/main' }}
+          NIKATRU_P_BASE_SHA: ${{ github.event.client_payload.base_sha }}
+          NIKATRU_P_BASE_REF: ${{ github.event.client_payload.base_ref }}
+          NIKATRU_P_PR: ${{ github.event.client_payload.pr }}
+          NIKATRU_P_PR_CREATED_AT: ${{ github.event.client_payload.pr_created_at }}
+          NIKATRU_P_DRAFT: ${{ github.event.client_payload.draft }}
+          NIKATRU_P_SHA: ${{ github.event.client_payload.sha }}
+        run: |
+          {
+            echo "NIKATRU_SHA=$(git rev-parse HEAD)"
+            echo "NIKATRU_HEAD_SHA=${NIKATRU_P_SHA:-$(git rev-parse HEAD)}"
+            echo "NIKATRU_EVENT_NAME=$NIKATRU_P_EVENT"
+            echo "NIKATRU_REF=$NIKATRU_P_REF"
+            echo "NIKATRU_REF_NAME=${NIKATRU_P_REF#refs/*/}"
+            echo "NIKATRU_BASE_SHA=$NIKATRU_P_BASE_SHA"
+            echo "NIKATRU_BASE_REF=$NIKATRU_P_BASE_REF"
+            echo "NIKATRU_PR=$NIKATRU_P_PR"
+            echo "NIKATRU_PR_CREATED_AT=$NIKATRU_P_PR_CREATED_AT"
+            echo "NIKATRU_DRAFT=$NIKATRU_P_DRAFT"
+          } >> "$GITHUB_ENV"
+      - name: Check out this shell repository's own step wrapper and reporter (generated)
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
+        with:
+          path: .nikatru-shell
+          sparse-checkout: .github/nikatru
+          persist-credentials: false
+      - name: Stage the shell's own copies outside the private checkout (generated)
+        shell: bash
+        working-directory: ${{ github.workspace }}
+        run: |
+          rm -rf ../.nikatru-shell
+          mv .nikatru-shell/.github/nikatru ../.nikatru-shell
+          rm -rf .nikatru-shell
+      - name: Check out private main's composite actions (generated)
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
+        with:
+          repository: ${{ env.NIKATRU_PRIVATE_REPO }}
+          ref: refs/heads/main
+          path: .nikatru-trusted
+          sparse-checkout: .github/actions
+          ssh-key: ${{ secrets.PRIVATE_DEPLOY_KEY }}
+          persist-credentials: false
+      - name: Keep private main's composite actions out of the branch's tree (generated)
+        shell: bash
+        working-directory: ${{ github.workspace }}
+        run: printf '/.nikatru-trusted/\n' >> "$(git rev-parse --git-path info/exclude)"
+      - uses: ./.nikatru-trusted/.github/actions/setup-node
+        env:
+          NIKATRU_REF: ${{ github.event.client_payload.ref || inputs.private_ref || 'refs/heads/main' }}
           NIKATRU_EVENT_NAME: ${{ github.event.client_payload.event || github.event_name }}
           NIKATRU_PR: ${{ github.event.client_payload.pr }}
       - name: Execute the week's sampled guard mutations, green control first
@@ -389,6 +886,7 @@ jobs:
   opt-in-cases:
     needs: [nikatru-pin]
     name: The tooling cases no push job can run still pass (restic, the real network, a real CodeQL analysis)
+    if: (github.event.client_payload.ref || inputs.private_ref || 'refs/heads/main') == 'refs/heads/main'
     runs-on: ubuntu-24.04
     timeout-minutes: 100
     permissions:
@@ -399,7 +897,7 @@ jobs:
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
         with:
           repository: ${{ env.NIKATRU_PRIVATE_REPO }}
-          ref: ${{ needs.nikatru-pin.outputs.sha || 'nikatru-pin-did-not-succeed..' }}
+          ref: main
           ssh-key: ${{ secrets.PRIVATE_DEPLOY_KEY }}
           persist-credentials: false
       - name: Name the private commit (generated)
@@ -407,7 +905,7 @@ jobs:
         working-directory: ${{ github.workspace }}
         env:
           NIKATRU_P_EVENT: ${{ github.event.client_payload.event || github.event_name }}
-          NIKATRU_P_REF: ${{ github.event.client_payload.ref || 'refs/heads/main' }}
+          NIKATRU_P_REF: ${{ github.event.client_payload.ref || inputs.private_ref || 'refs/heads/main' }}
           NIKATRU_P_BASE_SHA: ${{ github.event.client_payload.base_sha }}
           NIKATRU_P_BASE_REF: ${{ github.event.client_payload.base_ref }}
           NIKATRU_P_PR: ${{ github.event.client_payload.pr }}
@@ -415,13 +913,6 @@ jobs:
           NIKATRU_P_DRAFT: ${{ github.event.client_payload.draft }}
           NIKATRU_P_SHA: ${{ github.event.client_payload.sha }}
         run: |
-          if [ "$NIKATRU_P_EVENT" = pull_request ]; then
-            set -- $(git cat-file -p HEAD | sed -n '1,/^$/s/^parent //p')
-            if [ "${2:-}" != "$NIKATRU_P_SHA" ]; then
-              echo "::error::the checked-out merge of PR #$NIKATRU_P_PR is not the merge of the dispatched head $NIKATRU_P_SHA (its second parent is ${2:-none}); the nikatru-pin job pins it — re-run the whole workflow, not this job"
-              exit 1
-            fi
-          fi
           {
             echo "NIKATRU_SHA=$(git rev-parse HEAD)"
             echo "NIKATRU_HEAD_SHA=${NIKATRU_P_SHA:-$(git rev-parse HEAD)}"
@@ -462,7 +953,7 @@ jobs:
         run: printf '/.nikatru-trusted/\n' >> "$(git rev-parse --git-path info/exclude)"
       - uses: ./.nikatru-trusted/.github/actions/setup-node
         env:
-          NIKATRU_REF: ${{ github.event.client_payload.ref || 'refs/heads/main' }}
+          NIKATRU_REF: ${{ github.event.client_payload.ref || inputs.private_ref || 'refs/heads/main' }}
           NIKATRU_EVENT_NAME: ${{ github.event.client_payload.event || github.event_name }}
           NIKATRU_PR: ${{ github.event.client_payload.pr }}
       - name: Install restic
@@ -508,7 +999,7 @@ jobs:
 
   nikatru-ran:
     name: Fail this run if it ran nothing (generated)
-    needs: [execute, js-guards, opt-in-cases]
+    needs: [execute, keys, refresh, upload, js-guards, opt-in-cases]
     if: "!cancelled()"
     runs-on: ubuntu-24.04
     defaults:
@@ -528,7 +1019,7 @@ jobs:
       - name: Fail when every job of this run was skipped (generated)
         shell: bash
         env:
-          NIKATRU_RESULTS: execute=${{ needs.execute.result }} js-guards=${{ needs.js-guards.result }} opt-in-cases=${{ needs.opt-in-cases.result }}
+          NIKATRU_RESULTS: execute=${{ needs.execute.result }} keys=${{ needs.keys.result }} refresh=${{ needs.refresh.result }} upload=${{ needs.upload.result }} js-guards=${{ needs.js-guards.result }} opt-in-cases=${{ needs.opt-in-cases.result }}
         run: |
           for r in $NIKATRU_RESULTS; do
             if [ "${r#*=}" != skipped ]; then echo "ran: $NIKATRU_RESULTS"; exit 0; fi

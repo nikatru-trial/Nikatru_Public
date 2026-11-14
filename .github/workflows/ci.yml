@@ -537,6 +537,8 @@ jobs:
     needs: [nikatru-pin, first-pass]
     permissions:
       contents: read
+      actions: read
+      checks: read
     with:
       nikatru_sha: ${{ needs.nikatru-pin.outputs.sha || 'nikatru-pin-did-not-succeed..' }}
       nikatru_tier: ${{ needs.nikatru-pin.outputs.tier }}
@@ -572,6 +574,8 @@ jobs:
     needs: [nikatru-pin, first-pass]
     permissions:
       contents: read
+      actions: read
+      checks: read
       id-token: write
     with:
       nikatru_sha: ${{ needs.nikatru-pin.outputs.sha || 'nikatru-pin-did-not-succeed..' }}
@@ -588,6 +592,8 @@ jobs:
     needs: [nikatru-pin, first-pass]
     permissions:
       contents: read
+      actions: read
+      checks: read
     with:
       nikatru_sha: ${{ needs.nikatru-pin.outputs.sha || 'nikatru-pin-did-not-succeed..' }}
       nikatru_tier: ${{ needs.nikatru-pin.outputs.tier }}
@@ -889,13 +895,14 @@ jobs:
           BASE_SHA: ${{ (github.event.client_payload.event == 'pull_request' && github.event.client_payload.base_sha || '') }}
           GATE_NEEDS: ${{ toJSON(needs) }}
           NIKATRU_PR_META_FILE: ${{ github.workspace }}/../.nikatru-shell/pr-meta.json
+          NIKATRU_SHELL_DIGEST_FILE: ${{ github.workspace }}/../.nikatru-shell/shell-steps.sha256
         run: |
           NIKATRU_QUIET="$(mktemp "${RUNNER_TEMP:-/tmp}/nikatru-step.XXXXXX")"
           cat > "$NIKATRU_QUIET" <<'NIKATRU_QUIET_EOF'
           node tooling/ci/gate-pr-body.mjs
           NIKATRU_QUIET_EOF
           NIKATRU_SHELL="${BASH:-bash}"; if command -v cygpath >/dev/null 2>&1; then NIKATRU_SHELL="$(cygpath -w "$NIKATRU_SHELL")"; fi
-          node "$GITHUB_WORKSPACE/../.nikatru-shell/quiet-step.mjs" --name ci.ci-gate.5 -- "$NIKATRU_SHELL" -e "$NIKATRU_QUIET"
+          node "$GITHUB_WORKSPACE/../.nikatru-shell/quiet-step.mjs" --name ci.ci-gate.5 --public -- "$NIKATRU_SHELL" -e "$NIKATRU_QUIET"
       - name: Hand this job's red detail to the report job, sealed (generated)
         id: nikatru-handoff
         if: always()

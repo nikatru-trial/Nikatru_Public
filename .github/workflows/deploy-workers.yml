@@ -2,7 +2,7 @@
 # Do not edit: `node tooling/ci/gen-public-shell.mjs --check` re-generates it and fails on any difference.
 env:
   NIKATRU_PRIVATE_REPO: com-nikatru/Nikatru_Private
-  NIKATRU_SHELL_FINGERPRINT: f654a64f3f4568bdcd0f6bb5c23c5105dc82063d54f648d23fd1abcb11fa0680
+  NIKATRU_SHELL_FINGERPRINT: 1d51f130cd35ed675f8b052d0f260978315cfc8bfb1834aa788ae761e66644fe
 
 name: Part of CI · Deploy workers
 
@@ -579,7 +579,7 @@ jobs:
           wranglerVersion: '4.149.0'
           accountId: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
           workingDirectory: services/edge-shield
-          command: deploy --var RELEASE:${{ env.NIKATRU_SHA }}
+          command: deploy --var GLITCHTIP_DSN:${{ secrets.GLITCHTIP_DSN }} --var RELEASE:${{ env.NIKATRU_SHA }}
       - name: Smoke — this commit's shield is in path on both routes
         id: smoke
         if: steps.plan.outputs.deploy == 'true'

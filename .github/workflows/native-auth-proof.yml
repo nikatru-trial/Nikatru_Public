@@ -99,6 +99,23 @@ jobs:
           sparse-checkout: .github/ISSUE_TEMPLATE
           ssh-key: ${{ secrets.PRIVATE_DEPLOY_KEY }}
           persist-credentials: false
+      - name: Refuse a private_ref that is not a plain branch other than main (generated)
+        shell: bash
+        env:
+          NIKATRU_PRIVATE_REF: ${{ inputs.private_ref }}
+        run: |
+          r="$NIKATRU_PRIVATE_REF"
+          if [ -z "$r" ]; then echo "private_ref is empty: this run builds private main"; exit 0; fi
+          lower="${r,,}"
+          case "$lower" in
+            main|refs/heads/main) echo "::error title=private_ref names main::$r names private main (in any case); dispatch with an EMPTY private_ref to build main"; exit 1 ;;
+          esac
+          re='^refs/heads/[A-Za-z0-9_][A-Za-z0-9._-]*(/[A-Za-z0-9_][A-Za-z0-9._-]*)*$'
+          # no pipe: a `grep -q` consumer under pipefail can exit before its producer (assert-pipe-consumers)
+          if [[ ! "$r" =~ $re ]] || [[ "$r" == *..* ]] || [[ "$r" == *.lock ]] || [[ "$r" == *.lock/* ]] || [[ "$r" == */ ]]; then
+            echo "::error title=private_ref is not a plain branch::$r is not refs/heads/<branch> (letters, digits, . _ - and /)"
+            exit 1
+          fi
       - name: Test the candidate commit, attempt 1 (generated)
         id: nikatru-pin-test-1
         shell: bash
@@ -1117,7 +1134,9 @@ jobs:
         shell: bash
         working-directory: ${{ github.workspace }}
         env:
-          NIKATRU_PATHS: ${{ runner.temp }}/nk-proof-ios-after-open.png
+          NIKATRU_PATHS: |
+            ${{ runner.temp }}/nk-proof-ios-after-open.png
+            ${{ runner.temp }}/nk-proof-ios-launch-attempt-*.png
           NIKATRU_ARTIFACT_NAME: native-auth-proof-ios-after-open-${{ matrix.app }}
           NIKATRU_IF_NO_FILES: ignore
           BRIDGE_ARTIFACT_SECRET: ${{ secrets.BRIDGE_ARTIFACT_SECRET }}
@@ -2489,7 +2508,9 @@ jobs:
         shell: bash
         working-directory: ${{ github.workspace }}
         env:
-          NIKATRU_PATHS: ${{ runner.temp }}/nk-proof-ios-after-open.png
+          NIKATRU_PATHS: |
+            ${{ runner.temp }}/nk-proof-ios-after-open.png
+            ${{ runner.temp }}/nk-proof-ios-launch-attempt-*.png
           NIKATRU_ARTIFACT_NAME: native-oauth-return-ios-after-open-${{ matrix.app }}
           NIKATRU_IF_NO_FILES: ignore
           BRIDGE_ARTIFACT_SECRET: ${{ secrets.BRIDGE_ARTIFACT_SECRET }}

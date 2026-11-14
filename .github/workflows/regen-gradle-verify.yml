@@ -50,6 +50,23 @@ jobs:
           sparse-checkout: .github/ISSUE_TEMPLATE
           ssh-key: ${{ secrets.PRIVATE_DEPLOY_KEY }}
           persist-credentials: false
+      - name: Refuse a private_ref that is not a plain branch other than main (generated)
+        shell: bash
+        env:
+          NIKATRU_PRIVATE_REF: ${{ inputs.private_ref }}
+        run: |
+          r="$NIKATRU_PRIVATE_REF"
+          if [ -z "$r" ]; then echo "private_ref is empty: this run builds private main"; exit 0; fi
+          lower="${r,,}"
+          case "$lower" in
+            main|refs/heads/main) echo "::error title=private_ref names main::$r names private main (in any case); dispatch with an EMPTY private_ref to build main"; exit 1 ;;
+          esac
+          re='^refs/heads/[A-Za-z0-9_][A-Za-z0-9._-]*(/[A-Za-z0-9_][A-Za-z0-9._-]*)*$'
+          # no pipe: a `grep -q` consumer under pipefail can exit before its producer (assert-pipe-consumers)
+          if [[ ! "$r" =~ $re ]] || [[ "$r" == *..* ]] || [[ "$r" == *.lock ]] || [[ "$r" == *.lock/* ]] || [[ "$r" == */ ]]; then
+            echo "::error title=private_ref is not a plain branch::$r is not refs/heads/<branch> (letters, digits, . _ - and /)"
+            exit 1
+          fi
       - name: Test the candidate commit, attempt 1 (generated)
         id: nikatru-pin-test-1
         shell: bash
@@ -140,9 +157,10 @@ jobs:
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
         with:
           repository: ${{ env.NIKATRU_PRIVATE_REPO }}
-          ref: ${{ needs.nikatru-pin.outputs.sha || 'nikatru-pin-did-not-succeed..' }}
+          ref: main
           ssh-key: ${{ secrets.PRIVATE_DEPLOY_KEY }}
           persist-credentials: false
+        timeout-minutes: 5
       - name: Name the private commit (generated)
         shell: bash
         working-directory: ${{ github.workspace }}
@@ -156,13 +174,6 @@ jobs:
           NIKATRU_P_DRAFT: ${{ github.event.client_payload.draft }}
           NIKATRU_P_SHA: ${{ github.event.client_payload.sha }}
         run: |
-          if [ "$NIKATRU_P_EVENT" = pull_request ]; then
-            set -- $(git cat-file -p HEAD | sed -n '1,/^$/s/^parent //p')
-            if [ "${2:-}" != "$NIKATRU_P_SHA" ]; then
-              echo "::error::the checked-out merge of PR #$NIKATRU_P_PR is not the merge of the dispatched head $NIKATRU_P_SHA (its second parent is ${2:-none}); the nikatru-pin job pins it — re-run the whole workflow, not this job"
-              exit 1
-            fi
-          fi
           {
             echo "NIKATRU_SHA=$(git rev-parse HEAD)"
             echo "NIKATRU_HEAD_SHA=${NIKATRU_P_SHA:-$(git rev-parse HEAD)}"
@@ -209,15 +220,7 @@ jobs:
           esac
           NIKATRU_QUIET_EOF
           NIKATRU_SHELL="${BASH:-bash}"; if command -v cygpath >/dev/null 2>&1; then NIKATRU_SHELL="$(cygpath -w "$NIKATRU_SHELL")"; fi
-          node "$GITHUB_WORKSPACE/../.nikatru-shell/quiet-step.mjs" --name regen-gradle-verify.gate.1 -- "$NIKATRU_SHELL" -e "$NIKATRU_QUIET"
-      - name: Check out the private tree (generated)
-        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
-        with:
-          repository: ${{ env.NIKATRU_PRIVATE_REPO }}
-          ref: ${{ (github.event.client_payload.ref || inputs.private_ref || 'refs/heads/main') }}
-          ssh-key: ${{ secrets.PRIVATE_DEPLOY_KEY }}
-          persist-credentials: false
-        timeout-minutes: 5
+          node "$GITHUB_WORKSPACE/../.nikatru-shell/quiet-step.mjs" --name regen-gradle-verify.gate.2 -- "$NIKATRU_SHELL" -e "$NIKATRU_QUIET"
       - name: The app input names one app of the workspace
         id: app
         timeout-minutes: 2
@@ -227,7 +230,10 @@ jobs:
           NIKATRU_QUIET="$(mktemp "${RUNNER_TEMP:-/tmp}/nikatru-step.XXXXXX")"
           cat > "$NIKATRU_QUIET" <<'NIKATRU_QUIET_EOF'
           set -euo pipefail
-          node tooling/ci/assert-release-lane-generic.mjs --emit-apps --app "$APP_INPUT"
+          if ! [[ "$APP_INPUT" =~ ^[a-z][a-z0-9-]*$ ]]; then
+            echo "::error title=Refused::'$APP_INPUT' is not an app id ([a-z][a-z0-9-]*)."
+            exit 1
+          fi
           echo "app=${APP_INPUT}" >> "$GITHUB_OUTPUT"
           NIKATRU_QUIET_EOF
           NIKATRU_SHELL="${BASH:-bash}"; if command -v cygpath >/dev/null 2>&1; then NIKATRU_SHELL="$(cygpath -w "$NIKATRU_SHELL")"; fi
@@ -245,14 +251,151 @@ jobs:
           NIKATRU_BRIDGE_ARTIFACT_URL: https://gh-bridge.nikatru.workers.dev/artifact
         run: node tooling/ops/bridge-artifact.mjs upload
 
+  keys:
+    name: Make this run's one-time key for the regenerated metadata
+    needs: [nikatru-pin, gate]
+    runs-on: ubuntu-24.04
+    timeout-minutes: 10
+    permissions:
+      contents: read
+      id-token: write
+    outputs:
+      recipient: ${{ steps.pair.outputs.recipient }}
+    steps:
+      - name: Check out the private tree (generated)
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
+        with:
+          repository: ${{ env.NIKATRU_PRIVATE_REPO }}
+          ref: main
+          sparse-checkout: |
+            tooling/ci
+            tooling/versions.json
+          ssh-key: ${{ secrets.PRIVATE_DEPLOY_KEY }}
+          persist-credentials: false
+      - name: Name the private commit (generated)
+        shell: bash
+        working-directory: ${{ github.workspace }}
+        env:
+          NIKATRU_P_EVENT: ${{ github.event.client_payload.event || github.event_name }}
+          NIKATRU_P_REF: ${{ github.event.client_payload.ref || inputs.private_ref || 'refs/heads/main' }}
+          NIKATRU_P_BASE_SHA: ${{ github.event.client_payload.base_sha }}
+          NIKATRU_P_BASE_REF: ${{ github.event.client_payload.base_ref }}
+          NIKATRU_P_PR: ${{ github.event.client_payload.pr }}
+          NIKATRU_P_PR_CREATED_AT: ${{ github.event.client_payload.pr_created_at }}
+          NIKATRU_P_DRAFT: ${{ github.event.client_payload.draft }}
+          NIKATRU_P_SHA: ${{ github.event.client_payload.sha }}
+        run: |
+          {
+            echo "NIKATRU_SHA=$(git rev-parse HEAD)"
+            echo "NIKATRU_HEAD_SHA=${NIKATRU_P_SHA:-$(git rev-parse HEAD)}"
+            echo "NIKATRU_EVENT_NAME=$NIKATRU_P_EVENT"
+            echo "NIKATRU_REF=$NIKATRU_P_REF"
+            echo "NIKATRU_REF_NAME=${NIKATRU_P_REF#refs/*/}"
+            echo "NIKATRU_BASE_SHA=$NIKATRU_P_BASE_SHA"
+            echo "NIKATRU_BASE_REF=$NIKATRU_P_BASE_REF"
+            echo "NIKATRU_PR=$NIKATRU_P_PR"
+            echo "NIKATRU_PR_CREATED_AT=$NIKATRU_P_PR_CREATED_AT"
+            echo "NIKATRU_DRAFT=$NIKATRU_P_DRAFT"
+          } >> "$GITHUB_ENV"
+      - name: Check out this shell repository's own step wrapper and reporter (generated)
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
+        with:
+          path: .nikatru-shell
+          sparse-checkout: .github/nikatru
+          persist-credentials: false
+      - name: Stage the shell's own copies outside the private checkout (generated)
+        shell: bash
+        working-directory: ${{ github.workspace }}
+        env:
+          NIKATRU_DETAIL_KEY: ${{ secrets.NIKATRU_DETAIL_KEY }}
+          NIKATRU_HANDOFF_KEY_FILE: ${{ github.workspace }}/../.nikatru-shell/handoff.key
+        run: |
+          rm -rf ../.nikatru-shell
+          mv .nikatru-shell/.github/nikatru ../.nikatru-shell
+          rm -rf .nikatru-shell
+          py=python3; python3 -c '' >/dev/null 2>&1 || py=python
+          "$py" -I "$GITHUB_WORKSPACE/../.nikatru-shell/report.py" derive
+      - name: Check out private main's composite actions (generated)
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
+        with:
+          repository: ${{ env.NIKATRU_PRIVATE_REPO }}
+          ref: refs/heads/main
+          path: .nikatru-trusted
+          sparse-checkout: .github/actions
+          ssh-key: ${{ secrets.PRIVATE_DEPLOY_KEY }}
+          persist-credentials: false
+      - name: Keep private main's composite actions out of the branch's tree (generated)
+        shell: bash
+        working-directory: ${{ github.workspace }}
+        run: printf '/.nikatru-trusted/\n' >> "$(git rev-parse --git-path info/exclude)"
+      - uses: ./.nikatru-trusted/.github/actions/setup-node
+        with:
+          cache-dependency-path: ''
+        env:
+          NIKATRU_REF: ${{ github.event.client_payload.ref || inputs.private_ref || 'refs/heads/main' }}
+          NIKATRU_EVENT_NAME: ${{ github.event.client_payload.event || github.event_name }}
+          NIKATRU_PR: ${{ github.event.client_payload.pr }}
+      - name: Make the pair, the private half to a file
+        id: pair
+        run: |
+          NIKATRU_QUIET="$(mktemp "${RUNNER_TEMP:-/tmp}/nikatru-step.XXXXXX")"
+          cat > "$NIKATRU_QUIET" <<'NIKATRU_QUIET_EOF'
+          dir="$RUNNER_TEMP/regen-gradle-verify-key"
+          mkdir -p "$dir"
+          node tooling/ci/shell-handoff.mjs keygen --private-out "$dir/private.key" > "$RUNNER_TEMP/regen-gradle-verify-keygen.txt"
+          echo "recipient=$(tail -n 1 "$RUNNER_TEMP/regen-gradle-verify-keygen.txt")" >> "$GITHUB_OUTPUT"
+          NIKATRU_QUIET_EOF
+          NIKATRU_SHELL="${BASH:-bash}"; if command -v cygpath >/dev/null 2>&1; then NIKATRU_SHELL="$(cygpath -w "$NIKATRU_SHELL")"; fi
+          node "$GITHUB_WORKSPACE/../.nikatru-shell/quiet-step.mjs" --name regen-gradle-verify.keys.3 -- "$NIKATRU_SHELL" -e "$NIKATRU_QUIET"
+      - name: Stage regen-gradle-verify-key for this run's later jobs (generated)
+        id: nikatru-stage-1
+        shell: bash
+        working-directory: ${{ github.workspace }}
+        env:
+          NIKATRU_PATHS: ${{ runner.temp }}/regen-gradle-verify-key/
+          NIKATRU_IF_NO_FILES: error
+        run: node tooling/ci/shell-handoff.mjs stage
+      - name: Seal regen-gradle-verify-key for this run's later jobs (generated)
+        id: nikatru-seal-1
+        if: ${{ (success()) && steps.nikatru-stage-1.outputs.has == 'true' }}
+        shell: bash
+        working-directory: ${{ github.workspace }}
+        env:
+          NIKATRU_HANDOFF_KEY_FILE: ${{ github.workspace }}/../.nikatru-shell/handoff.key
+          NIKATRU_HANDOFF_KEY: nikatru-handoff-regen-gradle-verify-key-${{ github.run_id }}-run
+        run: node tooling/ci/shell-handoff.mjs seal
+      - name: Hand off regen-gradle-verify-key to this run's later jobs, sealed (generated)
+        if: ${{ (success()) && steps.nikatru-seal-1.outcome == 'success' }}
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9
+        with:
+          name: nikatru-handoff-regen-gradle-verify-key
+          path: .nikatru-handoff/sealed
+          if-no-files-found: error
+          retention-days: 1
+          include-hidden-files: true
+          overwrite: true
+      - name: Store this job's red detail in the bridge's private home (generated)
+        if: always()
+        continue-on-error: true
+        shell: bash
+        working-directory: ${{ github.workspace }}
+        env:
+          NIKATRU_PATHS: ${{ runner.temp }}/report-detail.md
+          NIKATRU_ARTIFACT_NAME: report-detail-regen-gradle-verify.keys.${{ strategy.job-index }}
+          NIKATRU_IF_NO_FILES: ignore
+          BRIDGE_ARTIFACT_SECRET: ${{ secrets.BRIDGE_ARTIFACT_SECRET }}
+          NIKATRU_BRIDGE_ARTIFACT_URL: https://gh-bridge.nikatru.workers.dev/artifact
+        run: node tooling/ops/bridge-artifact.mjs upload
+
   regenerate:
     name: Regenerate verification-metadata.xml on Linux
-    needs: [nikatru-pin, gate]
+    needs: [nikatru-pin, gate, keys]
     runs-on: ubuntu-24.04
     timeout-minutes: 90
     permissions:
       contents: read
-      id-token: write
+    outputs:
+      sealed: ${{ steps.seal.outputs.sealed }}
     env:
       APP: ${{ needs.gate.outputs.app }}
       ANDROID_BUILD_LANES: apk/android-play/pr appbundle/android-play/pr apk/apps-gov-in/pr apk/android-play/release appbundle/android-play/release apk/apps-gov-in/release
@@ -310,43 +453,6 @@ jobs:
           rm -rf ../.nikatru-shell
           mv .nikatru-shell/.github/nikatru ../.nikatru-shell
           rm -rf .nikatru-shell
-      - name: The app has an Android Gradle project
-        id: plan
-        timeout-minutes: 1
-        run: |
-          NIKATRU_QUIET="$(mktemp "${RUNNER_TEMP:-/tmp}/nikatru-step.XXXXXX")"
-          cat > "$NIKATRU_QUIET" <<'NIKATRU_QUIET_EOF'
-          set -euo pipefail
-          if [ ! -f "apps/$APP/android/settings.gradle.kts" ] && [ ! -f "apps/$APP/android/settings.gradle" ]; then
-            echo "::error title=Refused::apps/$APP/android has no settings.gradle(.kts): not an Android Gradle project on this ref."
-            exit 1
-          fi
-          sha="$(git rev-parse HEAD)"
-          echo "sha8=${sha:0:8}" >> "$GITHUB_OUTPUT"
-          NIKATRU_QUIET_EOF
-          NIKATRU_SHELL="${BASH:-bash}"; if command -v cygpath >/dev/null 2>&1; then NIKATRU_SHELL="$(cygpath -w "$NIKATRU_SHELL")"; fi
-          node "$GITHUB_WORKSPACE/../.nikatru-shell/quiet-step.mjs" --name regen-gradle-verify.regenerate.2 -- "$NIKATRU_SHELL" -e "$NIKATRU_QUIET"
-      - name: Every Android build lane CI runs maps to a release task below
-        timeout-minutes: 1
-        run: |
-          NIKATRU_QUIET="$(mktemp "${RUNNER_TEMP:-/tmp}/nikatru-step.XXXXXX")"
-          cat > "$NIKATRU_QUIET" <<'NIKATRU_QUIET_EOF'
-          set -euo pipefail
-          for lane in $ANDROID_BUILD_LANES; do
-            target="${lane%%/*}"
-            case "$target" in
-              apk) task=assembleRelease ;;
-              appbundle) task=bundleRelease ;;
-              *)
-                echo "::error title=Unmapped Android lane::$lane builds $target, which no Gradle task below covers: add it here and to the generate and strict steps."
-                exit 1
-                ;;
-            esac
-            echo "$lane -> $task"
-          done
-          NIKATRU_QUIET_EOF
-          NIKATRU_SHELL="${BASH:-bash}"; if command -v cygpath >/dev/null 2>&1; then NIKATRU_SHELL="$(cygpath -w "$NIKATRU_SHELL")"; fi
-          node "$GITHUB_WORKSPACE/../.nikatru-shell/quiet-step.mjs" --name regen-gradle-verify.regenerate.3 -- "$NIKATRU_SHELL" -e "$NIKATRU_QUIET"
       - uses: actions/setup-java@de7274f081f381c8f8158605e0321c36c376e2e6
         timeout-minutes: 5
         with:
@@ -375,6 +481,44 @@ jobs:
           NIKATRU_REF: ${{ github.event.client_payload.ref || inputs.private_ref || 'refs/heads/main' }}
           NIKATRU_EVENT_NAME: ${{ github.event.client_payload.event || github.event_name }}
           NIKATRU_PR: ${{ github.event.client_payload.pr }}
+      - name: The app has an Android Gradle project
+        id: plan
+        timeout-minutes: 1
+        run: |
+          NIKATRU_QUIET="$(mktemp "${RUNNER_TEMP:-/tmp}/nikatru-step.XXXXXX")"
+          cat > "$NIKATRU_QUIET" <<'NIKATRU_QUIET_EOF'
+          set -euo pipefail
+          node tooling/ci/assert-release-lane-generic.mjs --emit-apps --app "$APP"
+          if [ ! -f "apps/$APP/android/settings.gradle.kts" ] && [ ! -f "apps/$APP/android/settings.gradle" ]; then
+            echo "::error title=Refused::apps/$APP/android has no settings.gradle(.kts): not an Android Gradle project on this ref."
+            exit 1
+          fi
+          sha="$(git rev-parse HEAD)"
+          echo "sha8=${sha:0:8}" >> "$GITHUB_OUTPUT"
+          NIKATRU_QUIET_EOF
+          NIKATRU_SHELL="${BASH:-bash}"; if command -v cygpath >/dev/null 2>&1; then NIKATRU_SHELL="$(cygpath -w "$NIKATRU_SHELL")"; fi
+          node "$GITHUB_WORKSPACE/../.nikatru-shell/quiet-step.mjs" --name regen-gradle-verify.regenerate.4 -- "$NIKATRU_SHELL" -e "$NIKATRU_QUIET"
+      - name: Every Android build lane CI runs maps to a release task below
+        timeout-minutes: 1
+        run: |
+          NIKATRU_QUIET="$(mktemp "${RUNNER_TEMP:-/tmp}/nikatru-step.XXXXXX")"
+          cat > "$NIKATRU_QUIET" <<'NIKATRU_QUIET_EOF'
+          set -euo pipefail
+          for lane in $ANDROID_BUILD_LANES; do
+            target="${lane%%/*}"
+            case "$target" in
+              apk) task=assembleRelease ;;
+              appbundle) task=bundleRelease ;;
+              *)
+                echo "::error title=Unmapped Android lane::$lane builds $target, which no Gradle task below covers: add it here and to the generate and strict steps."
+                exit 1
+                ;;
+            esac
+            echo "$lane -> $task"
+          done
+          NIKATRU_QUIET_EOF
+          NIKATRU_SHELL="${BASH:-bash}"; if command -v cygpath >/dev/null 2>&1; then NIKATRU_SHELL="$(cygpath -w "$NIKATRU_SHELL")"; fi
+          node "$GITHUB_WORKSPACE/../.nikatru-shell/quiet-step.mjs" --name regen-gradle-verify.regenerate.5 -- "$NIKATRU_SHELL" -e "$NIKATRU_QUIET"
       - name: Resolve the workspace
         timeout-minutes: 5
         run: |
@@ -545,13 +689,226 @@ jobs:
           NIKATRU_QUIET_EOF
           NIKATRU_SHELL="${BASH:-bash}"; if command -v cygpath >/dev/null 2>&1; then NIKATRU_SHELL="$(cygpath -w "$NIKATRU_SHELL")"; fi
           node "$GITHUB_WORKSPACE/../.nikatru-shell/quiet-step.mjs" --name regen-gradle-verify.regenerate.16 -- "$NIKATRU_SHELL" -e "$NIKATRU_QUIET"
-      - name: Store verification-metadata-${{ needs.gate.outputs.app }}-${{ steps.plan.outputs.sha8 }} in the bridge's private home (generated)
+      - name: Seal the regenerated metadata and this job's red detail to this run's key
+        id: seal
+        if: always()
+        timeout-minutes: 2
+        env:
+          NIKATRU_HANDOFF_RECIPIENT: ${{ needs.keys.outputs.recipient }}
+          NIKATRU_HANDOFF_KEY: regen-gradle-verify/${{ github.run_id }}/${{ github.run_attempt }}
+          NIKATRU_IF_NO_FILES: error
+          SHA8: ${{ steps.plan.outputs.sha8 }}
+          JOB_STATUS: ${{ job.status }}
+        run: |
+          NIKATRU_QUIET="$(mktemp "${RUNNER_TEMP:-/tmp}/nikatru-step.XXXXXX")"
+          cat > "$NIKATRU_QUIET" <<'NIKATRU_QUIET_EOF'
+          set -euo pipefail
+          out="$RUNNER_TEMP/regen-gradle-verify-out"
+          rm -rf "$out" && mkdir -p "$out"
+          f="apps/$APP/android/gradle/verification-metadata.xml"
+          # A file only from a GREEN job: after a red (a strict re-run refused it, or it was never regenerated) the tree
+          # holds a file no build accepted, so only the red detail is handed over.
+          if [ "$JOB_STATUS" = success ] && [ -s "$f" ]; then gzip -9 -n -c "$f" > "$out/verification-metadata.xml.gz"; fi
+          if [ -s "$RUNNER_TEMP/report-detail.md" ]; then tail -c 262144 "$RUNNER_TEMP/report-detail.md" > "$out/report-detail.md"; fi
+          printf 'sha8=%s\nregenerate=%s\n' "${SHA8:-unknown}" "$JOB_STATUS" > "$out/status.txt"
+          withheld=0
+          if [ -f "$out/verification-metadata.xml.gz" ] && [ "$(wc -c < "$out/verification-metadata.xml.gz")" -gt 262144 ]; then
+            echo "::error title=The metadata is too large to hand over::$(wc -c < "$out/verification-metadata.xml.gz") gzipped bytes, above 262144."
+            rm -f "$out/verification-metadata.xml.gz"
+            echo "WITHHELD: the gzipped metadata was above 262144 bytes" >> "$out/status.txt"
+            withheld=1
+          fi
+          ws="$RUNNER_TEMP/regen-gradle-verify-seal"
+          rm -rf "$ws" && mkdir -p "$ws"
+          export NIKATRU_PATHS="$out/"
+          (cd "$ws" && node "$GITHUB_WORKSPACE/tooling/ci/shell-handoff.mjs" stage && node "$GITHUB_WORKSPACE/tooling/ci/shell-handoff.mjs" seal)
+          echo "sealed=$(base64 -w0 "$ws/.nikatru-handoff/sealed/handoff.bin")" >> "$GITHUB_OUTPUT"
+          # A withheld file is a RED run (sealed first, so its status still reaches the bridge), never a green one without it.
+          if [ "$withheld" -ne 0 ]; then exit 1; fi
+          NIKATRU_QUIET_EOF
+          NIKATRU_SHELL="${BASH:-bash}"; if command -v cygpath >/dev/null 2>&1; then NIKATRU_SHELL="$(cygpath -w "$NIKATRU_SHELL")"; fi
+          node "$GITHUB_WORKSPACE/../.nikatru-shell/quiet-step.mjs" --name regen-gradle-verify.regenerate.17 -- "$NIKATRU_SHELL" -e "$NIKATRU_QUIET"
+
+  upload:
+    name: Store the regenerated metadata privately, with private main's uploader
+    needs: [nikatru-pin, gate, keys, regenerate]
+    if: ${{ !cancelled() && needs.gate.result == 'success' && needs.keys.result == 'success' }}
+    runs-on: ubuntu-24.04
+    timeout-minutes: 10
+    permissions:
+      contents: read
+      id-token: write
+    steps:
+      - name: Check out the private tree (generated)
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
+        with:
+          repository: ${{ env.NIKATRU_PRIVATE_REPO }}
+          ref: main
+          sparse-checkout: |
+            tooling/ops
+            tooling/ci
+          ssh-key: ${{ secrets.PRIVATE_DEPLOY_KEY }}
+          persist-credentials: false
+      - name: Name the private commit (generated)
+        shell: bash
+        working-directory: ${{ github.workspace }}
+        env:
+          NIKATRU_P_EVENT: ${{ github.event.client_payload.event || github.event_name }}
+          NIKATRU_P_REF: ${{ github.event.client_payload.ref || inputs.private_ref || 'refs/heads/main' }}
+          NIKATRU_P_BASE_SHA: ${{ github.event.client_payload.base_sha }}
+          NIKATRU_P_BASE_REF: ${{ github.event.client_payload.base_ref }}
+          NIKATRU_P_PR: ${{ github.event.client_payload.pr }}
+          NIKATRU_P_PR_CREATED_AT: ${{ github.event.client_payload.pr_created_at }}
+          NIKATRU_P_DRAFT: ${{ github.event.client_payload.draft }}
+          NIKATRU_P_SHA: ${{ github.event.client_payload.sha }}
+        run: |
+          {
+            echo "NIKATRU_SHA=$(git rev-parse HEAD)"
+            echo "NIKATRU_HEAD_SHA=${NIKATRU_P_SHA:-$(git rev-parse HEAD)}"
+            echo "NIKATRU_EVENT_NAME=$NIKATRU_P_EVENT"
+            echo "NIKATRU_REF=$NIKATRU_P_REF"
+            echo "NIKATRU_REF_NAME=${NIKATRU_P_REF#refs/*/}"
+            echo "NIKATRU_BASE_SHA=$NIKATRU_P_BASE_SHA"
+            echo "NIKATRU_BASE_REF=$NIKATRU_P_BASE_REF"
+            echo "NIKATRU_PR=$NIKATRU_P_PR"
+            echo "NIKATRU_PR_CREATED_AT=$NIKATRU_P_PR_CREATED_AT"
+            echo "NIKATRU_DRAFT=$NIKATRU_P_DRAFT"
+          } >> "$GITHUB_ENV"
+      - name: Check out this shell repository's own step wrapper and reporter (generated)
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
+        with:
+          path: .nikatru-shell
+          sparse-checkout: .github/nikatru
+          persist-credentials: false
+      - name: Stage the shell's own copies outside the private checkout (generated)
+        shell: bash
+        working-directory: ${{ github.workspace }}
+        env:
+          NIKATRU_DETAIL_KEY: ${{ secrets.NIKATRU_DETAIL_KEY }}
+          NIKATRU_HANDOFF_KEY_FILE: ${{ github.workspace }}/../.nikatru-shell/handoff.key
+        run: |
+          rm -rf ../.nikatru-shell
+          mv .nikatru-shell/.github/nikatru ../.nikatru-shell
+          rm -rf .nikatru-shell
+          py=python3; python3 -c '' >/dev/null 2>&1 || py=python
+          "$py" -I "$GITHUB_WORKSPACE/../.nikatru-shell/report.py" derive
+      - name: Check out private main's composite actions (generated)
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
+        with:
+          repository: ${{ env.NIKATRU_PRIVATE_REPO }}
+          ref: refs/heads/main
+          path: .nikatru-trusted
+          sparse-checkout: .github/actions
+          ssh-key: ${{ secrets.PRIVATE_DEPLOY_KEY }}
+          persist-credentials: false
+      - name: Keep private main's composite actions out of the branch's tree (generated)
+        shell: bash
+        working-directory: ${{ github.workspace }}
+        run: printf '/.nikatru-trusted/\n' >> "$(git rev-parse --git-path info/exclude)"
+      - uses: ./.nikatru-trusted/.github/actions/setup-node
+        with:
+          cache-dependency-path: ''
+        env:
+          NIKATRU_REF: ${{ github.event.client_payload.ref || inputs.private_ref || 'refs/heads/main' }}
+          NIKATRU_EVENT_NAME: ${{ github.event.client_payload.event || github.event_name }}
+          NIKATRU_PR: ${{ github.event.client_payload.pr }}
+      - name: Restore the regen-gradle-verify-key hand-off from this run (generated)
+        id: nikatru-restore-2
+        timeout-minutes: 6
+        uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333
+        with:
+          name: nikatru-handoff-regen-gradle-verify-key
+          path: .nikatru-handoff/sealed
+      - name: Unseal the regen-gradle-verify-key hand-off (generated)
+        id: nikatru-unseal-2
+        if: ${{ (success()) && steps.nikatru-restore-2.outcome == 'success' }}
+        shell: bash
+        working-directory: ${{ github.workspace }}
+        env:
+          NIKATRU_HANDOFF_KEY_FILE: ${{ github.workspace }}/../.nikatru-shell/handoff.key
+          NIKATRU_HANDOFF_KEY: nikatru-handoff-regen-gradle-verify-key-${{ github.run_id }}-run
+          NIKATRU_HANDOFF_PREFIX: nikatru-handoff-regen-gradle-verify-key-${{ github.run_id }}-
+        run: node tooling/ci/shell-handoff.mjs unseal
+      - name: Place the regen-gradle-verify-key hand-off where download-artifact put it (generated)
+        if: ${{ (success()) && steps.nikatru-unseal-2.outcome == 'success' }}
+        shell: bash
+        working-directory: ${{ github.workspace }}
+        env:
+          NIKATRU_TO: ${{ runner.temp }}/regen-gradle-verify-key
+        run: |
+          mkdir -p "$NIKATRU_TO"
+          cp -a .nikatru-handoff/x/. "$NIKATRU_TO/"
+          rm -rf .nikatru-handoff/x
+      - name: Open the sealed metadata
+        env:
+          NIKATRU_SEALED_B64: ${{ needs.regenerate.outputs.sealed }}
+          NIKATRU_HANDOFF_KEY: regen-gradle-verify/${{ github.run_id }}/${{ github.run_attempt }}
+        run: |
+          NIKATRU_QUIET="$(mktemp "${RUNNER_TEMP:-/tmp}/nikatru-step.XXXXXX")"
+          cat > "$NIKATRU_QUIET" <<'NIKATRU_QUIET_EOF'
+          ws="$RUNNER_TEMP/regen-gradle-verify-open"
+          rm -rf "$ws" && mkdir -p "$ws/.nikatru-handoff/sealed"
+          if [ -z "$NIKATRU_SEALED_B64" ]; then echo "::error title=No sealed metadata::the regenerate job handed over nothing (it was skipped or failed before its seal step)."; exit 1; fi
+          printf '%s' "$NIKATRU_SEALED_B64" | base64 -d > "$ws/.nikatru-handoff/sealed/handoff.bin"
+          node --input-type=module -e "const { unsealStageWith } = await import('./tooling/ci/shell-handoff.mjs'); const fs = await import('node:fs'); await unsealStageWith(process.argv[1], fs.readFileSync(process.argv[2], 'utf8').trim(), process.env.NIKATRU_HANDOFF_KEY);" "$ws" "$RUNNER_TEMP/regen-gradle-verify-key/private.key"
+          rm -rf "$RUNNER_TEMP/regen-gradle-verify-key"
+          mkdir -p "$RUNNER_TEMP/regen-gradle-verify-in"
+          cp -a "$ws/.nikatru-handoff/x/." "$RUNNER_TEMP/regen-gradle-verify-in/"
+          rm -rf "$ws"
+          NIKATRU_QUIET_EOF
+          NIKATRU_SHELL="${BASH:-bash}"; if command -v cygpath >/dev/null 2>&1; then NIKATRU_SHELL="$(cygpath -w "$NIKATRU_SHELL")"; fi
+          node "$GITHUB_WORKSPACE/../.nikatru-shell/quiet-step.mjs" --name regen-gradle-verify.upload.4 -- "$NIKATRU_SHELL" -e "$NIKATRU_QUIET"
+      - name: The hand-over is the metadata, its red detail and its status only
+        id: check
+        env:
+          REGENERATE_RESULT: ${{ needs.regenerate.result }}
+        run: |
+          NIKATRU_QUIET="$(mktemp "${RUNNER_TEMP:-/tmp}/nikatru-step.XXXXXX")"
+          cat > "$NIKATRU_QUIET" <<'NIKATRU_QUIET_EOF'
+          set -euo pipefail
+          in="$RUNNER_TEMP/regen-gradle-verify-in"
+          out="$RUNNER_TEMP/regen-gradle-verify-store"
+          rm -rf "$out" && mkdir -p "$out"
+          listing=$(cd "$in" && find . -mindepth 1 | LC_ALL=C sort)
+          for p in $listing; do
+            case "$p" in
+              ./status.txt|./report-detail.md|./verification-metadata.xml.gz) ;;
+              *) echo "::error title=Unexpected hand-off layout::$listing"; exit 1 ;;
+            esac
+            if [ ! -f "$in/$p" ] || [ -L "$in/$p" ]; then echo "::error title=Not a regular file::$p"; exit 1; fi
+            if [ "$(wc -c < "$in/$p")" -gt 262144 ]; then echo "::error title=Over its cap::$p is above 262144 bytes"; exit 1; fi
+          done
+          [ -f "$in/status.txt" ] || { echo "::error title=No status::the hand-over carries no status.txt"; exit 1; }
+          # why `sed -n 1p`, not `head -n 1`: under pipefail an early-exit consumer can SIGPIPE the producer (assert-pipe-consumers).
+          sha8=$(sed -n 's/^sha8=\([0-9a-f]\{8\}\)$/\1/p' "$in/status.txt" | sed -n 1p)
+          # an empty segment would match no bridge name pattern (`*` is one or more characters), losing the red detail.
+          sha8=${sha8:-unknown}
+          echo "sha8=$sha8" >> "$GITHUB_OUTPUT"
+          cp "$in/status.txt" "$out/status.txt"
+          if [ -f "$in/report-detail.md" ]; then cp "$in/report-detail.md" "$out/regenerate-red-detail.md"; fi
+          if [ -f "$in/verification-metadata.xml.gz" ] && [ "$REGENERATE_RESULT" != success ]; then
+            echo "::error title=Metadata from a red job::regenerate ended '$REGENERATE_RESULT' and handed over a file; it is not stored."
+            exit 1
+          fi
+          if [ -f "$in/verification-metadata.xml.gz" ]; then
+            # why no pipe (assert-pipe-consumers: `| head -c` under pipefail): the .gz is capped at 262144 bytes above, so
+            # even gzip's ~1032:1 limit unpacks to ~270 MB at most, and the 8 MiB cap below still refuses it.
+            gzip -dc "$in/verification-metadata.xml.gz" > "$out/verification-metadata.xml" || true
+            if [ "$(wc -c < "$out/verification-metadata.xml")" -gt 8388608 ]; then echo "::error title=Over its cap::the metadata unpacks above 8 MiB"; exit 1; fi
+            if ! grep -q '<verification-metadata' "$out/verification-metadata.xml"; then echo "::error title=Not verification metadata::the unpacked file holds no <verification-metadata>"; exit 1; fi
+            echo "verification-metadata.xml: $(grep -c '<component ' "$out/verification-metadata.xml" || true) components, sha256 $(sha256sum < "$out/verification-metadata.xml" | cut -c1-64)"
+          fi
+          ls -la "$out"
+          NIKATRU_QUIET_EOF
+          NIKATRU_SHELL="${BASH:-bash}"; if command -v cygpath >/dev/null 2>&1; then NIKATRU_SHELL="$(cygpath -w "$NIKATRU_SHELL")"; fi
+          node "$GITHUB_WORKSPACE/../.nikatru-shell/quiet-step.mjs" --name regen-gradle-verify.upload.5 -- "$NIKATRU_SHELL" -e "$NIKATRU_QUIET"
+      - name: Store verification-metadata-${{ needs.gate.outputs.app }}-${{ steps.check.outputs.sha8 }} in the bridge's private home (generated)
         timeout-minutes: 5
         shell: bash
         working-directory: ${{ github.workspace }}
         env:
-          NIKATRU_PATHS: apps/${{ needs.gate.outputs.app }}/android/gradle/verification-metadata.xml
-          NIKATRU_ARTIFACT_NAME: verification-metadata-${{ needs.gate.outputs.app }}-${{ steps.plan.outputs.sha8 }}
+          NIKATRU_PATHS: ${{ runner.temp }}/regen-gradle-verify-store/
+          NIKATRU_ARTIFACT_NAME: verification-metadata-${{ needs.gate.outputs.app }}-${{ steps.check.outputs.sha8 }}
           NIKATRU_IF_NO_FILES: error
           BRIDGE_ARTIFACT_SECRET: ${{ secrets.BRIDGE_ARTIFACT_SECRET }}
           NIKATRU_BRIDGE_ARTIFACT_URL: https://gh-bridge.nikatru.workers.dev/artifact
@@ -563,7 +920,7 @@ jobs:
         working-directory: ${{ github.workspace }}
         env:
           NIKATRU_PATHS: ${{ runner.temp }}/report-detail.md
-          NIKATRU_ARTIFACT_NAME: report-detail-regen-gradle-verify.regenerate.${{ strategy.job-index }}
+          NIKATRU_ARTIFACT_NAME: report-detail-regen-gradle-verify.upload.${{ strategy.job-index }}
           NIKATRU_IF_NO_FILES: ignore
           BRIDGE_ARTIFACT_SECRET: ${{ secrets.BRIDGE_ARTIFACT_SECRET }}
           NIKATRU_BRIDGE_ARTIFACT_URL: https://gh-bridge.nikatru.workers.dev/artifact
@@ -571,7 +928,7 @@ jobs:
 
   nikatru-ran:
     name: Fail this run if it ran nothing (generated)
-    needs: [gate, regenerate]
+    needs: [gate, keys, regenerate, upload]
     if: "!cancelled()"
     runs-on: ubuntu-24.04
     defaults:
@@ -591,7 +948,7 @@ jobs:
       - name: Fail when every job of this run was skipped (generated)
         shell: bash
         env:
-          NIKATRU_RESULTS: gate=${{ needs.gate.result }} regenerate=${{ needs.regenerate.result }}
+          NIKATRU_RESULTS: gate=${{ needs.gate.result }} keys=${{ needs.keys.result }} regenerate=${{ needs.regenerate.result }} upload=${{ needs.upload.result }}
         run: |
           for r in $NIKATRU_RESULTS; do
             if [ "${r#*=}" != skipped ]; then echo "ran: $NIKATRU_RESULTS"; exit 0; fi

@@ -9,6 +9,7 @@ verdict back to that repository. It is generated: a pull request here is not how
   pull request, a push of main or a push of a tag in the private repository), plus `workflow_dispatch` and `schedule`.
   `e2e.yml` also runs on `e2e`, against the head of a private pull request (sent by the bridge on a `run-e2e` label of the pull request, or the maintainer).
   `new-user-e2e.yml` also runs on `new-user-e2e`, against the head of a private pull request (sent by the bridge on a `run-new-user-e2e` label of the pull request, or the maintainer).
+  `replay.yml` also runs on `replay`, against the head of a private pull request (sent by the maintainer).
   `claude-review.yml` also runs on `claude-review`, against the head of a private pull request (sent by the bridge on a `run-claude-review` label of the pull request, or the maintainer).
   `pr-recheck.yml` runs on the bridge's `nikatru-pr-recheck` (a pull request body or base
   edit, or a draft conversion) and re-runs only the gate job of the ONE run named by the newest
@@ -57,7 +58,7 @@ verdict back to that repository. It is generated: a pull request here is not how
   `BRIDGE_ARTIFACT_SECRET` (signs a private artifact upload; held only by the private-artifact
   steps), plus what each workflow reads.
 
-## Workflows (56)
+## Workflows (57)
 
 - `apple-expiry-write.yml`
 - `artifact-drill.yml`
@@ -99,6 +100,7 @@ verdict back to that repository. It is generated: a pull request here is not how
 - `regen-gradle-verify.yml`
 - `rehearse-app2.yml`
 - `renovate.yml` — reports `renovate`
+- `replay.yml` — reports `replay`
 - `review-crawl.yml`
 - `rollback.yml`
 - `shell-rehearsal.yml` — reports `shell-rehearsal`
