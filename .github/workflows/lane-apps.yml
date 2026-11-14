@@ -334,6 +334,7 @@ jobs:
           node tooling/sites/generate-site-identity.mjs
           node tooling/sites/locale-landings.mjs --write
           node tooling/sites/gen-legal-summaries.mjs
+          node tooling/legal/render-in-force-acceptance.mjs
           node tooling/sites/generate-discovery.mjs
           node tooling/sites/generate-well-known.mjs
           node tooling/sites/generate-personal-site.mjs
