@@ -210,24 +210,6 @@ jobs:
           rm -rf ../.nikatru-shell
           mv .nikatru-shell/.github/nikatru ../.nikatru-shell
           rm -rf .nikatru-shell
-      - name: Check out private main's composite actions (generated)
-        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
-        with:
-          repository: ${{ env.NIKATRU_PRIVATE_REPO }}
-          ref: refs/heads/main
-          path: .nikatru-trusted
-          sparse-checkout: .github/actions
-          ssh-key: ${{ secrets.PRIVATE_DEPLOY_KEY }}
-          persist-credentials: false
-      - name: Keep private main's composite actions out of the branch's tree (generated)
-        shell: bash
-        working-directory: ${{ github.workspace }}
-        run: printf '/.nikatru-trusted/\n' >> "$(git rev-parse --git-path info/exclude)"
-      - uses: ./.nikatru-trusted/.github/actions/setup-node
-        env:
-          NIKATRU_REF: ${{ github.event.client_payload.ref || 'refs/heads/main' }}
-          NIKATRU_EVENT_NAME: ${{ github.event.client_payload.event || github.event_name }}
-          NIKATRU_PR: ${{ github.event.client_payload.pr }}
       - name: Require ci-gate to have passed for this commit
         id: verdict
         env:
@@ -242,7 +224,7 @@ jobs:
           node tooling/ci/assert-gate-passed.mjs ${{ env.NIKATRU_SHA }} --schedule-lookback 20 --event "$EVENT_NAME" --output sha --timeout-seconds 2700 --gate-mode "$GATE_MODE"
           NIKATRU_QUIET_EOF
           NIKATRU_SHELL="${BASH:-bash}"; if command -v cygpath >/dev/null 2>&1; then NIKATRU_SHELL="$(cygpath -w "$NIKATRU_SHELL")"; fi
-          node "$GITHUB_WORKSPACE/../.nikatru-shell/quiet-step.mjs" --name submit-snap.gate.3 -- "$NIKATRU_SHELL" -e "$NIKATRU_QUIET"
+          node "$GITHUB_WORKSPACE/../.nikatru-shell/quiet-step.mjs" --name submit-snap.gate.2 -- "$NIKATRU_SHELL" -e "$NIKATRU_QUIET"
       - name: The app input names one app of the workspace
         id: app
         env:
@@ -266,7 +248,7 @@ jobs:
           echo "app=${APP_INPUT}" >> "$GITHUB_OUTPUT"
           NIKATRU_QUIET_EOF
           NIKATRU_SHELL="${BASH:-bash}"; if command -v cygpath >/dev/null 2>&1; then NIKATRU_SHELL="$(cygpath -w "$NIKATRU_SHELL")"; fi
-          node "$GITHUB_WORKSPACE/../.nikatru-shell/quiet-step.mjs" --name submit-snap.gate.4 -- "$NIKATRU_SHELL" -e "$NIKATRU_QUIET"
+          node "$GITHUB_WORKSPACE/../.nikatru-shell/quiet-step.mjs" --name submit-snap.gate.3 -- "$NIKATRU_SHELL" -e "$NIKATRU_QUIET"
       - name: Store this job's red detail in the bridge's private home (generated)
         if: always()
         continue-on-error: true
@@ -370,8 +352,6 @@ jobs:
         working-directory: ${{ github.workspace }}
         run: printf '/.nikatru-trusted/\n' >> "$(git rev-parse --git-path info/exclude)"
       - uses: ./.nikatru-trusted/.github/actions/setup-flutter
-        with:
-          node: 'pinned'
         env:
           NIKATRU_REF: ${{ github.event.client_payload.ref || 'refs/heads/main' }}
           NIKATRU_EVENT_NAME: ${{ github.event.client_payload.event || github.event_name }}

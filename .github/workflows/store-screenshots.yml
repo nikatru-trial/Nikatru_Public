@@ -1593,7 +1593,7 @@ jobs:
     if: needs.nikatru-pin.result == 'success' && (needs.nikatru-approve.result == 'success' || (needs.nikatru-approve.result == 'skipped' && !((inputs.private_ref || '') != ''))) && !cancelled() && !failure() && needs.gate.result == 'success' && (inputs.channel == 'ios-appstore')
     needs: [nikatru-pin, nikatru-approve, gate]
     runs-on: macos-26
-    timeout-minutes: 114
+    timeout-minutes: 109
     permissions:
       contents: read
       id-token: write
@@ -1837,7 +1837,7 @@ jobs:
         run: |
           NIKATRU_QUIET="$(mktemp "${RUNNER_TEMP:-/tmp}/nikatru-step.XXXXXX")"
           cat > "$NIKATRU_QUIET" <<'NIKATRU_QUIET_EOF'
-          node tooling/store/capture-deadline.mjs --minutes 38 -- node tooling/store/capture-play-screenshots.mjs --app "$APP" --channel ios-appstore --locale "$LOCALE"
+          node tooling/store/capture-deadline.mjs --minutes 33 -- node tooling/store/capture-play-screenshots.mjs --app "$APP" --channel ios-appstore --locale "$LOCALE"
           NIKATRU_QUIET_EOF
           NIKATRU_SHELL="${BASH:-bash}"; if command -v cygpath >/dev/null 2>&1; then NIKATRU_SHELL="$(cygpath -w "$NIKATRU_SHELL")"; fi
           node "$GITHUB_WORKSPACE/../.nikatru-shell/quiet-step.mjs" --name store-screenshots.capture-ios.13 -- "$NIKATRU_SHELL" -e "$NIKATRU_QUIET"
