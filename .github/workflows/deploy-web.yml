@@ -2,7 +2,7 @@
 # Do not edit: `node tooling/ci/gen-public-shell.mjs --check` re-generates it and fails on any difference.
 env:
   NIKATRU_PRIVATE_REPO: com-nikatru/Nikatru_Private
-  NIKATRU_SHELL_FINGERPRINT: e30826bd95605bcc18ae6babdcc917c60daf9072d8c566de09be75b37974ceb6
+  NIKATRU_SHELL_FINGERPRINT: 64263c80e629c5d944b225349eb1239c403883879dea21eae1cd367c451ead53
 
 name: Part of CI · Deploy web
 
@@ -297,7 +297,13 @@ jobs:
       - name: Self-host the engine's fallback fonts, pinned by sha256
         if: steps.plan.outputs.deploy == 'true'
         working-directory: .
-        run: node tooling/web/self-host-fallback-fonts.mjs apps/${{ matrix.app }}/build/web
+        env:
+          CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
+          CLOUDFLARE_ACCOUNT_ID: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
+        run: |
+          set -uo pipefail
+          node "$GITHUB_WORKSPACE/tooling/ops/npm-ci-retry.mjs" -- npm ci --ignore-scripts --prefix tooling/wrangler || { echo "::error title=Font mirror::the tooling/wrangler island did not install from its lockfile."; exit 1; }
+          node tooling/web/self-host-fallback-fonts.mjs apps/${{ matrix.app }}/build/web --mirror "$RUNNER_TEMP/font-mirror" --mirror-r2
       - name: Install glitchtip-cli (pinned by version AND by digest)
         if: steps.plan.outputs.deploy == 'true'
         working-directory: .

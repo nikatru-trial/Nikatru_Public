@@ -1070,7 +1070,7 @@ jobs:
         run: |
           NIKATRU_QUIET="$(mktemp "${RUNNER_TEMP:-/tmp}/nikatru-step.XXXXXX")"
           cat > "$NIKATRU_QUIET" <<'NIKATRU_QUIET_EOF'
-          node tooling/web/self-host-fallback-fonts.mjs apps/${{ matrix.app }}/build/web
+          node tooling/web/self-host-fallback-fonts.mjs apps/${{ matrix.app }}/build/web --mirror "$RUNNER_TEMP/font-mirror" --mirror-r2
           NIKATRU_QUIET_EOF
           NIKATRU_SHELL="${BASH:-bash}"; if command -v cygpath >/dev/null 2>&1; then NIKATRU_SHELL="$(cygpath -w "$NIKATRU_SHELL")"; fi
           node "$GITHUB_WORKSPACE/../.nikatru-shell/quiet-step.mjs" --name lane-build.web-artifacts.9 -- "$NIKATRU_SHELL" -e "$NIKATRU_QUIET"

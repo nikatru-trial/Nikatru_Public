@@ -1579,10 +1579,11 @@ jobs:
           node "$GITHUB_WORKSPACE/../.nikatru-shell/quiet-step.mjs" --name lane-guards.guards-platform.33 -- "$NIKATRU_SHELL" -e "$NIKATRU_QUIET"
       - name: Every pinned input is reached by a live update manager
         if: ${{ !cancelled() }}
+        timeout-minutes: 2
         run: |
           NIKATRU_QUIET="$(mktemp "${RUNNER_TEMP:-/tmp}/nikatru-step.XXXXXX")"
           cat > "$NIKATRU_QUIET" <<'NIKATRU_QUIET_EOF'
-          node tooling/ci/assert-update-coverage.mjs
+          node --single-threaded tooling/ci/assert-update-coverage.mjs
           NIKATRU_QUIET_EOF
           NIKATRU_SHELL="${BASH:-bash}"; if command -v cygpath >/dev/null 2>&1; then NIKATRU_SHELL="$(cygpath -w "$NIKATRU_SHELL")"; fi
           node "$GITHUB_WORKSPACE/../.nikatru-shell/quiet-step.mjs" --name lane-guards.guards-platform.34 -- "$NIKATRU_SHELL" -e "$NIKATRU_QUIET"
