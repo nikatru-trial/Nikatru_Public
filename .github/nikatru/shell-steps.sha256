@@ -60,7 +60,7 @@ ad1284c9d532389d82dfa5662919c6097e2a06b6d627377cbea6e870c591d366
 shell/.github/workflows/catalog-sync.yml
 cda84e514a7fc774687015f1731394492676cea974d9e108771ee9c95dea6b8b
 shell/.github/workflows/ci.yml
-c9e0d7d1b9304348077a83e9f4a1ce0b199f6e0070fda4686d45d81e06c6013c
+3761275c77c1da9f8fb0d9edb88fd0b70ef3a386099bb6b38cf73dcee1e28561
 shell/.github/workflows/claude-review.yml
 84f93cf3d64f4f440a4b731498f572051d6d4f6e5eb01f602fcf764afad660c6
 shell/.github/workflows/codeql.yml
@@ -104,9 +104,9 @@ shell/.github/workflows/main-healthy.yml
 shell/.github/workflows/migrate-platform-db.yml
 d31eac89af5631192efd2e30f4cb291cab0c134bb9a2b921123ec72c452289c5
 shell/.github/workflows/money-sandbox-e2e.yml
-15972f353f2357b87503f5eee2e39db2f31428baf7545adcfd45ca33cb79069d
+1800d7b85ce930878e8060d5429816eb03a8ba95d1e84194b457d8d897e77866
 shell/.github/workflows/money-sandbox-legs.yml
-9e8fb7bc2e6ebd3b631b646b4bf520fad1b895e1f25c6fb466af63ca38e1edfd
+de5148524c72b47a1f0cd85f951c6e681964e02a9e00368fdd13b418305745b7
 shell/.github/workflows/mutation-proofs.yml
 00f8e120eca6b23c0a5f984ca3778fe8acaf5c32fd939f8084163c86ebd7b2e7
 shell/.github/workflows/name-clearance.yml
