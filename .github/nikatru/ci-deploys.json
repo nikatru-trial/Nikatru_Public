@@ -43,6 +43,13 @@
       ]
     },
     {
+      "job": "money-walk-tip",
+      "context": "ci/money-walk-tip",
+      "members": [
+        "ci.money-walk-tip."
+      ]
+    },
+    {
       "job": "money-gate",
       "context": "ci/money-gate",
       "members": [

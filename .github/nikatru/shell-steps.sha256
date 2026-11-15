@@ -4,7 +4,7 @@ shell/.github/nikatru/build-platforms.json
 shell/.github/nikatru/catalog-sync.json
 b53746543da359e7dce191d2081c1bbb5eae05617f67694d3666dc977b562bd7
 shell/.github/nikatru/ci-deploys.json
-6dacf4b236c1b84ed5c95ca2f2ccfbc564df82581194424568da080a8fab7ba3
+60c178003b582b04a6285f197534817c45a689bc107e6970c726c84b7b0a2ee3
 shell/.github/nikatru/ci.json
 6d4390150d3264b62184f333e400a584271af7e4481627e39158ce6a1cc087c8
 shell/.github/nikatru/claude-review.json
@@ -60,7 +60,7 @@ ad1284c9d532389d82dfa5662919c6097e2a06b6d627377cbea6e870c591d366
 shell/.github/workflows/catalog-sync.yml
 cda84e514a7fc774687015f1731394492676cea974d9e108771ee9c95dea6b8b
 shell/.github/workflows/ci.yml
-3761275c77c1da9f8fb0d9edb88fd0b70ef3a386099bb6b38cf73dcee1e28561
+7e4e6e0ec2c06fa5cdb5eb9759f47e0c52f5fe4a72c4cd89e9b9f037da8de5b0
 shell/.github/workflows/claude-review.yml
 84f93cf3d64f4f440a4b731498f572051d6d4f6e5eb01f602fcf764afad660c6
 shell/.github/workflows/codeql.yml
