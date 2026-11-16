@@ -37,6 +37,7 @@
 import { readFileSync } from 'node:fs';
 import { dirname, join, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
+import { parseArgs } from 'node:util';
 import { judge, liveAnswer, validateProbes } from './live-probe.mjs';
 
 const HERE = dirname(fileURLToPath(import.meta.url));
@@ -135,10 +136,18 @@ export async function main(argv = process.argv.slice(2), deps = {}) {
     log = (line) => process.stdout.write(`${line}\n`),
     sleep = (ms) => new Promise((r) => setTimeout(r, ms)),
   } = deps;
-  const dryRun = argv.includes('--dry-run');
+  // Every flag is declared: an undeclared one (a mistyped --dry-run above all) is refused before any probe, page or
+  // heartbeat, so a typo can never run the real thing.
+  let values;
+  try {
+    ({ values } = parseArgs({ args: argv, options: { 'dry-run': { type: 'boolean' }, probes: { type: 'string' } }, allowPositionals: true, strict: true }));
+  } catch (e) {
+    log(`REFUSED, nothing probed, paged or beaten: ${e.message}\nusage: owner-page-watch.mjs [--dry-run] [--probes <file>]`);
+    return { code: 2, down: [], paged: false, beaten: false };
+  }
+  const dryRun = values['dry-run'] === true;
   const at = now().toISOString();
-  const i = argv.indexOf('--probes');
-  const readProbes = deps.readProbes ?? (() => JSON.parse(readFileSync(i === -1 ? PROBES_FILE : argv[i + 1], 'utf8')));
+  const readProbes = deps.readProbes ?? (() => JSON.parse(readFileSync(values.probes ?? PROBES_FILE, 'utf8')));
   const readZone = deps.readZone ?? (() => JSON.parse(readFileSync(ZONE_FILE, 'utf8')));
   const lost = (msg, extra = {}) => (log(`COVERAGE LOST: ${msg}`), { code: 2, down: [], paged: false, beaten: false, ...extra });
 

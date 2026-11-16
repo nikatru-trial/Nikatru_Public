@@ -70,6 +70,7 @@
 import { appendFileSync, closeSync, existsSync, fstatSync, ftruncateSync, mkdirSync, openSync, readFileSync, renameSync, writeFileSync, writeSync } from 'node:fs';
 import { dirname, join, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
+import { parseArgs } from 'node:util';
 
 const HERE = dirname(fileURLToPath(import.meta.url));
 export const DEFAULT_CONF = '/etc/nikatru/live-probe.conf';
@@ -313,14 +314,23 @@ async function post(url, body, headers, timeoutMs) {
 }
 
 export async function main(argv = process.argv.slice(2), env = process.env) {
-  const flag = (n) => argv.includes(n);
-  const arg = (n) => { const i = argv.indexOf(n); return i === -1 ? null : argv[i + 1]; };
-  if (!flag('--once')) {
-    console.error('usage: live-probe.mjs --once [--dry-run] [--now <ISO>] [--fixtures <file>]');
+  const usage = 'usage: live-probe.mjs --once [--dry-run] [--now <ISO>] [--fixtures <file>]';
+  // Every flag is declared: an undeclared one (a mistyped --dry-run above all) is refused before any probe, page or
+  // state write, so a typo can never run the real thing.
+  let values;
+  try {
+    ({ values } = parseArgs({ args: argv, options: { once: { type: 'boolean' }, 'dry-run': { type: 'boolean' }, now: { type: 'string' }, fixtures: { type: 'string' } }, allowPositionals: true, strict: true }));
+  } catch (e) {
+    console.error(`live-probe: refused, nothing probed or sent — ${e.message}\n${usage}`);
     return 2;
   }
-  const dry = flag('--dry-run');
-  const nowMs = arg('--now') ? Date.parse(arg('--now')) : Date.now();
+  const arg = (n) => values[n] ?? null;
+  if (!values.once) {
+    console.error(usage);
+    return 2;
+  }
+  const dry = values['dry-run'] === true;
+  const nowMs = arg('now') ? Date.parse(arg('now')) : Date.now();
   const lost = (why) => { console.error(`live-probe: COVERAGE LOST — ${why}`); return 2; };
 
   const confPath = env.LIVE_PROBE_CONF ?? DEFAULT_CONF;
@@ -346,7 +356,7 @@ export async function main(argv = process.argv.slice(2), env = process.env) {
     }
   }
 
-  const answer = arg('--fixtures') ? fixtureAnswerer(arg('--fixtures')) : (row) => liveAnswer(row, doc.alerting.timeoutMs);
+  const answer = arg('fixtures') ? fixtureAnswerer(arg('fixtures')) : (row) => liveAnswer(row, doc.alerting.timeoutMs);
   const results = await Promise.all(doc.rows.map(async (row) => ({ id: row.id, ...judge(row, await answer(row)) })));
   for (const r of results) console.log(`  ${r.ok ? 'ok  ' : 'FAIL'} ${r.id} — ${r.why}`);
 
