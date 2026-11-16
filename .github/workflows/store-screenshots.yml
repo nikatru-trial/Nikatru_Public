@@ -1356,37 +1356,7 @@ jobs:
         run: |
           NIKATRU_QUIET="$(mktemp "${RUNNER_TEMP:-/tmp}/nikatru-step.XXXXXX")"
           cat > "$NIKATRU_QUIET" <<'NIKATRU_QUIET_EOF'
-          set -euo pipefail
-          node -e '
-            const fs = require("fs");
-            const channel = process.env.STORE_CHANNEL;
-            const r = JSON.parse(fs.readFileSync("tooling/channel-register.json", "utf8"));
-            const s = r.storeMetadataContract.perChannel[channel].graphicAssets.screenshots;
-            const sets = Object.entries(s.deviceTypeCoverage.sets);
-            const dirs = [...new Set(sets.map(([, v]) => v.dir))];
-            if (dirs.length !== 1) {
-              console.error("::error title=This job captures one directory::the register declares " + dirs.length + " distinct set director(ies) for " + channel + " (" + dirs.join(", ") + "). The upload and the pull request below are written for one. Extend them in the same change that declares the second set.");
-              process.exit(1);
-            }
-            const caps = sets.map(([, v]) => v.capture).filter(Boolean);
-            if (caps.length !== 1) {
-              console.error("::error title=No capture geometry::the register declares " + caps.length + " `capture` limb(s) for " + channel + ". tooling/store/capture-play-screenshots.mjs reads its viewport from that limb, and with none it has nothing to open a window at.");
-              process.exit(1);
-            }
-            const c = caps[0];
-            const want = String(c.runner || "");
-            const got = String(process.env.RUNNER_LABEL || "");
-            if (want !== got) {
-              console.error("::error title=The runner and the register disagree::the register names `" + want + "` for " + channel + " and this job is running on `" + got + "`. `runs-on` cannot be read from a file — GitHub resolves it before any step runs — so the expression at the top of this job and the register have to be changed together. One of the two is now wrong.");
-              process.exit(1);
-            }
-            const out = [
-              "dir=apps/" + process.env.APP + "/store/" + channel + "/" + (process.env.LOCALE_DIR || "") + dirs[0],
-              "device=" + c.flutterDevice,
-            ];
-            fs.appendFileSync(process.env.GITHUB_OUTPUT, out.join("\n") + "\n");
-            console.log(out.join("\n"));
-          '
+          node tooling/store/capture-plan.mjs desktop
           NIKATRU_QUIET_EOF
           NIKATRU_SHELL="${BASH:-bash}"; if command -v cygpath >/dev/null 2>&1; then NIKATRU_SHELL="$(cygpath -w "$NIKATRU_SHELL")"; fi
           node "$GITHUB_WORKSPACE/../.nikatru-shell/quiet-step.mjs" --name store-screenshots.capture-desktop-native.8 -- "$NIKATRU_SHELL" --noprofile --norc -eo pipefail "$NIKATRU_QUIET"
@@ -1748,33 +1718,7 @@ jobs:
         run: |
           NIKATRU_QUIET="$(mktemp "${RUNNER_TEMP:-/tmp}/nikatru-step.XXXXXX")"
           cat > "$NIKATRU_QUIET" <<'NIKATRU_QUIET_EOF'
-          set -euo pipefail
-          node -e '
-            const fs = require("fs");
-            const r = JSON.parse(fs.readFileSync("tooling/channel-register.json", "utf8"));
-            const s = r.storeMetadataContract.perChannel["ios-appstore"].graphicAssets.screenshots;
-            const sets = Object.entries(s.deviceTypeCoverage.sets);
-            const bad = sets.filter(([, v]) => !v.capture || !v.capture.flutterDevice);
-            if (bad.length) {
-              console.error("::error title=No capture geometry::set(s) " + bad.map(([k]) => k).join(", ") + " declare no `capture.flutterDevice`. tooling/store/capture-play-screenshots.mjs reads the device and the viewport from that limb, and with none it has nothing to open.");
-              process.exit(1);
-            }
-            const wrong = sets.filter(([, v]) => v.capture.runner !== "macos-26");
-            if (wrong.length) {
-              console.error("::error title=The runner and the register disagree::set(s) " + wrong.map(([k]) => k).join(", ") + " name a runner other than `macos-26`, and this job is pinned to macos-26. `runs-on` cannot be read from a file — GitHub resolves it before any step runs — so the two have to be changed together.");
-              process.exit(1);
-            }
-            const dirs = sets.map(([, v]) => "apps/" + process.env.APP + "/store/ios-appstore/" + (process.env.LOCALE_DIR || "") + v.dir);
-            const devices = [...new Set(sets.map(([, v]) => v.capture.flutterDevice))];
-            // why `;` and not a newline: a step output is one KEY=VALUE line
-            // unless it is written with a heredoc delimiter, and a simulator
-            // name contains spaces, so neither a raw newline nor whitespace can
-            // separate them. The boot loop below splits on `;`.
-            fs.appendFileSync(process.env.GITHUB_OUTPUT, "dirs=" + dirs.join(" ") + "\n");
-            fs.appendFileSync(process.env.GITHUB_OUTPUT, "devices=" + devices.join(";") + "\n");
-            console.log("dirs: " + dirs.join(" "));
-            console.log("devices: " + devices.join(" | "));
-          '
+          node tooling/store/capture-plan.mjs ios
           NIKATRU_QUIET_EOF
           NIKATRU_SHELL="${BASH:-bash}"; if command -v cygpath >/dev/null 2>&1; then NIKATRU_SHELL="$(cygpath -w "$NIKATRU_SHELL")"; fi
           node "$GITHUB_WORKSPACE/../.nikatru-shell/quiet-step.mjs" --name store-screenshots.capture-ios.9 -- "$NIKATRU_SHELL" -e "$NIKATRU_QUIET"

@@ -155,6 +155,7 @@ jobs:
     timeout-minutes: 10
     outputs:
       apps: ${{ steps.apps.outputs.apps }}
+      macos_apps: ${{ steps.macos.outputs.macos_apps }}
     permissions:
       contents: read
       id-token: write
@@ -264,6 +265,19 @@ jobs:
           NIKATRU_QUIET_EOF
           NIKATRU_SHELL="${BASH:-bash}"; if command -v cygpath >/dev/null 2>&1; then NIKATRU_SHELL="$(cygpath -w "$NIKATRU_SHELL")"; fi
           node "$GITHUB_WORKSPACE/../.nikatru-shell/quiet-step.mjs" --name store-billing.generated.5 -- "$NIKATRU_SHELL" -e "$NIKATRU_QUIET"
+      - name: Every app with a configuration and a macOS target
+        id: macos
+        env:
+          APPS: ${{ steps.apps.outputs.apps }}
+        run: |
+          NIKATRU_QUIET="$(mktemp "${RUNNER_TEMP:-/tmp}/nikatru-step.XXXXXX")"
+          cat > "$NIKATRU_QUIET" <<'NIKATRU_QUIET_EOF'
+          set -euo pipefail
+          macos="$(node -e 'const fs=require("fs");const r=JSON.parse(fs.readFileSync("services/platform/src/app-config-data.json","utf8"));const a=JSON.parse(process.env.APPS).filter(id=>fs.existsSync(`apps/${id}/macos/Runner.xcodeproj/project.pbxproj`)&&Object.values(r.prices?.apps?.[id]??{}).some(p=>p?.channels?.["macos-appstore"]?.sold==="yes"));if(!a.length){console.error("no app with a StoreKit configuration has a macOS target selling on macos-appstore");process.exit(1)}console.log(JSON.stringify(a))')"
+          echo "macos_apps=${macos}" >> "$GITHUB_OUTPUT"
+          NIKATRU_QUIET_EOF
+          NIKATRU_SHELL="${BASH:-bash}"; if command -v cygpath >/dev/null 2>&1; then NIKATRU_SHELL="$(cygpath -w "$NIKATRU_SHELL")"; fi
+          node "$GITHUB_WORKSPACE/../.nikatru-shell/quiet-step.mjs" --name store-billing.generated.6 -- "$NIKATRU_SHELL" -e "$NIKATRU_QUIET"
       - name: Store this job's red detail in the bridge's private home (generated)
         if: always()
         continue-on-error: true
@@ -826,6 +840,318 @@ jobs:
           NIKATRU_BRIDGE_ARTIFACT_URL: https://gh-bridge.nikatru.workers.dev/artifact
         run: node tooling/ops/bridge-artifact.mjs upload
 
+  storekit-macos:
+    name: StoreKit Testing — ${{ matrix.app }} (macOS)
+    needs: [nikatru-pin, generated]
+    if: (github.event.client_payload.ref || inputs.private_ref || 'refs/heads/main') == 'refs/heads/main'
+    runs-on: macos-26
+    timeout-minutes: 50
+    strategy:
+      fail-fast: false
+      max-parallel: 1
+      matrix:
+        app: ${{ fromJSON(needs.generated.outputs.macos_apps) }}
+    env:
+      APP: ${{ matrix.app }}
+      DEVELOPER_DIR: /Applications/Xcode_26.2.app/Contents/Developer
+      STOREKIT_XCODE: '26.2'
+    permissions:
+      contents: read
+      id-token: write
+    steps:
+      - name: Check out the private tree (generated)
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
+        with:
+          repository: ${{ env.NIKATRU_PRIVATE_REPO }}
+          ref: ${{ needs.nikatru-pin.outputs.sha || 'nikatru-pin-did-not-succeed..' }}
+          ssh-key: ${{ secrets.PRIVATE_DEPLOY_KEY }}
+          persist-credentials: false
+      - name: Name the private commit (generated)
+        shell: bash
+        working-directory: ${{ github.workspace }}
+        env:
+          NIKATRU_P_EVENT: ${{ github.event.client_payload.event || github.event_name }}
+          NIKATRU_P_REF: ${{ github.event.client_payload.ref || inputs.private_ref || 'refs/heads/main' }}
+          NIKATRU_P_BASE_SHA: ${{ github.event.client_payload.base_sha }}
+          NIKATRU_P_BASE_REF: ${{ github.event.client_payload.base_ref }}
+          NIKATRU_P_PR: ${{ github.event.client_payload.pr }}
+          NIKATRU_P_PR_CREATED_AT: ${{ github.event.client_payload.pr_created_at }}
+          NIKATRU_P_DRAFT: ${{ github.event.client_payload.draft }}
+          NIKATRU_P_SHA: ${{ github.event.client_payload.sha }}
+        run: |
+          if [ "$NIKATRU_P_EVENT" = pull_request ]; then
+            set -- $(git cat-file -p HEAD | sed -n '1,/^$/s/^parent //p')
+            if [ "${2:-}" != "$NIKATRU_P_SHA" ]; then
+              echo "::error::the checked-out merge of PR #$NIKATRU_P_PR is not the merge of the dispatched head $NIKATRU_P_SHA (its second parent is ${2:-none}); the nikatru-pin job pins it — re-run the whole workflow, not this job"
+              exit 1
+            fi
+          fi
+          {
+            echo "NIKATRU_SHA=$(git rev-parse HEAD)"
+            echo "NIKATRU_HEAD_SHA=${NIKATRU_P_SHA:-$(git rev-parse HEAD)}"
+            echo "NIKATRU_EVENT_NAME=$NIKATRU_P_EVENT"
+            echo "NIKATRU_REF=$NIKATRU_P_REF"
+            echo "NIKATRU_REF_NAME=${NIKATRU_P_REF#refs/*/}"
+            echo "NIKATRU_BASE_SHA=$NIKATRU_P_BASE_SHA"
+            echo "NIKATRU_BASE_REF=$NIKATRU_P_BASE_REF"
+            echo "NIKATRU_PR=$NIKATRU_P_PR"
+            echo "NIKATRU_PR_CREATED_AT=$NIKATRU_P_PR_CREATED_AT"
+            echo "NIKATRU_DRAFT=$NIKATRU_P_DRAFT"
+          } >> "$GITHUB_ENV"
+      - name: Check out this shell repository's own step wrapper and reporter (generated)
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
+        with:
+          path: .nikatru-shell
+          sparse-checkout: .github/nikatru
+          persist-credentials: false
+      - name: Stage the shell's own copies outside the private checkout (generated)
+        shell: bash
+        working-directory: ${{ github.workspace }}
+        run: |
+          rm -rf ../.nikatru-shell
+          mv .nikatru-shell/.github/nikatru ../.nikatru-shell
+          rm -rf .nikatru-shell
+      - name: Check out private main's composite actions (generated)
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
+        with:
+          repository: ${{ env.NIKATRU_PRIVATE_REPO }}
+          ref: refs/heads/main
+          path: .nikatru-trusted
+          sparse-checkout: .github/actions
+          ssh-key: ${{ secrets.PRIVATE_DEPLOY_KEY }}
+          persist-credentials: false
+      - name: Keep private main's composite actions out of the branch's tree (generated)
+        shell: bash
+        working-directory: ${{ github.workspace }}
+        run: printf '/.nikatru-trusted/\n' >> "$(git rev-parse --git-path info/exclude)"
+      - uses: ./.nikatru-trusted/.github/actions/setup-node
+        env:
+          NIKATRU_REF: ${{ github.event.client_payload.ref || inputs.private_ref || 'refs/heads/main' }}
+          NIKATRU_EVENT_NAME: ${{ github.event.client_payload.event || github.event_name }}
+          NIKATRU_PR: ${{ github.event.client_payload.pr }}
+      - name: StoreKit Testing runs on the pinned Xcode
+        run: |
+          NIKATRU_QUIET="$(mktemp "${RUNNER_TEMP:-/tmp}/nikatru-step.XXXXXX")"
+          cat > "$NIKATRU_QUIET" <<'NIKATRU_QUIET_EOF'
+          set -euo pipefail
+          [ -d "$DEVELOPER_DIR" ] || { echo "::error title=StoreKit harness::${DEVELOPER_DIR} is not on this runner"; exit 1; }
+          have="$(xcodebuild -version | sed -n 1p)"
+          [ "$have" = "Xcode ${STOREKIT_XCODE}" ] || { echo "::error title=StoreKit harness::DEVELOPER_DIR selects ${have}, not Xcode ${STOREKIT_XCODE}"; exit 1; }
+          echo "::nikatru-detail::StoreKit Testing (macOS) on ${have} ($(xcodebuild -version | tail -n 1)) · $(sw_vers -productName) $(sw_vers -productVersion) $(uname -m)"
+          NIKATRU_QUIET_EOF
+          NIKATRU_SHELL="${BASH:-bash}"; if command -v cygpath >/dev/null 2>&1; then NIKATRU_SHELL="$(cygpath -w "$NIKATRU_SHELL")"; fi
+          node "$GITHUB_WORKSPACE/../.nikatru-shell/quiet-step.mjs" --name store-billing.storekit-macos.3 -- "$NIKATRU_SHELL" -e "$NIKATRU_QUIET"
+      - name: Check out private main's composite actions (generated)
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
+        with:
+          repository: ${{ env.NIKATRU_PRIVATE_REPO }}
+          ref: refs/heads/main
+          path: .nikatru-trusted
+          sparse-checkout: .github/actions
+          ssh-key: ${{ secrets.PRIVATE_DEPLOY_KEY }}
+          persist-credentials: false
+      - name: Keep private main's composite actions out of the branch's tree (generated)
+        shell: bash
+        working-directory: ${{ github.workspace }}
+        run: printf '/.nikatru-trusted/\n' >> "$(git rev-parse --git-path info/exclude)"
+      - uses: ./.nikatru-trusted/.github/actions/setup-flutter
+        with:
+          cache: 'false'
+        env:
+          NIKATRU_REF: ${{ github.event.client_payload.ref || inputs.private_ref || 'refs/heads/main' }}
+          NIKATRU_EVENT_NAME: ${{ github.event.client_payload.event || github.event_name }}
+          NIKATRU_PR: ${{ github.event.client_payload.pr }}
+      - name: flutter pub get
+        working-directory: apps/${{ matrix.app }}
+        run: |
+          NIKATRU_QUIET="$(mktemp "${RUNNER_TEMP:-/tmp}/nikatru-step.XXXXXX")"
+          cat > "$NIKATRU_QUIET" <<'NIKATRU_QUIET_EOF'
+          flutter pub get --enforce-lockfile
+          NIKATRU_QUIET_EOF
+          NIKATRU_SHELL="${BASH:-bash}"; if command -v cygpath >/dev/null 2>&1; then NIKATRU_SHELL="$(cygpath -w "$NIKATRU_SHELL")"; fi
+          node "$GITHUB_WORKSPACE/../.nikatru-shell/quiet-step.mjs" --name store-billing.storekit-macos.5 -- "$NIKATRU_SHELL" -e "$NIKATRU_QUIET"
+      - name: Build the macOS app (pods, ephemeral Flutter files)
+        working-directory: apps/${{ matrix.app }}
+        run: |
+          NIKATRU_QUIET="$(mktemp "${RUNNER_TEMP:-/tmp}/nikatru-step.XXXXXX")"
+          cat > "$NIKATRU_QUIET" <<'NIKATRU_QUIET_EOF'
+          flutter build macos --debug
+          NIKATRU_QUIET_EOF
+          NIKATRU_SHELL="${BASH:-bash}"; if command -v cygpath >/dev/null 2>&1; then NIKATRU_SHELL="$(cygpath -w "$NIKATRU_SHELL")"; fi
+          node "$GITHUB_WORKSPACE/../.nikatru-shell/quiet-step.mjs" --name store-billing.storekit-macos.6 -- "$NIKATRU_SHELL" -e "$NIKATRU_QUIET"
+      - name: Add the one StoreKit harness to RunnerTests
+        run: |
+          NIKATRU_QUIET="$(mktemp "${RUNNER_TEMP:-/tmp}/nikatru-step.XXXXXX")"
+          cat > "$NIKATRU_QUIET" <<'NIKATRU_QUIET_EOF'
+          cat tooling/store-billing/ios/StoreBillingTests.swift >> "apps/${APP}/macos/RunnerTests/RunnerTests.swift"
+          NIKATRU_QUIET_EOF
+          NIKATRU_SHELL="${BASH:-bash}"; if command -v cygpath >/dev/null 2>&1; then NIKATRU_SHELL="$(cygpath -w "$NIKATRU_SHELL")"; fi
+          node "$GITHUB_WORKSPACE/../.nikatru-shell/quiet-step.mjs" --name store-billing.storekit-macos.7 -- "$NIKATRU_SHELL" -e "$NIKATRU_QUIET"
+      - name: Prepare the macOS test host (entitlements, the scheme's StoreKit Configuration)
+        run: |
+          NIKATRU_QUIET="$(mktemp "${RUNNER_TEMP:-/tmp}/nikatru-step.XXXXXX")"
+          cat > "$NIKATRU_QUIET" <<'NIKATRU_QUIET_EOF'
+          node tooling/store-billing/macos-host.mjs --app "$APP" --storekit "tooling/store-billing/generated/${APP}.storekit" --allow "$RUNNER_TEMP" --allow "${GITHUB_WORKSPACE}/tooling/store-billing/generated"
+          NIKATRU_QUIET_EOF
+          NIKATRU_SHELL="${BASH:-bash}"; if command -v cygpath >/dev/null 2>&1; then NIKATRU_SHELL="$(cygpath -w "$NIKATRU_SHELL")"; fi
+          node "$GITHUB_WORKSPACE/../.nikatru-shell/quiet-step.mjs" --name store-billing.storekit-macos.8 -- "$NIKATRU_SHELL" -e "$NIKATRU_QUIET"
+      - name: Build the StoreKit test host (build-for-testing, macOS)
+        timeout-minutes: 15
+        run: |
+          NIKATRU_QUIET="$(mktemp "${RUNNER_TEMP:-/tmp}/nikatru-step.XXXXXX")"
+          cat > "$NIKATRU_QUIET" <<'NIKATRU_QUIET_EOF'
+          set -euo pipefail
+          log="${RUNNER_TEMP}/xcodebuild-build.log"
+          code=0
+          xcodebuild build-for-testing \
+            -workspace "apps/${APP}/macos/Runner.xcworkspace" \
+            -scheme Runner \
+            -destination "platform=macOS,arch=$(uname -m)" \
+            -derivedDataPath "${RUNNER_TEMP}/DerivedData" \
+            CODE_SIGN_STYLE=Manual CODE_SIGN_IDENTITY=- >"$log" 2>&1 || code=$?
+          [ "$code" -eq 0 ] || { tail -n 200 "$log"; echo "::error title=StoreKit harness::xcodebuild build-for-testing (macOS) exited ${code}"; exit "$code"; }
+          { grep -E '^(CodeSign|ProcessProductPackaging)' "$log" || true; } | sed 's/^/::nikatru-detail::/'
+          NIKATRU_QUIET_EOF
+          NIKATRU_SHELL="${BASH:-bash}"; if command -v cygpath >/dev/null 2>&1; then NIKATRU_SHELL="$(cygpath -w "$NIKATRU_SHELL")"; fi
+          node "$GITHUB_WORKSPACE/../.nikatru-shell/quiet-step.mjs" --name store-billing.storekit-macos.9 -- "$NIKATRU_SHELL" -e "$NIKATRU_QUIET"
+      - name: The test host carries get-task-allow and the sandbox (codesign -d --entitlements)
+        run: |
+          NIKATRU_QUIET="$(mktemp "${RUNNER_TEMP:-/tmp}/nikatru-step.XXXXXX")"
+          cat > "$NIKATRU_QUIET" <<'NIKATRU_QUIET_EOF'
+          set -euo pipefail
+          app="$(find "${RUNNER_TEMP}/DerivedData/Build/Products/Debug" -maxdepth 1 -name '*.app' | sed -n 1p)"
+          [ -n "$app" ] || { echo "::error title=StoreKit harness::build-for-testing left no .app in DerivedData/Build/Products/Debug"; exit 1; }
+          ent="${RUNNER_TEMP}/host-entitlements.plist"
+          codesign -d --entitlements :- "$app" >"$ent" 2>/dev/null
+          sed 's/^/::nikatru-detail::codesign: /' "$ent"
+          for key in com.apple.security.get-task-allow com.apple.security.app-sandbox; do
+            [ "$(plutil -extract "$key" raw -o - "$ent" 2>/dev/null || true)" = "true" ] || { echo "::error title=StoreKit harness::the macOS test host ${app##*/} does not carry ${key}"; exit 1; }
+          done
+          grep -F 'StoreKitConfigurationFileReference' -A 1 "apps/${APP}/macos/Runner.xcodeproj/xcshareddata/xcschemes/Runner.xcscheme" | sed 's/^/::nikatru-detail::scheme: /'
+          NIKATRU_QUIET_EOF
+          NIKATRU_SHELL="${BASH:-bash}"; if command -v cygpath >/dev/null 2>&1; then NIKATRU_SHELL="$(cygpath -w "$NIKATRU_SHELL")"; fi
+          node "$GITHUB_WORKSPACE/../.nikatru-shell/quiet-step.mjs" --name store-billing.storekit-macos.10 -- "$NIKATRU_SHELL" -e "$NIKATRU_QUIET"
+      - name: xcodebuild test — StoreBillingTests (macOS)
+        id: xctest
+        timeout-minutes: 25
+        env:
+          TEST_RUNNER_STOREKIT_CONFIG: ${{ github.workspace }}/tooling/store-billing/generated/${{ matrix.app }}.storekit
+          TEST_RUNNER_STOREKIT_JWS_OUT: ${{ runner.temp }}/storekit-jws-macos-${{ matrix.app }}.json
+          TEST_RUNNER_STOREKIT_SKIPS_OUT: ${{ runner.temp }}/storekit-skips-macos-${{ matrix.app }}.json
+          XCODEBUILD_BUDGET_S: '1380'
+          ONLY_TESTING: ${{ inputs.only_testing }}
+        run: |
+          NIKATRU_QUIET="$(mktemp "${RUNNER_TEMP:-/tmp}/nikatru-step.XXXXXX")"
+          cat > "$NIKATRU_QUIET" <<'NIKATRU_QUIET_EOF'
+          set -euo pipefail
+          log="${RUNNER_TEMP}/xcodebuild.log"
+          only="RunnerTests/StoreBillingTests"
+          if [ -n "${ONLY_TESTING:-}" ]; then
+            [[ "$ONLY_TESTING" =~ ^test[A-Za-z0-9_]+$ ]] && grep -qE "^  func ${ONLY_TESTING}\(\) async throws \{" tooling/store-billing/ios/StoreBillingTests.swift \
+              || { echo "::error title=StoreKit harness::only_testing '${ONLY_TESTING}' is not a test method of StoreBillingTests"; exit 1; }
+            only="${only}/${ONLY_TESTING}"
+            echo "::warning title=StoreKit harness::only_testing: running ${only} ALONE on macOS (diagnosis; the scenario gates still judge the whole list)"
+          fi
+          xcodebuild test \
+            -workspace "apps/${APP}/macos/Runner.xcworkspace" \
+            -scheme Runner \
+            -destination "platform=macOS,arch=$(uname -m)" \
+            -derivedDataPath "${RUNNER_TEMP}/DerivedData" \
+            "-only-testing:${only}" \
+            -parallel-testing-enabled NO \
+            -test-timeouts-enabled YES \
+            -default-test-execution-time-allowance 120 \
+            -maximum-test-execution-time-allowance 180 \
+            -resultBundlePath "${RUNNER_TEMP}/StoreBillingTests.xcresult" \
+            CODE_SIGN_STYLE=Manual CODE_SIGN_IDENTITY=- >"$log" 2>&1 &
+          xb=$!
+          ( sleep "$XCODEBUILD_BUDGET_S"; echo "WATCHDOG: xcodebuild ran past ${XCODEBUILD_BUDGET_S}s; stopping it" >>"$log"; kill -TERM "$xb" ) >/dev/null 2>&1 &
+          dog=$!
+          code=0
+          wait "$xb" || code=$?
+          pkill -P "$dog" 2>/dev/null || true
+          kill "$dog" 2>/dev/null || true
+          echo "StoreKit host (macOS): $(xcodebuild -version | sed -n 1p) · $(sw_vers -productName) $(sw_vers -productVersion) $(uname -m)"
+          grep -E '^(Test Case .*(passed|failed)|Executed [0-9]+ tests?)|error:|WATCHDOG' "$log" | tail -n 80 || true
+          [ "$code" -eq 0 ] || { echo "::error title=StoreKit harness::xcodebuild test (macOS) exited ${code}; the tail of xcodebuild.log follows in the next step"; exit "$code"; }
+          out="${RUNNER_TEMP}/storekit-jws-macos-${APP}.json"
+          [ -s "$out" ] || { echo "::error title=StoreKit harness::the harness wrote no transaction JWS to ${out}, so the server cannot be shown refusing one"; exit 1; }
+          NIKATRU_QUIET_EOF
+          NIKATRU_SHELL="${BASH:-bash}"; if command -v cygpath >/dev/null 2>&1; then NIKATRU_SHELL="$(cygpath -w "$NIKATRU_SHELL")"; fi
+          node "$GITHUB_WORKSPACE/../.nikatru-shell/quiet-step.mjs" --name store-billing.storekit-macos.11 -- "$NIKATRU_SHELL" -e "$NIKATRU_QUIET"
+      - name: Every scenario and every offering recorded a transaction (macOS)
+        env:
+          JWS: ${{ runner.temp }}/storekit-jws-macos-${{ matrix.app }}.json
+          SKIPS: ${{ runner.temp }}/storekit-skips-macos-${{ matrix.app }}.json
+          STOREKIT: tooling/store-billing/generated/${{ matrix.app }}.storekit
+        run: |
+          NIKATRU_QUIET="$(mktemp "${RUNNER_TEMP:-/tmp}/nikatru-step.XXXXXX")"
+          cat > "$NIKATRU_QUIET" <<'NIKATRU_QUIET_EOF'
+          node tooling/store-billing/assert-scenarios.mjs --jws "$JWS" --skips "$SKIPS" --xcode "$(xcodebuild -version | sed -n 1p)" --platform macos --app "$APP" --storekit "$STOREKIT" --channel macos-appstore
+          NIKATRU_QUIET_EOF
+          NIKATRU_SHELL="${BASH:-bash}"; if command -v cygpath >/dev/null 2>&1; then NIKATRU_SHELL="$(cygpath -w "$NIKATRU_SHELL")"; fi
+          node "$GITHUB_WORKSPACE/../.nikatru-shell/quiet-step.mjs" --name store-billing.storekit-macos.12 -- "$NIKATRU_SHELL" -e "$NIKATRU_QUIET"
+      - name: The tail of xcodebuild.log (red or cancelled run)
+        if: always() && (steps.xctest.outcome == 'failure' || steps.xctest.outcome == 'cancelled')
+        run: |
+          NIKATRU_QUIET="$(mktemp "${RUNNER_TEMP:-/tmp}/nikatru-step.XXXXXX")"
+          cat > "$NIKATRU_QUIET" <<'NIKATRU_QUIET_EOF'
+          log="${RUNNER_TEMP}/xcodebuild.log"
+          if [ -s "$log" ]; then
+            tail -n 300 "$log"
+          else
+            echo "xcodebuild.log is empty or missing: xcodebuild never started"
+          fi
+          exit 1
+          NIKATRU_QUIET_EOF
+          NIKATRU_SHELL="${BASH:-bash}"; if command -v cygpath >/dev/null 2>&1; then NIKATRU_SHELL="$(cygpath -w "$NIKATRU_SHELL")"; fi
+          node "$GITHUB_WORKSPACE/../.nikatru-shell/quiet-step.mjs" --name store-billing.storekit-macos.13 -- "$NIKATRU_SHELL" -e "$NIKATRU_QUIET"
+      - name: Store storekit-macos-xcresult-${{ matrix.app }} in the bridge's private home (generated)
+        if: always()
+        continue-on-error: true
+        shell: bash
+        working-directory: ${{ github.workspace }}
+        env:
+          NIKATRU_PATHS: |
+            ${{ runner.temp }}/xcodebuild.log
+            ${{ runner.temp }}/StoreBillingTests.xcresult
+          NIKATRU_ARTIFACT_NAME: storekit-macos-xcresult-${{ matrix.app }}
+          NIKATRU_IF_NO_FILES: ignore
+          BRIDGE_ARTIFACT_SECRET: ${{ secrets.BRIDGE_ARTIFACT_SECRET }}
+          NIKATRU_BRIDGE_ARTIFACT_URL: https://gh-bridge.nikatru.workers.dev/artifact
+        run: node tooling/ops/bridge-artifact.mjs upload
+      - run: |
+          NIKATRU_QUIET="$(mktemp "${RUNNER_TEMP:-/tmp}/nikatru-step.XXXXXX")"
+          cat > "$NIKATRU_QUIET" <<'NIKATRU_QUIET_EOF'
+          node "$GITHUB_WORKSPACE/tooling/ops/npm-ci-retry.mjs" -- npm ci
+          NIKATRU_QUIET_EOF
+          NIKATRU_SHELL="${BASH:-bash}"; if command -v cygpath >/dev/null 2>&1; then NIKATRU_SHELL="$(cygpath -w "$NIKATRU_SHELL")"; fi
+          node "$GITHUB_WORKSPACE/../.nikatru-shell/quiet-step.mjs" --name store-billing.storekit-macos.15 -- "$NIKATRU_SHELL" -e "$NIKATRU_QUIET"
+        working-directory: services/platform
+      - name: POST every Xcode-signed macOS transaction to /v1/receipts/apple_iap → 403
+        working-directory: services/platform
+        env:
+          STOREKIT_XCODE_JWS_FILE: ${{ runner.temp }}/storekit-jws-macos-${{ matrix.app }}.json
+        run: |
+          NIKATRU_QUIET="$(mktemp "${RUNNER_TEMP:-/tmp}/nikatru-step.XXXXXX")"
+          cat > "$NIKATRU_QUIET" <<'NIKATRU_QUIET_EOF'
+          npx vitest run test/store-billing-apple-local-jws.test.ts
+          NIKATRU_QUIET_EOF
+          NIKATRU_SHELL="${BASH:-bash}"; if command -v cygpath >/dev/null 2>&1; then NIKATRU_SHELL="$(cygpath -w "$NIKATRU_SHELL")"; fi
+          node "$GITHUB_WORKSPACE/../.nikatru-shell/quiet-step.mjs" --name store-billing.storekit-macos.16 -- "$NIKATRU_SHELL" -e "$NIKATRU_QUIET"
+      - name: Store this job's red detail in the bridge's private home (generated)
+        if: always()
+        continue-on-error: true
+        shell: bash
+        working-directory: ${{ github.workspace }}
+        env:
+          NIKATRU_PATHS: ${{ runner.temp }}/report-detail.md
+          NIKATRU_ARTIFACT_NAME: report-detail-store-billing.storekit-macos.${{ strategy.job-index }}
+          NIKATRU_IF_NO_FILES: ignore
+          BRIDGE_ARTIFACT_SECRET: ${{ secrets.BRIDGE_ARTIFACT_SECRET }}
+          NIKATRU_BRIDGE_ARTIFACT_URL: https://gh-bridge.nikatru.workers.dev/artifact
+        run: node tooling/ops/bridge-artifact.mjs upload
+
   apple-notification:
     name: Apple test notification reaches us and is verified — ${{ matrix.app }}
     needs: [nikatru-pin, generated]
@@ -1067,7 +1393,7 @@ jobs:
 
   nikatru-ran:
     name: Fail this run if it ran nothing (generated)
-    needs: [generated, server, client, storekit, apple-notification, device-proof]
+    needs: [generated, server, client, storekit, storekit-macos, apple-notification, device-proof]
     if: "!cancelled()"
     runs-on: ubuntu-24.04
     defaults:
@@ -1087,7 +1413,7 @@ jobs:
       - name: Fail when every job of this run was skipped (generated)
         shell: bash
         env:
-          NIKATRU_RESULTS: generated=${{ needs.generated.result }} server=${{ needs.server.result }} client=${{ needs.client.result }} storekit=${{ needs.storekit.result }} apple-notification=${{ needs.apple-notification.result }} device-proof=${{ needs.device-proof.result }}
+          NIKATRU_RESULTS: generated=${{ needs.generated.result }} server=${{ needs.server.result }} client=${{ needs.client.result }} storekit=${{ needs.storekit.result }} storekit-macos=${{ needs.storekit-macos.result }} apple-notification=${{ needs.apple-notification.result }} device-proof=${{ needs.device-proof.result }}
         run: |
           for r in $NIKATRU_RESULTS; do
             if [ "${r#*=}" != skipped ]; then echo "ran: $NIKATRU_RESULTS"; exit 0; fi
