@@ -60,7 +60,7 @@ c80247f00a928a576975cbe958ae11cb44c501923412c2759c0644e76bf777cd
 shell/.github/workflows/catalog-sync.yml
 cda84e514a7fc774687015f1731394492676cea974d9e108771ee9c95dea6b8b
 shell/.github/workflows/ci.yml
-7e4e6e0ec2c06fa5cdb5eb9759f47e0c52f5fe4a72c4cd89e9b9f037da8de5b0
+cc8bac1f20c42d7f92e862a133d087f16e5dd5a4e42256fc413441ae190c5290
 shell/.github/workflows/claude-review.yml
 84f93cf3d64f4f440a4b731498f572051d6d4f6e5eb01f602fcf764afad660c6
 shell/.github/workflows/codeql.yml
