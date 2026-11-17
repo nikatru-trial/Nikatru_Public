@@ -208,7 +208,9 @@
 # ─────────────────────────────────────────────────────────────────────────────
 import base64
 import hashlib
+import gzip
 import hmac
+import io
 import json
 import os
 import random
@@ -216,6 +218,7 @@ import re
 import shutil
 import subprocess
 import sys
+import tarfile
 import time
 import urllib.error
 import urllib.parse
@@ -841,17 +844,11 @@ def handoff_key_ok(name, env):
 # ⏱ 2026-11-11 · fix1110b #2. The quiet-step wrapper leaves each red step's whole output in RED_LOG_DIR and names it
 # on a pending line; the job's red-log step (tooling/ops/bridge-artifact.mjs red-logs) stores it and leaves a receipt.
 # The hand-off turns each pending line into where the log IS, so the private detail links every red step's full log.
-RED_LOG_DIR = 'nikatru-red-logs'
-RED_LOG_PENDING = re.compile(r'(?m)^full log: pending upload \(red-log ([A-Za-z0-9][A-Za-z0-9._()-]{0,120}\.log)\)$')
-RED_LOG_STORED = 'full log: stored '
-STORED_KEY = re.compile(r'^[1-9][0-9]{0,19}/[1-9][0-9]{0,4}/[A-Za-z0-9][A-Za-z0-9._-]{0,119}$')
-RED_LOG_READER = 'node tooling/ops/read-red-log.mjs'
-# ⏱ 2026-11-11 · fix1110b round 3 (lead DECISION 10:46Z, option C). No red-log upload step is wired in this club: a
-# PR-run job may hold no bridge key (A7-05, opsOffPr, assert-public-shell limb M), and the trusted report job uploads
-# the handed-off logs after #1350 (row O-ACTIONS-RED-TRIAGE). A log with NO receipt (no upload step ran) says so on this
-# line, and send reports it as a NOTE, never a red. A receipt that says refused or lost (an upload that ran and
-# failed) stays `full log: NOT stored (…)`, which is red (LOG NOT STORED).
-RED_LOG_NOT_WIRED = 'full log: not stored: upload not wired yet (row O-RED-DETAIL-COMPLETE part 2)'
+# (RED_LOG_DIR, RED_LOG_PENDING, RED_LOG_STORED, STORED_KEY, RED_LOG_READER: one definition, in the red-log block below.)
+# ⏱ 2026-11-12 · c1112-redlog (O-R1111-RED-LOG-NOT-WIRED-FAIL-OPEN; owner lock 2026-11-11, every red detail
+# fetchable). The round-3 RED_LOG_NOT_WIRED NOTE is DELETED: the trusted report job stores every handed-off log now, so
+# a log with NO receipt is `full log: NOT stored (<file>: no upload receipt: …)` like a refused or lost one, and red
+# (LOG NOT STORED). A line of the old spelling handed over by an older shell matches no STORED line, so it is red too.
 
 
 def red_log_lines(text, env):
@@ -865,7 +862,7 @@ def red_log_lines(text, env):
             with open(os.path.join(folder, m.group(1) + '.receipt.json'), encoding='utf-8') as f:
                 r = json.load(f)
         except (OSError, ValueError):
-            return f'{RED_LOG_NOT_WIRED}: {m.group(1)} stayed on the runner'
+            return f'full log: NOT stored ({m.group(1)}: no upload receipt: it stayed on the runner)'
         key = r.get('stored') if isinstance(r, dict) else None
         if isinstance(key, str) and STORED_KEY.match(key):
             return (f"{RED_LOG_STORED}{key} · read it: {RED_LOG_READER} {env.get('GITHUB_RUN_ID', '')} {member}"
@@ -902,13 +899,16 @@ def handoff(env):
     name = env.get('NIKATRU_HANDOFF', '')
     if not handoff_key_ok(name, env):
         raise Lost(f'NIKATRU_HANDOFF {name[:100]!r} is not a hand-off key of this run and attempt: nothing handed over')
-    text = red_log_lines(text, env)
     key, derived = handoff_key(env)
     if not key:
         raise Lost(('the run key the staging step derives is absent' if derived else 'NIKATRU_DETAIL_KEY is not set')
                    + ': the red detail is NOT handed over (it is never cached in plain text)')
-    plain = fit_bytes(text, HANDOFF_MAX_BYTES).encode('utf-8')
     os.makedirs(DETAIL_DIR, exist_ok=True)
+    # integ-1111 (c1111-runner's integration note): the report job's hand-off runs FIRST, so every pending line it can
+    # seal reads `handed to the report job`; fix1110b's red_log_lines then answers only a line still pending.
+    text = hand_red_logs(text, env, key, name)
+    text = red_log_lines(text, env)
+    plain = fit_bytes(text, HANDOFF_MAX_BYTES).encode('utf-8')
     with open(os.path.join(DETAIL_DIR, SEALED_FILE), 'w', encoding='ascii') as f:
         f.write(seal(key, name, plain))
     core = core_of(text)
@@ -919,6 +919,318 @@ def handoff(env):
         f.write('has=true\n')
     print(f'ok handoff: {len(plain)} byte(s) of red detail sealed for {name}')
     return 0
+
+
+# ── red logs: handed off sealed, stored by the report job (O-RED-DETAIL-COMPLETE part 2, option C) ──────────
+#
+# ⏱ 2026-11-11 · lane c1111-runner (lead DECISION 2026-11-11T10:46Z, option C; lane fix1110b-redlog prepared the
+# detail lines). A quiet step that goes red leaves its WHOLE masked output in $RUNNER_TEMP/RED_LOG_DIR/<step>.log and
+# names it on a `full log: pending upload (red-log <step>.log)` line (tooling/ci/quiet-step.mjs). No job that ran
+# pull-request code may hold a bridge key (A7-05; assert-public-shell.mjs limbs H, I, M), so the lane job does NOT
+# upload it: its hand-off (this file's `handoff`, in the step that already seals the detail) packs each log as a
+# one-file gzipped tar, SEALS it under the same run key and name binding as the detail (`<hand-off key>/<step>.log`),
+# and puts it beside the sealed detail in the one cache entry it saves. The collect job (no key, no secret) files it
+# unread (`place`) and carries it in its RED_LOG_OUTPUTS outputs (`collect`). The report job's send, the one step that
+# holds BRIDGE_REPORT_SECRET and runs nothing but this staged file, unseals each and stores it through the bridge's
+# POST /artifact as `red-log-<stem>.<job>.<leg>.<step>.tar.gz`, signed with the REPORT secret under its own prefix
+# (REPORT_ARTIFACT_PREFIX: services/gh-bridge/src/artifact.ts accepts it for RED_LOG_PREFIX names only) and bound to
+# THIS job by its OIDC token (the generator declares `red-log-<stem>.*` for the report job alone). Each detail line
+# then says where the log IS: `full log: stored <key> …`, or `full log: NOT stored (<step>.log: why)`, which is red
+# (LOG NOT STORED: an upload that ran and failed, or a log the report never received).
+RED_LOG_DIR = 'nikatru-red-logs'
+RED_LOG_PENDING = re.compile(r'(?m)^full log: pending upload \(red-log ([A-Za-z0-9][A-Za-z0-9._()-]{0,120}\.log)\)$')
+RED_LOG_HANDED = 'full log: handed to the report job, sealed (red-log '
+RED_LOG_HANDED_LINE = re.compile(r'(?m)^full log: handed to the report job, sealed \(red-log ([A-Za-z0-9][A-Za-z0-9._()-]{0,120}\.log)\)$')
+RED_LOG_STORED = 'full log: stored '
+RED_LOG_NOT_STORED = 'full log: NOT stored ('
+RED_LOG_READER = 'node tooling/ops/read-red-log.mjs'
+RED_LOG_PREFIX = 'red-log-'
+RED_LOGS_SUBDIR = 'red-logs'
+RED_LOG_SEALED_SUFFIX = '.sealed'
+RED_LOG_FILE = re.compile(r'^[A-Za-z0-9][A-Za-z0-9._()-]{0,120}\.log$')
+# @ceiling — one sealed log's size, in base64 characters (~75 KiB of gzip, typically 0.5–2 MiB of test output). Over it
+# the log keeps its head and tail, whole, with a note naming what was cut. Under SEALED_MAX_CHARS, so one log always
+# fits one collect output.
+RED_LOG_SEALED_MAX = 100 * 1024
+# @ceiling — the collect job's red-log outputs, `red_logs` then `red_logs_2` .. (gen-public-shell.mjs RED_LOG_OUTPUTS;
+# the test holds the two equal). With DETAIL_OUTPUTS they stay under a job's 1 MB of outputs (7 x 120 KiB = 840 KiB).
+# Today a red run hands over 1-3 logs; at the cap, each log no output has room for is named and reads NOT stored
+# (over the report's carry budget), which is red, never silently dropped.
+RED_LOG_OUTPUTS = 4
+RED_LOG_BUNDLE_VERSION = 1
+# What the report-signed upload signs (services/gh-bridge/src/artifact.ts REPORT_ARTIFACT_PREFIX): never `artifact\n`,
+# and never a /report body, so neither signature opens the other door.
+REPORT_ARTIFACT_PREFIX = 'report-artifact\n'
+RED_LOG_CONTENT_TYPE = 'application/gzip'
+RED_LOG_EXT = '.tar.gz'
+STORED_NAME = re.compile(r'^[A-Za-z0-9][A-Za-z0-9._-]{0,119}$')
+STORED_KEY = re.compile(r'^[1-9][0-9]{0,19}/[1-9][0-9]{0,4}/[A-Za-z0-9][A-Za-z0-9._-]{0,119}$')
+RED_LOG_POST_TIMEOUT_S = 60
+
+
+def red_log_tar(file, data):
+    """`data` as a gzipped tar of ONE member, `file` (tooling/ops/read-red-log.mjs untars it). Deterministic bytes."""
+    raw = io.BytesIO()
+    with tarfile.open(fileobj=raw, mode='w', format=tarfile.USTAR_FORMAT) as t:
+        info = tarfile.TarInfo(file)
+        info.size, info.mtime, info.mode = len(data), 0, 0o644
+        t.addfile(info, io.BytesIO(data))
+    return gzip.compress(raw.getvalue(), compresslevel=9, mtime=0)
+
+
+def sealed_chars(n):
+    """The base64 characters seal() makes of `n` plain bytes."""
+    return 4 * ((1 + NONCE_BYTES + n + TAG_BYTES + 2) // 3)
+
+
+def pack_red_log(file, data, cap=RED_LOG_SEALED_MAX):
+    """(tgz, cut): the log as red_log_tar, its sealed form within `cap` characters. Over it, the head and the tail
+    are kept whole around a note naming the bytes cut (halving until it fits); `cut` is that byte count."""
+    tgz = red_log_tar(file, data)
+    if sealed_chars(len(tgz)) <= cap:
+        return tgz, 0
+    half = len(data) // 2
+    while half > 0:
+        half //= 2
+        cut = len(data) - 2 * half
+        note = f'\n… red-log: {cut} byte(s) of the middle cut to fit the report\'s {cap}-character carry; the head and the tail are whole …\n'.encode('utf-8')
+        tgz = red_log_tar(file, data[:half] + note + data[len(data) - half:])
+        if sealed_chars(len(tgz)) <= cap:
+            return tgz, cut
+    return red_log_tar(file, b'(red-log: nothing of this log fits the carry)\n'), len(data)
+
+
+def red_log_binding(handoff_name, file):
+    """What a red log is sealed to: its job's hand-off key and its own file name."""
+    return f'{handoff_name}/{file}'
+
+
+def hand_red_logs(text, env, key, name):
+    """`text` with each pending full-log line turned into `handed to the report job` (its log sealed into
+    DETAIL_DIR/RED_LOGS_SUBDIR, saved with the detail), or `NOT stored (why)` when there is no log to hand over."""
+    folder = os.path.join(env.get('RUNNER_TEMP', ''), RED_LOG_DIR)
+    out = os.path.join(DETAIL_DIR, RED_LOGS_SUBDIR)
+    seen = set()
+
+    def one(m):
+        file = m.group(1)
+        if file in seen:
+            return f'{RED_LOG_HANDED}{file})'
+        try:
+            with open(os.path.join(folder, file), 'rb') as f:
+                data = f.read()
+        except OSError:
+            return f'{RED_LOG_NOT_STORED}{file}: the step left no log on the runner)'
+        tgz, cut = pack_red_log(file, data)
+        os.makedirs(out, exist_ok=True)
+        with open(os.path.join(out, file + RED_LOG_SEALED_SUFFIX), 'w', encoding='ascii') as f:
+            f.write(seal(key, red_log_binding(name, file), tgz))
+        seen.add(file)
+        print(f'ok handoff: the full log {file} sealed for the report job ({len(tgz)} byte(s) of gzip'
+              + (f', {cut} byte(s) of its middle cut' if cut else '') + ')')
+        return f'{RED_LOG_HANDED}{file})'
+    return RED_LOG_PENDING.sub(one, text)
+
+
+def red_log_output(i):
+    """The collect job's i-th red-log output (0-based): `red_logs`, then `red_logs_2` .. (gen-public-shell.mjs)."""
+    return 'red_logs' if i == 0 else f'red_logs_{i + 1}'
+
+
+def red_log_env(i):
+    """The send step's variable for the collect job's i-th red-log output (gen-public-shell.mjs redLogEnv)."""
+    return 'NIKATRU_RED_LOGS' if i == 0 else f'NIKATRU_RED_LOGS_{i + 1}'
+
+
+def collected_red_logs(prefix):
+    """{`<hand-off key>/<file>`: sealed text} of this run+attempt's red logs place() filed, in key order. Carried unread."""
+    out = {}
+    if not os.path.isdir(COLLECTED_DIR):
+        return out
+    for d in sorted(os.listdir(COLLECTED_DIR)):
+        key = d[:-len('.' + RED_LOGS_SUBDIR)] if d.endswith('.' + RED_LOGS_SUBDIR) else None
+        if key is None or member_of(key, prefix) is None or not os.path.isdir(os.path.join(COLLECTED_DIR, d)):
+            continue
+        for name in sorted(os.listdir(os.path.join(COLLECTED_DIR, d))):
+            file = name[:-len(RED_LOG_SEALED_SUFFIX)] if name.endswith(RED_LOG_SEALED_SUFFIX) else ''
+            if not RED_LOG_FILE.match(file):
+                continue
+            with open(os.path.join(COLLECTED_DIR, d, name), encoding='ascii', errors='replace') as f:
+                out[red_log_binding(key, file)] = f.read().strip()
+    return out
+
+
+def bundle_red_logs(logs):
+    """Up to RED_LOG_OUTPUTS bundles {v, logs: {binding: sealed}, over: [binding]}, each within SEALED_MAX_CHARS; a log
+    no bundle has room for is named in `over` of the first (the report reads it NOT stored, over the carry budget)."""
+    bundles = [{'v': RED_LOG_BUNDLE_VERSION, 'logs': {}, 'over': []}]
+    fits = lambda b: len(json.dumps(b, separators=(',', ':'))) <= SEALED_MAX_CHARS - 1024
+    for binding, sealed in logs.items():
+        placed = False
+        for b in bundles:
+            b['logs'][binding] = sealed
+            if fits(b):
+                placed = True
+                break
+            del b['logs'][binding]
+        if not placed and len(bundles) < RED_LOG_OUTPUTS:
+            b = {'v': RED_LOG_BUNDLE_VERSION, 'logs': {binding: sealed}, 'over': []}
+            if fits(b):
+                bundles.append(b)
+                placed = True
+        if not placed:
+            bundles[0]['over'].append(binding)
+    return bundles
+
+
+def red_log_stored_name(binding, cfg, env):
+    """`red-log-<stem>.<job>.<leg>.<step>.tar.gz` of a binding of THIS run, or None. Within the bridge's NAME."""
+    key, _, file = binding.rpartition('/')
+    m = re.match(r'^' + re.escape(f"{cfg['prefix']}{env['GITHUB_RUN_ID']}-") + r'([1-9][0-9]{0,5})-(.+)$', key)
+    if m is None or run_member_of(key, cfg, env) is None or not RED_LOG_FILE.match(file):
+        return None
+    stem = re.sub(r'[^A-Za-z0-9._-]', '-', f'{RED_LOG_PREFIX}{m.group(2)}.{file[:-len(".log")]}')
+    stem = stem[:120 - len(RED_LOG_EXT)]
+    name = stem + RED_LOG_EXT
+    return name if STORED_NAME.match(name) and '..' not in name else None
+
+
+def post_red_log(url, secret, name, body, env, opener, token):
+    """(stored key | None, why): ONE report-signed upload of a red log to POST /artifact (services/gh-bridge/src/artifact.ts)."""
+    meta = json.dumps({'run_id': int(env['GITHUB_RUN_ID']), 'run_attempt': int(env['GITHUB_RUN_ATTEMPT']), 'name': name,
+                       'ts': int(time.time()), 'sha256': hashlib.sha256(body).hexdigest(), 'bytes': len(body),
+                       'content_type': RED_LOG_CONTENT_TYPE}, separators=(',', ':'))
+    headers = {
+        'content-type': RED_LOG_CONTENT_TYPE,
+        'content-length': str(len(body)),
+        'user-agent': USER_AGENT,
+        'x-bridge-artifact': meta,
+        'x-bridge-signature': signature(secret, (REPORT_ARTIFACT_PREFIX + meta).encode('utf-8')),
+    }
+    if token:
+        headers['x-bridge-oidc'] = token
+    req = urllib.request.Request(url, data=body, method='POST', headers=headers)
+    try:
+        with opener(req, timeout=RED_LOG_POST_TIMEOUT_S) as r:
+            answer = json.loads(r.read().decode('utf-8'))
+            key = answer.get('stored') if isinstance(answer, dict) else None
+            return (key, '') if isinstance(key, str) and STORED_KEY.match(key) else (None, f'HTTP {r.status} named no stored key')
+    except urllib.error.HTTPError as e:
+        try:
+            why = str(json.loads(e.read().decode('utf-8')).get('error', ''))[:160]
+        except (ValueError, AttributeError):
+            why = ''
+        return None, f'HTTP {e.code}{f": {why}" if why else ""}'
+    except (urllib.error.URLError, OSError, ValueError) as e:
+        return None, f'no answer ({type(e).__name__})'
+
+
+# ⏱ 2026-11-12 · O-C1111-RED-LOGS-BEFORE-SEND-BUDGET (lane c1116-ci-1; review of #1362, finding 11). The red-log
+# uploads ran BEFORE the send's budget clock started, and one log can take ~188 s (three 60 s attempts and the waits),
+# so a slow /artifact could push the report job past its timeout before the gate status went out. The send's clock now
+# starts first, and the uploads get its share left after ONE whole post (red_log_share): a log starts only while one
+# whole attempt still fits, and a retry only while it and its wait do; every log left over is NOT STORED, named, red.
+def red_log_share(cfg):
+    """Seconds of the send budget the red-log uploads may use: all of it but one whole post (the gate goes first), or
+    None when the config sets no budget. PURE."""
+    budget = cfg.get('sendBudgetS')
+    return None if budget is None else max(0, budget - post_worst_s(cfg))
+
+
+def store_red_logs(env, cfg, details, opener=urllib.request.urlopen, clock=time.monotonic, deadline=None, sleep=None):
+    """(details, not_stored): every red log the collect job carried, unsealed and stored through POST /artifact, and
+    each `handed to the report job` line of `details` ({context: text}) turned into where its log IS. `not_stored`
+    lists `<file>: why` for each log not stored (red: LOG NOT STORED). With nothing carried and no line, nothing moves.
+    `deadline` (a `clock()` value): no upload attempt starts that could end past it (red_log_share)."""
+    sleep = sleep or time.sleep  # read at call time, so a patched time.sleep is the one used
+    raws = [env.get(red_log_env(i), '') for i in range(RED_LOG_OUTPUTS)]
+    lines = {m.group(1) for d in details.values() for m in RED_LOG_HANDED_LINE.finditer(d)}
+    if not any(raws) and not lines:
+        return details, []
+    answers = {}  # file -> detail line
+    failed = []
+    logs, over = {}, []
+    try:
+        for i, raw in enumerate(r for r in raws if r):
+            if len(raw) > SEALED_MAX_CHARS:
+                raise Refused(f'{len(raw)} characters, over the {SEALED_MAX_CHARS} cap')
+            b = json.loads(raw)
+            if not isinstance(b, dict) or b.get('v') != RED_LOG_BUNDLE_VERSION or not isinstance(b.get('logs'), dict) or not isinstance(b.get('over'), list):
+                raise Refused(f'not a version-{RED_LOG_BUNDLE_VERSION} red-log bundle')
+            if i and b['over']:
+                raise Refused('a spilled red-log bundle names logs over the budget (only the first does)')
+            for binding, sealed in b['logs'].items():
+                if binding in logs or not isinstance(sealed, str):
+                    raise Refused(f'{str(binding)[:100]!r} is carried twice, or not as text')
+                logs[binding] = sealed
+            over += [o for o in b['over'] if isinstance(o, str)]
+    except (Refused, ValueError, RecursionError) as e:
+        logs, over = {}, []
+        print(f'x red logs: the carried bundle could not be read ({str(e)[:160]})')
+    url = cfg.get('artifactUrl', '')
+    secret = env.get('BRIDGE_REPORT_SECRET', '')
+    master = env.get('NIKATRU_DETAIL_KEY', '')
+    token = None
+    for binding, sealed in logs.items():
+        file = binding.rpartition('/')[2]
+        name = red_log_stored_name(binding, cfg, env)
+        if name is None:
+            failed.append(f'{file[:120]}: not a red log of this run')
+            continue
+        key_name = binding.rpartition('/')[0]
+        attempt = key_name[len(f"{cfg['prefix']}{env['GITHUB_RUN_ID']}-"):].split('-', 1)[0]
+        try:
+            if not master:
+                raise Refused('NIKATRU_DETAIL_KEY is not set')
+            body = unseal(run_key(master, f"{env['GITHUB_RUN_ID']}-{attempt}"), binding, sealed)
+        except Refused as e:
+            answers[file] = f'{RED_LOG_NOT_STORED}{file}: its seal did not open: {str(e)[:120]})'
+            failed.append(f'{file}: its seal did not open')
+            continue
+        if not url or not secret:
+            why = 'the config names no artifactUrl' if not url else 'BRIDGE_REPORT_SECRET is not set'
+            answers[file] = f'{RED_LOG_NOT_STORED}{file}: {why})'
+            failed.append(f'{file}: {why}')
+            continue
+        if deadline is not None and clock() + RED_LOG_POST_TIMEOUT_S + (REPORT_OIDC_TIMEOUT_S if token is None else 0) > deadline:
+            why = "the red logs' share of the send budget is spent, so the status posts go out in time"
+            answers[file] = f'{RED_LOG_NOT_STORED}{file}: {why})'
+            failed.append(f'{file}: {why}')
+            continue
+        if token is None:
+            token, twhy = caller_token(env, opener, REPORT_OIDC_TIMEOUT_S)
+            if twhy:
+                print(f'-- X-Bridge-OIDC for the red logs: {twhy}', file=sys.stderr)
+        stored, why = None, ''
+        for attempt_no in range(3):
+            stored, why = post_red_log(url, secret, name, body, env, opener, token)
+            if stored or not re.match(r'^(HTTP (0|429|5[0-9][0-9])|no answer)', why) or attempt_no == 2:
+                break
+            if deadline is not None and clock() + (2, 6)[attempt_no] + RED_LOG_POST_TIMEOUT_S > deadline:
+                why += "; no retry: the red logs' share of the send budget is spent"
+                break
+            sleep((2, 6)[attempt_no])
+        if stored:
+            member = member_of(key_name, f"{cfg['prefix']}{env['GITHUB_RUN_ID']}-{attempt}-") or ''
+            answers[file] = (f"{RED_LOG_STORED}{stored} · read it: {RED_LOG_READER} {env.get('GITHUB_RUN_ID', '')} {member}"
+                             " (its signed link is in the bridge's artifact comment)")
+            print(f'ok red log {name} stored privately ({len(body)} byte(s))')
+        else:
+            answers[file] = f'{RED_LOG_NOT_STORED}{file}: the upload failed: {why[:160]})'
+            failed.append(f'{file}: the upload failed: {why[:160]}')
+    for binding in over:
+        file = binding.rpartition('/')[2][:120]
+        answers.setdefault(file, f"{RED_LOG_NOT_STORED}{file}: over the report's carry budget of {RED_LOG_OUTPUTS} outputs)")
+        failed.append(f'{file}: over the carry budget')
+
+    def line(m):
+        got = answers.get(m.group(1))
+        if got is None:
+            failed.append(f'{m.group(1)}: handed off, never reached the report job')
+            return f'{RED_LOG_NOT_STORED}{m.group(1)}: handed off, never reached the report job)'
+        return got
+    out = {ctx: RED_LOG_HANDED_LINE.sub(line, d) for ctx, d in details.items()}
+    return out, sorted(set(failed))
 
 
 # ── plan ─────────────────────────────────────────────────────────────────────
@@ -974,6 +1286,15 @@ def place(key):
     core = os.path.join(DETAIL_DIR, CORE_FILE)
     if os.path.isfile(core):
         shutil.move(core, os.path.join(COLLECTED_DIR, f'{key}{CORE_SUFFIX}.sealed'))
+    # c1111-runner (option C): the job's sealed red logs ride with it, filed unread, by name only.
+    logs = os.path.join(DETAIL_DIR, RED_LOGS_SUBDIR)
+    if os.path.isdir(logs):
+        dest = os.path.join(COLLECTED_DIR, f'{key}.{RED_LOGS_SUBDIR}')
+        for name in sorted(os.listdir(logs)):
+            src_log = os.path.join(logs, name)
+            if name.endswith(RED_LOG_SEALED_SUFFIX) and RED_LOG_FILE.match(name[:-len(RED_LOG_SEALED_SUFFIX)]) and os.path.isfile(src_log) and not os.path.islink(src_log):
+                os.makedirs(dest, exist_ok=True)
+                shutil.move(src_log, os.path.join(dest, name))
     shutil.rmtree(DETAIL_DIR, ignore_errors=True)
     print(f'ok place: {key}')
     return 0
@@ -1191,6 +1512,13 @@ def collect(env, cfg):
     print(f'ok collect: {carried} sealed hand-off(s) carried in {len(bundles)} output(s)'
           + (f', {by_core} by its core (findings and log link, no output tail)' if by_core else '')
           + f', {len(bundles[0]["unrestored"])} named only')
+    logs = collected_red_logs(prefix)
+    if logs:
+        rb = bundle_red_logs(logs)
+        with open(env['GITHUB_OUTPUT'], 'a', encoding='utf-8') as f:
+            for i, b in enumerate(rb):
+                f.write(red_log_output(i) + '=' + json.dumps(b, separators=(',', ':')) + '\n')
+        print(f"ok collect: {sum(len(b['logs']) for b in rb)} sealed red log(s) carried in {len(rb)} output(s), {len(rb[0]['over'])} over the budget")
     return 0
 
 
@@ -1283,10 +1611,41 @@ def read_bundle(raw, env, cfg, more=()):
         if is_gate(item, cfg) and notes and notes not in detail:
             detail = join_detail([detail, notes])
         if is_gate(item, cfg) and unrestored:
-            detail += '\n\n(' + str(len(unrestored)) + ' more red job(s) handed over detail this report could not carry: ' + ', '.join(unrestored) + ')\n'
+            # ⏱ 2026-11-12 · c1112-redlog (O-CI-GATE-REPORT-CARRY-CAP): never "could not carry" without naming each job
+            # and where its detail went; send counts every one red (DETAIL DROPPED).
+            detail += ('\n\n(' + str(len(unrestored)) + ' more red job(s) handed over detail this report could not carry;'
+                       ' each is named below with where its detail went)\n\n'
+                       + ''.join(f'{DETAIL_DROPPED} {m}: {dropped_where(cfg, env)}\n' for m in unrestored))
         if detail.strip():
             out[item['context']] = detail
     return out
+
+
+# ⏱ 2026-11-12 · c1112-redlog (O-CI-GATE-REPORT-CARRY-CAP). A hand-off no restore slot reached (plan's overflow), or
+# one restored with no detail output left even for its core (collect), is DROPPED from this report: named, with where
+# its detail went, in the gate's private detail, and counted red by send.
+DETAIL_DROPPED = 'DETAIL DROPPED'
+
+
+def dropped_where(cfg, env):
+    """Where a dropped job's detail went: still sealed in this run's Actions cache (nobody can read it there), so the
+    job's own public log is the record. PURE."""
+    return (f"not restored: beyond the {cfg.get('slots', '?')} restore slot(s) (gen-public-shell.mjs REPORT_SLOTS), or"
+            ' restored with no detail output left for even its core; its sealed hand-off stays in the run\'s Actions cache,'
+            f" and its job's public log is the only record of its red: run {env.get('GITHUB_RUN_ID', '')}")
+
+
+def dropped_count(env):
+    """How many red jobs the collect job named and did not carry: the first bundle's `unrestored` list, read as data
+    (parse_bundle; nothing is unsealed). 0 when nothing was handed over or the bundle cannot be read (that is COVERAGE
+    LOST already, received_details)."""
+    raw = env.get(detail_env(0), '')
+    if not raw:
+        return 0
+    try:
+        return len(parse_bundle(raw)['unrestored'])
+    except Exception:
+        return 0
 
 
 def gate_origin_ok(env, cfg=None):
@@ -1321,9 +1680,10 @@ def dispatch_detail(details, lost, results, cfg):
 UNDISPATCHED_EVENTS = ('workflow_dispatch', 'schedule')
 
 
-def send_dispatch(env, cfg, opener=urllib.request.urlopen):
+def send_dispatch(env, cfg, opener=urllib.request.urlopen, clock=time.monotonic):
     """A workflow_dispatch or schedule run: no status (no private commit was dispatched), its red detail to the private home."""
     event = env.get('GITHUB_EVENT_NAME', '')
+    started = clock()
     url = cfg.get('dispatchDetailUrl')
     if not url:
         raise Lost('the config names no dispatchDetailUrl: this root does not declare workflow_dispatch to the generator')
@@ -1335,7 +1695,13 @@ def send_dispatch(env, cfg, opener=urllib.request.urlopen):
     except ValueError:
         raise Lost('NIKATRU_RESULTS is not the JSON map of job results the report job is given')
     details, lost = received_details(env, cfg)
+    share = red_log_share(cfg)
+    details, not_stored = store_red_logs(env, cfg, details, opener, clock=clock, deadline=None if share is None else started + share)
     detail = dispatch_detail(details, lost, results, cfg)
+    # ⏱ 2026-11-12 · O-C1111-DISPATCH-DETAIL-DROPPED-NOT-RED (lane c1116-ci-1; club-1111 review #9): a red job whose
+    # detail no restore slot reached reds a manual or scheduled run too, as send() does for a dispatched one. Many roots
+    # are dispatch-only since cron was turned off. PUBLIC log: a count, never a name.
+    dropped = dropped_count(env)
     if env.get('GITHUB_OUTPUT'):
         with open(env['GITHUB_OUTPUT'], 'a', encoding='utf-8') as f:
             f.write('reported=true\n')
@@ -1349,7 +1715,15 @@ def send_dispatch(env, cfg, opener=urllib.request.urlopen):
         if lost:
             print(f'x COVERAGE LOST - report.py: {lost}', file=sys.stderr)
             return 2
-        return 0
+        failed = 0
+        if dropped:
+            failed += 1
+            print(f"x {DETAIL_DROPPED} {event} run: {dropped} red job(s) whose detail no restore slot reached"
+                  ' (or no output had room for); each is named in the private detail with where its detail went')
+        if not_stored:
+            failed += 1
+            print(f"x LOG NOT STORED: {'; '.join(not_stored)[:600]}")
+        return 1 if failed else 0
     print(f"x  {event} red detail -> HTTP {status}{f' ({why})' if why else ''}")
     return 1
 
@@ -1422,18 +1796,15 @@ def has_detail(detail):
 
 
 def unstored_logs(detail):
-    """(red, unwired): how many `### RED` sections of `detail` link no STORED full log in their head — `unwired` those
-    whose log no upload step was there to store (RED_LOG_NOT_WIRED, a NOTE), `red` every other (an upload that failed,
-    a hand-off that never ran, no log at all). Counts, never names: the caller prints them in a public log."""
-    red = unwired = 0
+    """How many `### RED` sections of `detail` link no STORED full log in their head: an upload that failed, no upload
+    receipt, a hand-off that never ran, no log at all — every one red (O-R1111-RED-LOG-NOT-WIRED-FAIL-OPEN: there is no
+    NOTE case). A count, never names: the caller prints it in a public log."""
+    red = 0
     for header, head in section_heads(detail):
         if header is None or not header.startswith(RED_HEADER) or any(line.startswith(RED_LOG_STORED) for line in head):
             continue
-        if any(line.startswith(RED_LOG_NOT_WIRED) for line in head):
-            unwired += 1
-        else:
-            red += 1
-    return red, unwired
+        red += 1
+    return red
 
 
 def held_to_detail(item, cfg, results):
@@ -1450,7 +1821,7 @@ def lost_detail(item, cfg, results, detail):
 
 def send(env, cfg, opener=urllib.request.urlopen, clock=time.monotonic):
     if env.get('GITHUB_EVENT_NAME') in UNDISPATCHED_EVENTS:
-        return send_dispatch(env, cfg, opener)
+        return send_dispatch(env, cfg, opener, clock)
     url = cfg.get('bridgeUrl')
     if not url:
         raise Lost('the config names no bridge URL (generated before services/gh-bridge/wrangler.jsonc was in the tree)')
@@ -1464,12 +1835,27 @@ def send(env, cfg, opener=urllib.request.urlopen, clock=time.monotonic):
     except ValueError:
         raise Lost('NIKATRU_RESULTS is not the JSON map of job results the report job is given')
     details, lost = received_details(env, cfg)
+    # O-C1111-RED-LOGS-BEFORE-SEND-BUDGET: the budget's clock starts BEFORE the red-log uploads (red_log_share).
+    budget = cfg.get('sendBudgetS')
+    started = clock()
     failed = 0
+    dropped = dropped_count(env)
+    if dropped:
+        # O-CI-GATE-REPORT-CARRY-CAP: a red job whose detail this report could not carry is red, never a footnote.
+        # PUBLIC log: a count, never a name (the names are in the gate's private detail).
+        failed += 1
+        print(f"x {DETAIL_DROPPED} {cfg['gate']['context']}: {dropped} red job(s) whose detail no restore slot reached"
+              ' (or no output had room for); each is named in the private detail with where its detail went')
+    share = red_log_share(cfg)
+    details, not_stored = store_red_logs(env, cfg, details, opener, clock=clock, deadline=None if share is None else started + share)
+    if not_stored:
+        # c1111-runner (option C): a red log the report job could not store is red, never best effort.
+        failed += 1
+        print(f"x LOG NOT STORED: {'; '.join(not_stored)[:600]}")
     # ⏱ 2026-10-08 (sysfix-a1-ci-shell, m6): ONE budget for the whole send, so it and its fallback end inside the
     # job's timeout (22 contexts x a hung bridge used to be ~36 min against 10); a post starts only while a whole
     # one still fits, and every context left is named, not sent. The gate goes first (items), so it is the last to lose.
-    budget = cfg.get('sendBudgetS')
-    started = clock()
+    # (`budget` and `started` are set above, before the red-log uploads.)
     for item in items(cfg):
         state = STATE_OF.get(results.get(item['job'], ''))
         if state is None:
@@ -1492,11 +1878,8 @@ def send(env, cfg, opener=urllib.request.urlopen, clock=time.monotonic):
             detail = (detail.rstrip('\n') + '\n\n' if detail.strip() else '') + (
                 f"{LOST_DETAIL} {item['context']}: this red job handed over no finding line and no stored full log. "
                 'Its job log is the public run\'s only record; read it with ' + RED_LOG_READER + ' ' + env.get('GITHUB_RUN_ID', '') + '.\n')
-        unstored, unwired = unstored_logs(detail) if not lost and held_to_detail(item, cfg, results) and not held(item, cfg, results, detail, lost) else (0, 0)
+        unstored = unstored_logs(detail) if not lost and held_to_detail(item, cfg, results) and not held(item, cfg, results, detail, lost) else 0
         # fix1110b round 4: this log is PUBLIC — the context (the config's) and a count, never text of the detail.
-        if unwired:
-            # fix1110b round 3: no upload step is wired yet (option C lands after #1350): said, never a red.
-            print(f"-- NOTE {item['context']}: full log not stored: upload not wired yet (row O-RED-DETAIL-COMPLETE part 2): {unwired} red step(s)")
         if unstored:
             # fix1110b round 2: a red step's full log that was not stored is a red report, never best effort.
             failed += 1
@@ -1546,19 +1929,19 @@ def send(env, cfg, opener=urllib.request.urlopen, clock=time.monotonic):
 # the PR cannot edit this check out of its own gate.
 # PR #213 review finding 3: also the shell's byte copies (what a job runs after the sync) and the generator's
 # relative-import closure (a bent import lets --check accept a modified copy).
+# ⏱ 2026-11-14 · integ-money-1116 (fold of fix-mutproof-uploader-1114): the generator's import closure now reads the
+# bridge origin from tooling/ci/bridge-origin.mjs and no longer reaches tooling/store/capture-backend.mjs (nor its
+# d1-sql-inventory / text-reductions / wrangler-environments / e2e/backend imports); this copy follows it.
 RUNNER_SOURCES = ('tooling/ci/quiet-step.mjs', 'tooling/ci/shell-report.py', 'tooling/ci/gen-public-shell.mjs',
-                  'tooling/ci/public-shell.json',
-                  'shell/.github/nikatru/report.py', 'shell/.github/nikatru/quiet-step.mjs',
-                  'shell/.github/nikatru/tree-walk.mjs',
+                  'tooling/ci/public-shell.json', 'shell/.github/nikatru/report.py',
+                  'shell/.github/nikatru/quiet-step.mjs', 'shell/.github/nikatru/tree-walk.mjs',
                   'tooling/app-yaml/yaml.mjs', 'tooling/ci/app-set.mjs', 'tooling/ci/assert-shell-current.mjs',
-                  'tooling/ci/d1-sql-inventory.mjs', 'tooling/ci/d1-stores.mjs', 'tooling/ci/deployment-record.mjs',
-                  'tooling/ci/flutter-release-build.mjs', 'tooling/ci/gate-verdict.mjs', 'tooling/ci/github-api-base.mjs',
-                  'tooling/ci/previous-ci-history.mjs', 'tooling/ci/record-deployment.mjs',
-                  'tooling/ci/run-context.mjs', 'tooling/ci/shell-handoff.mjs', 'tooling/ci/text-reductions.mjs',
-                  'tooling/ci/tree-walk.mjs', 'tooling/ci/workflow-scan.mjs', 'tooling/ci/wrangler-environments.mjs',
-                  'tooling/e2e/backend.mjs', 'tooling/generated/codehost.mjs',
-                  'tooling/ops/actions-oidc.mjs', 'tooling/ops/bounded-retry.mjs', 'tooling/ops/run-jobs.mjs',
-                  'tooling/store/capture-backend.mjs')
+                  'tooling/ci/bridge-origin.mjs', 'tooling/ci/d1-stores.mjs', 'tooling/ci/deployment-record.mjs',
+                  'tooling/ci/flutter-release-build.mjs', 'tooling/ci/gate-verdict.mjs',
+                  'tooling/ci/github-api-base.mjs', 'tooling/ci/previous-ci-history.mjs',
+                  'tooling/ci/record-deployment.mjs', 'tooling/ci/run-context.mjs', 'tooling/ci/shell-handoff.mjs',
+                  'tooling/ci/tree-walk.mjs', 'tooling/ci/workflow-scan.mjs', 'tooling/generated/codehost.mjs',
+                  'tooling/ops/actions-oidc.mjs', 'tooling/ops/bounded-retry.mjs', 'tooling/ops/run-jobs.mjs')
 # ⏱ 2026-10-09 · PR #213 review finding 5. THE LABEL IS ADVISORY. The bridge returns label NAMES, and every lane and
 # every lead writes to the private repo as the one GitHub identity, so who applied a label proves nothing and an
 # allow-list of appliers would admit everyone it lists. Any writer can add it to its own PR. What the label buys is

@@ -3,7 +3,7 @@
   "detailOnly": true,
   "postTimeoutS": 30,
   "prefix": "nikatru-detail-",
-  "slots": 8,
+  "slots": 32,
   "sendBudgetS": 360,
   "gate": {
     "job": "heartbeats",
@@ -138,7 +138,15 @@
       "members": [
         "ops-watch.digest."
       ]
+    },
+    {
+      "job": "alert",
+      "context": "ops-watch/alert",
+      "members": [
+        "ops-watch.alert."
+      ]
     }
   ],
-  "dispatchDetailUrl": "https://gh-bridge.nikatru.workers.dev/dispatch-detail"
+  "dispatchDetailUrl": "https://gh-bridge.nikatru.workers.dev/dispatch-detail",
+  "artifactUrl": "https://gh-bridge.nikatru.workers.dev/artifact"
 }

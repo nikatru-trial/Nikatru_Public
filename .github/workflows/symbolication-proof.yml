@@ -620,9 +620,8 @@ jobs:
           NIKATRU_QUIET="$(mktemp "${RUNNER_TEMP:-/tmp}/nikatru-step.XXXXXX")"
           cat > "$NIKATRU_QUIET" <<'NIKATRU_QUIET_EOF'
           set -euo pipefail
-          nst="$(node -p "require('../../tooling/versions.json').native_stack_traces")"
-          dart pub global activate native_stack_traces "$nst"
-          dart pub global run native_stack_traces:decode translate \
+          node ../../tooling/ops/dart-tools.mjs decode
+          "${PUB_CACHE:-$HOME/.pub-cache}/bin/decode" translate \
             -d "${SYMBOLS_DIR}/app.${TARGET}.symbols" \
             -i "${RUNNER_TEMP}/trace.txt" -o "${RUNNER_TEMP}/symbolized.txt"
           cat "${RUNNER_TEMP}/symbolized.txt"

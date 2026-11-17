@@ -47,7 +47,7 @@
 //     could make a green run red on purpose to prove the detail arrives. A dispatchable reporting root (the generator's
 //     `dispatchable`, the bridge's DISPATCH_DETAIL_WORKFLOWS) now takes a `red_drill` dispatch input, bound to
 //     RED_DRILL_ENV at the workflow's top level. When it names THIS step (`--name`, exactly) on a `workflow_dispatch`
-//     run, and the command exited 0, the step goes red (exit 1): its public line says `(drill)` and its detail
+//     run (or a `repository_dispatch` that binds it from its payload: RED_DRILL_EVENTS), and the command exited 0, the step goes red (exit 1): its public line says `(drill)` and its detail
 //     section opens with RED_DRILL_BANNER above the real tail. It can only turn a green step red, never a red one
 //     green; any other event, or any other name, leaves the step as it was. It reaches the root's own jobs only (a
 //     workflow's env does not pass into a called workflow). Cases: tooling/ci/test/quiet-step-red-drill.test.mjs.
@@ -81,8 +81,13 @@ export const DETAIL_PREFIX = '::nikatru-detail::';
 /** ⏱ 2026-11-07 · the forced-red drill (header): the step name a `workflow_dispatch` run's `red_drill` input names. */
 export const RED_DRILL_ENV = 'NIKATRU_RED_DRILL';
 export const RED_DRILL_BANNER = 'RED DRILL: forced red by the dispatch input red_drill. The command itself exited 0; the tail below is its real output.';
-/** PURE. Whether this step is the one a drill forces red: a `workflow_dispatch` run whose RED_DRILL_ENV is exactly `name`. */
-export const isRedDrill = (env, name) => env.GITHUB_EVENT_NAME === 'workflow_dispatch' && typeof env[RED_DRILL_ENV] === 'string' && env[RED_DRILL_ENV].trim() !== '' && env[RED_DRILL_ENV].trim() === name;
+/** ⏱ 2026-11-12 · c1116y-triage-shell-manual (O-C1111-NIT-TRIAGE-LOOSE-ENDS item 3): the events a drill may fire on. A
+ *  root whose shell keeps no `workflow_dispatch` (public-shell.json leadDispatch `manual: false`: claude-triage.yml)
+ *  binds RED_DRILL_ENV to its lead dispatch's client_payload.inputs.red_drill, so `repository_dispatch` is one; every
+ *  other root binds `inputs.red_drill`, which is EMPTY on a repository_dispatch, so its bridge dispatches stay untouched. */
+export const RED_DRILL_EVENTS = Object.freeze(['workflow_dispatch', 'repository_dispatch']);
+/** PURE. Whether this step is the one a drill forces red: a RED_DRILL_EVENTS run whose RED_DRILL_ENV is exactly `name`. */
+export const isRedDrill = (env, name) => RED_DRILL_EVENTS.includes(env.GITHUB_EVENT_NAME) && typeof env[RED_DRILL_ENV] === 'string' && env[RED_DRILL_ENV].trim() !== '' && env[RED_DRILL_ENV].trim() === name;
 /** An environment variable whose value is a credential by its name. */
 export const SECRET_NAME = /(TOKEN|SECRET|PASSWORD|PASSWD|PRIVATE|CREDENTIAL|_KEY$|^KEY$|DSN|SALT|AUTH|COOKIE|SIGNING|P12|KEYSTORE)/i;
 const MIN_MASK = 6;

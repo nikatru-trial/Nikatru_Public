@@ -414,10 +414,163 @@ jobs:
           NIKATRU_BRIDGE_ARTIFACT_URL: https://gh-bridge.nikatru.workers.dev/artifact
         run: node tooling/ops/bridge-artifact.mjs upload
 
-  deploy:
-    name: deploy
+  ephemeral-db:
+    name: the proof's own platform database (a branch that carries a platform migration only)
     if: needs.nikatru-pin.result == 'success' && (needs.nikatru-approve.result == 'success' || (needs.nikatru-approve.result == 'skipped' && !((inputs.private_ref || '') != ''))) && !cancelled() && !failure() && needs.gate.result == 'success' && needs.sandbox-slot.result == 'success'
     needs: [nikatru-pin, nikatru-approve, gate, sandbox-slot]
+    runs-on: ubuntu-24.04
+    timeout-minutes: 10
+    permissions:
+      contents: read
+      id-token: write
+    outputs:
+      id: ${{ steps.create.outputs.id }}
+      name: ${{ steps.create.outputs.name }}
+      mode: ${{ steps.plan.outputs.mode }}
+    steps:
+      - name: Check out the private tree (generated)
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
+        with:
+          repository: ${{ env.NIKATRU_PRIVATE_REPO }}
+          ref: main
+          ssh-key: ${{ secrets.PRIVATE_DEPLOY_KEY }}
+          persist-credentials: false
+      - name: Name the private commit (generated)
+        shell: bash
+        working-directory: ${{ github.workspace }}
+        env:
+          NIKATRU_P_EVENT: ${{ github.event.client_payload.event || github.event_name }}
+          NIKATRU_P_REF: ${{ github.event.client_payload.ref || inputs.private_ref || 'refs/heads/main' }}
+          NIKATRU_P_BASE_SHA: ${{ github.event.client_payload.base_sha }}
+          NIKATRU_P_BASE_REF: ${{ github.event.client_payload.base_ref }}
+          NIKATRU_P_PR: ${{ github.event.client_payload.pr }}
+          NIKATRU_P_PR_CREATED_AT: ${{ github.event.client_payload.pr_created_at }}
+          NIKATRU_P_DRAFT: ${{ github.event.client_payload.draft }}
+          NIKATRU_P_SHA: ${{ github.event.client_payload.sha }}
+        run: |
+          {
+            echo "NIKATRU_SHA=$(git rev-parse HEAD)"
+            echo "NIKATRU_HEAD_SHA=${NIKATRU_P_SHA:-$(git rev-parse HEAD)}"
+            echo "NIKATRU_EVENT_NAME=$NIKATRU_P_EVENT"
+            echo "NIKATRU_REF=$NIKATRU_P_REF"
+            echo "NIKATRU_REF_NAME=${NIKATRU_P_REF#refs/*/}"
+            echo "NIKATRU_BASE_SHA=$NIKATRU_P_BASE_SHA"
+            echo "NIKATRU_BASE_REF=$NIKATRU_P_BASE_REF"
+            echo "NIKATRU_PR=$NIKATRU_P_PR"
+            echo "NIKATRU_PR_CREATED_AT=$NIKATRU_P_PR_CREATED_AT"
+            echo "NIKATRU_DRAFT=$NIKATRU_P_DRAFT"
+          } >> "$GITHUB_ENV"
+      - name: Check out this shell repository's own step wrapper and reporter (generated)
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
+        with:
+          path: .nikatru-shell
+          sparse-checkout: .github/nikatru
+          persist-credentials: false
+      - name: Stage the shell's own copies outside the private checkout (generated)
+        shell: bash
+        working-directory: ${{ github.workspace }}
+        run: |
+          rm -rf ../.nikatru-shell
+          mv .nikatru-shell/.github/nikatru ../.nikatru-shell
+          rm -rf .nikatru-shell
+      - name: "Check out the gated tree's migrations beside main (data, never run) (generated: the private tree)"
+        if: (github.event.client_payload.ref || inputs.private_ref || 'refs/heads/main') != 'refs/heads/main'
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
+        with:
+          repository: ${{ env.NIKATRU_PRIVATE_REPO }}
+          ref: ${{ needs.gate.outputs.sha }}
+          path: .proof-tree
+          sparse-checkout: |
+            services
+          ssh-key: ${{ secrets.PRIVATE_DEPLOY_KEY }}
+          persist-credentials: false
+      - name: Check out private main's composite actions (generated)
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
+        with:
+          repository: ${{ env.NIKATRU_PRIVATE_REPO }}
+          ref: refs/heads/main
+          path: .nikatru-trusted
+          sparse-checkout: .github/actions
+          ssh-key: ${{ secrets.PRIVATE_DEPLOY_KEY }}
+          persist-credentials: false
+      - name: Keep private main's composite actions out of the branch's tree (generated)
+        shell: bash
+        working-directory: ${{ github.workspace }}
+        run: printf '/.nikatru-trusted/\n' >> "$(git rev-parse --git-path info/exclude)"
+      - uses: ./.nikatru-trusted/.github/actions/setup-node
+        env:
+          NIKATRU_REF: ${{ github.event.client_payload.ref || inputs.private_ref || 'refs/heads/main' }}
+          NIKATRU_EVENT_NAME: ${{ github.event.client_payload.event || github.event_name }}
+          NIKATRU_PR: ${{ github.event.client_payload.pr }}
+      - name: Sweep a killed run's leftover proof databases
+        env:
+          CLOUDFLARE_D1_TOKEN: ${{ secrets.CLOUDFLARE_D1_TOKEN }}
+          CLOUDFLARE_ACCOUNT_ID: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
+        run: |
+          NIKATRU_QUIET="$(mktemp "${RUNNER_TEMP:-/tmp}/nikatru-step.XXXXXX")"
+          cat > "$NIKATRU_QUIET" <<'NIKATRU_QUIET_EOF'
+          node tooling/ci/sandbox-ephemeral-db.mjs --sweep --keep "nk-proof-${GITHUB_RUN_ID}-${GITHUB_RUN_ATTEMPT}"
+          NIKATRU_QUIET_EOF
+          NIKATRU_SHELL="${BASH:-bash}"; if command -v cygpath >/dev/null 2>&1; then NIKATRU_SHELL="$(cygpath -w "$NIKATRU_SHELL")"; fi
+          node "$GITHUB_WORKSPACE/../.nikatru-shell/quiet-step.mjs" --name money-sandbox-e2e.ephemeral-db.4 -- "$NIKATRU_SHELL" -e "$NIKATRU_QUIET"
+      - name: Does the gated tree carry a platform migration main lacks
+        id: plan
+        if: (github.event.client_payload.ref || inputs.private_ref || 'refs/heads/main') != 'refs/heads/main'
+        run: |
+          NIKATRU_QUIET="$(mktemp "${RUNNER_TEMP:-/tmp}/nikatru-step.XXXXXX")"
+          cat > "$NIKATRU_QUIET" <<'NIKATRU_QUIET_EOF'
+          node tooling/ci/sandbox-ephemeral-db.mjs --plan --main . --tree .proof-tree
+          NIKATRU_QUIET_EOF
+          NIKATRU_SHELL="${BASH:-bash}"; if command -v cygpath >/dev/null 2>&1; then NIKATRU_SHELL="$(cygpath -w "$NIKATRU_SHELL")"; fi
+          node "$GITHUB_WORKSPACE/../.nikatru-shell/quiet-step.mjs" --name money-sandbox-e2e.ephemeral-db.5 -- "$NIKATRU_SHELL" -e "$NIKATRU_QUIET"
+      - name: Create this proof's own platform database (empty; the deploy migrates it)
+        if: (github.event.client_payload.ref || inputs.private_ref || 'refs/heads/main') != 'refs/heads/main' && steps.plan.outputs.mode == 'ephemeral'
+        env:
+          CLOUDFLARE_D1_TOKEN: ${{ secrets.CLOUDFLARE_D1_TOKEN }}
+          CLOUDFLARE_ACCOUNT_ID: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
+        run: |
+          NIKATRU_QUIET="$(mktemp "${RUNNER_TEMP:-/tmp}/nikatru-step.XXXXXX")"
+          cat > "$NIKATRU_QUIET" <<'NIKATRU_QUIET_EOF'
+          node tooling/ci/sandbox-ephemeral-db.mjs --create --run-id "$GITHUB_RUN_ID" --attempt "$GITHUB_RUN_ATTEMPT" > "$RUNNER_TEMP/ephemeral-create.out"
+          NIKATRU_QUIET_EOF
+          NIKATRU_SHELL="${BASH:-bash}"; if command -v cygpath >/dev/null 2>&1; then NIKATRU_SHELL="$(cygpath -w "$NIKATRU_SHELL")"; fi
+          node "$GITHUB_WORKSPACE/../.nikatru-shell/quiet-step.mjs" --name money-sandbox-e2e.ephemeral-db.6 -- "$NIKATRU_SHELL" -e "$NIKATRU_QUIET"
+      - name: Hand on this proof's database id and name, validated
+        id: create
+        if: (github.event.client_payload.ref || inputs.private_ref || 'refs/heads/main') != 'refs/heads/main' && steps.plan.outputs.mode == 'ephemeral'
+        run: |
+          NIKATRU_QUIET="$(mktemp "${RUNNER_TEMP:-/tmp}/nikatru-step.XXXXXX")"
+          cat > "$NIKATRU_QUIET" <<'NIKATRU_QUIET_EOF'
+          set -euo pipefail
+          cat "$RUNNER_TEMP/ephemeral-create.out"
+          id=$(grep -cE '^id=[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$' "$RUNNER_TEMP/ephemeral-create.out" || true)
+          nm=$(grep -cxF "name=nk-proof-${GITHUB_RUN_ID}-${GITHUB_RUN_ATTEMPT}" "$RUNNER_TEMP/ephemeral-create.out" || true)
+          if [ "$id" != "1" ] || [ "$nm" != "1" ]; then
+            echo "::error title=Ephemeral sandbox database::the create step printed no single id=<uuid> and name=nk-proof-${GITHUB_RUN_ID}-${GITHUB_RUN_ATTEMPT} line; nothing is bound."
+            exit 1
+          fi
+          grep -E '^id=[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$' "$RUNNER_TEMP/ephemeral-create.out" >> "$GITHUB_OUTPUT"
+          echo "name=nk-proof-${GITHUB_RUN_ID}-${GITHUB_RUN_ATTEMPT}" >> "$GITHUB_OUTPUT"
+          NIKATRU_QUIET_EOF
+          NIKATRU_SHELL="${BASH:-bash}"; if command -v cygpath >/dev/null 2>&1; then NIKATRU_SHELL="$(cygpath -w "$NIKATRU_SHELL")"; fi
+          node "$GITHUB_WORKSPACE/../.nikatru-shell/quiet-step.mjs" --name money-sandbox-e2e.ephemeral-db.7 -- "$NIKATRU_SHELL" -e "$NIKATRU_QUIET"
+      - name: Store this job's red detail in the bridge's private home (generated)
+        if: always()
+        continue-on-error: true
+        shell: bash
+        working-directory: ${{ github.workspace }}
+        env:
+          NIKATRU_PATHS: ${{ runner.temp }}/report-detail.md
+          NIKATRU_ARTIFACT_NAME: report-detail-money-sandbox-e2e.ephemeral-db.${{ strategy.job-index }}
+          NIKATRU_IF_NO_FILES: ignore
+          BRIDGE_ARTIFACT_SECRET: ${{ secrets.BRIDGE_ARTIFACT_SECRET }}
+          NIKATRU_BRIDGE_ARTIFACT_URL: https://gh-bridge.nikatru.workers.dev/artifact
+        run: node tooling/ops/bridge-artifact.mjs upload
+
+  deploy:
+    name: deploy
+    if: needs.nikatru-pin.result == 'success' && (needs.nikatru-approve.result == 'success' || (needs.nikatru-approve.result == 'skipped' && !((inputs.private_ref || '') != ''))) && !cancelled() && !failure() && needs.gate.result == 'success' && needs.sandbox-slot.result == 'success' && needs.ephemeral-db.result == 'success'
+    needs: [nikatru-pin, nikatru-approve, gate, sandbox-slot, ephemeral-db]
     uses: ./.github/workflows/deploy-sandbox-unit.yml
     with:
       worker: all
@@ -425,6 +578,8 @@ jobs:
       pr: ${{ inputs.private_pr }}
       proof: 'true'
       gate_rule: lanes
+      platform_db: ${{ needs.ephemeral-db.outputs.id }}
+      platform_db_name: ${{ needs.ephemeral-db.outputs.name }}
       nikatru_sha: ${{ needs.gate.outputs.sha || 'nikatru-pin-did-not-succeed..' }}
     permissions:
       contents: read
@@ -574,12 +729,13 @@ jobs:
 
   restore:
     name: restore
-    needs: [nikatru-pin, nikatru-approve, main-gate]
+    needs: [nikatru-pin, nikatru-approve, main-gate, ephemeral-db]
     if: needs.nikatru-pin.result == 'success' && (needs.nikatru-approve.result == 'success' || (needs.nikatru-approve.result == 'skipped' && !((inputs.private_ref || '') != ''))) && (always() && (github.event.client_payload.ref || inputs.private_ref || 'refs/heads/main') != 'refs/heads/main' && needs.main-gate.result == 'success')
     uses: ./.github/workflows/deploy-sandbox-unit.yml
     with:
       worker: all
       ref: ${{ needs.main-gate.outputs.sha }}
+      migrate_after: ${{ needs.ephemeral-db.outputs.id != '' && 'true' || 'false' }}
       nikatru_sha: ${{ needs.main-gate.outputs.sha || 'nikatru-pin-did-not-succeed..' }}
     permissions:
       contents: read
@@ -663,7 +819,7 @@ jobs:
         run: |
           NIKATRU_QUIET="$(mktemp "${RUNNER_TEMP:-/tmp}/nikatru-step.XXXXXX")"
           cat > "$NIKATRU_QUIET" <<'NIKATRU_QUIET_EOF'
-          echo "::error title=sandbox stranded::env.sandbox may still run ${REF} at ${STRANDED_SHA} (deploy: ${DEPLOY_RESULT}); main-gate was ${MAIN_GATE_RESULT}, so restore did not redeploy main. Dispatch deploy-sandbox.yml on main (or re-run this run's failed jobs) before the next money run walks the sandbox."
+          echo "::error title=sandbox stranded::env.sandbox may still run ${REF} at ${STRANDED_SHA} (deploy: ${DEPLOY_RESULT}); main-gate was ${MAIN_GATE_RESULT}, so restore did not redeploy main. Dispatch deploy-sandbox.yml on main before the next money run walks the sandbox, and within 6 h (the next run's sweep drops this proof's own database, if it made one). A proof with its own database is re-proven by a NEW dispatch, never by re-running failed jobs: the re-run would bind the database this run already dropped."
           exit 1
           NIKATRU_QUIET_EOF
           NIKATRU_SHELL="${BASH:-bash}"; if command -v cygpath >/dev/null 2>&1; then NIKATRU_SHELL="$(cygpath -w "$NIKATRU_SHELL")"; fi
@@ -681,9 +837,114 @@ jobs:
           NIKATRU_BRIDGE_ARTIFACT_URL: https://gh-bridge.nikatru.workers.dev/artifact
         run: node tooling/ops/bridge-artifact.mjs upload
 
+  ephemeral-drop:
+    name: drop the proof's own platform database
+    needs: [nikatru-pin, nikatru-approve, ephemeral-db, deploy, restore]
+    if: needs.nikatru-pin.result == 'success' && (needs.nikatru-approve.result == 'success' || (needs.nikatru-approve.result == 'skipped' && !((inputs.private_ref || '') != ''))) && (always() && needs.ephemeral-db.outputs.id != '')
+    runs-on: ubuntu-24.04
+    timeout-minutes: 10
+    permissions:
+      contents: read
+      id-token: write
+    steps:
+      - name: Check out the private tree (generated)
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
+        with:
+          repository: ${{ env.NIKATRU_PRIVATE_REPO }}
+          ref: main
+          ssh-key: ${{ secrets.PRIVATE_DEPLOY_KEY }}
+          persist-credentials: false
+      - name: Name the private commit (generated)
+        shell: bash
+        working-directory: ${{ github.workspace }}
+        env:
+          NIKATRU_P_EVENT: ${{ github.event.client_payload.event || github.event_name }}
+          NIKATRU_P_REF: ${{ github.event.client_payload.ref || inputs.private_ref || 'refs/heads/main' }}
+          NIKATRU_P_BASE_SHA: ${{ github.event.client_payload.base_sha }}
+          NIKATRU_P_BASE_REF: ${{ github.event.client_payload.base_ref }}
+          NIKATRU_P_PR: ${{ github.event.client_payload.pr }}
+          NIKATRU_P_PR_CREATED_AT: ${{ github.event.client_payload.pr_created_at }}
+          NIKATRU_P_DRAFT: ${{ github.event.client_payload.draft }}
+          NIKATRU_P_SHA: ${{ github.event.client_payload.sha }}
+        run: |
+          {
+            echo "NIKATRU_SHA=$(git rev-parse HEAD)"
+            echo "NIKATRU_HEAD_SHA=${NIKATRU_P_SHA:-$(git rev-parse HEAD)}"
+            echo "NIKATRU_EVENT_NAME=$NIKATRU_P_EVENT"
+            echo "NIKATRU_REF=$NIKATRU_P_REF"
+            echo "NIKATRU_REF_NAME=${NIKATRU_P_REF#refs/*/}"
+            echo "NIKATRU_BASE_SHA=$NIKATRU_P_BASE_SHA"
+            echo "NIKATRU_BASE_REF=$NIKATRU_P_BASE_REF"
+            echo "NIKATRU_PR=$NIKATRU_P_PR"
+            echo "NIKATRU_PR_CREATED_AT=$NIKATRU_P_PR_CREATED_AT"
+            echo "NIKATRU_DRAFT=$NIKATRU_P_DRAFT"
+          } >> "$GITHUB_ENV"
+      - name: Check out this shell repository's own step wrapper and reporter (generated)
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
+        with:
+          path: .nikatru-shell
+          sparse-checkout: .github/nikatru
+          persist-credentials: false
+      - name: Stage the shell's own copies outside the private checkout (generated)
+        shell: bash
+        working-directory: ${{ github.workspace }}
+        run: |
+          rm -rf ../.nikatru-shell
+          mv .nikatru-shell/.github/nikatru ../.nikatru-shell
+          rm -rf .nikatru-shell
+      - name: Check out private main's composite actions (generated)
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
+        with:
+          repository: ${{ env.NIKATRU_PRIVATE_REPO }}
+          ref: refs/heads/main
+          path: .nikatru-trusted
+          sparse-checkout: .github/actions
+          ssh-key: ${{ secrets.PRIVATE_DEPLOY_KEY }}
+          persist-credentials: false
+      - name: Keep private main's composite actions out of the branch's tree (generated)
+        shell: bash
+        working-directory: ${{ github.workspace }}
+        run: printf '/.nikatru-trusted/\n' >> "$(git rev-parse --git-path info/exclude)"
+      - uses: ./.nikatru-trusted/.github/actions/setup-node
+        env:
+          NIKATRU_REF: ${{ github.event.client_payload.ref || inputs.private_ref || 'refs/heads/main' }}
+          NIKATRU_EVENT_NAME: ${{ github.event.client_payload.event || github.event_name }}
+          NIKATRU_PR: ${{ github.event.client_payload.pr }}
+      - name: Drop it (only once nothing serves on it)
+        env:
+          CLOUDFLARE_D1_TOKEN: ${{ secrets.CLOUDFLARE_D1_TOKEN }}
+          CLOUDFLARE_ACCOUNT_ID: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
+          DB_ID: ${{ needs.ephemeral-db.outputs.id }}
+          DB_NAME: ${{ needs.ephemeral-db.outputs.name }}
+          DEPLOY_RESULT: ${{ needs.deploy.result }}
+          RESTORE_RESULT: ${{ needs.restore.result }}
+        run: |
+          NIKATRU_QUIET="$(mktemp "${RUNNER_TEMP:-/tmp}/nikatru-step.XXXXXX")"
+          cat > "$NIKATRU_QUIET" <<'NIKATRU_QUIET_EOF'
+          if [ "$RESTORE_RESULT" != "success" ] && [ "$DEPLOY_RESULT" != "skipped" ]; then
+            echo "::warning title=Ephemeral sandbox database kept::restore was ${RESTORE_RESULT}, so the sandbox may still serve the branch on ${DB_NAME}; it is left for the next run's sweep."
+            exit 0
+          fi
+          node tooling/ci/sandbox-ephemeral-db.mjs --drop --id "$DB_ID" --name "$DB_NAME"
+          NIKATRU_QUIET_EOF
+          NIKATRU_SHELL="${BASH:-bash}"; if command -v cygpath >/dev/null 2>&1; then NIKATRU_SHELL="$(cygpath -w "$NIKATRU_SHELL")"; fi
+          node "$GITHUB_WORKSPACE/../.nikatru-shell/quiet-step.mjs" --name money-sandbox-e2e.ephemeral-drop.3 -- "$NIKATRU_SHELL" -e "$NIKATRU_QUIET"
+      - name: Store this job's red detail in the bridge's private home (generated)
+        if: always()
+        continue-on-error: true
+        shell: bash
+        working-directory: ${{ github.workspace }}
+        env:
+          NIKATRU_PATHS: ${{ runner.temp }}/report-detail.md
+          NIKATRU_ARTIFACT_NAME: report-detail-money-sandbox-e2e.ephemeral-drop.${{ strategy.job-index }}
+          NIKATRU_IF_NO_FILES: ignore
+          BRIDGE_ARTIFACT_SECRET: ${{ secrets.BRIDGE_ARTIFACT_SECRET }}
+          NIKATRU_BRIDGE_ARTIFACT_URL: https://gh-bridge.nikatru.workers.dev/artifact
+        run: node tooling/ops/bridge-artifact.mjs upload
+
   nikatru-ran:
     name: Fail this run if it ran nothing (generated)
-    needs: [gate, sandbox-slot, deploy, proof, main-gate, restore, stranded]
+    needs: [gate, sandbox-slot, ephemeral-db, deploy, proof, main-gate, restore, stranded, ephemeral-drop]
     if: "!cancelled()"
     runs-on: ubuntu-24.04
     defaults:
@@ -703,7 +964,7 @@ jobs:
       - name: Fail when every job of this run was skipped (generated)
         shell: bash
         env:
-          NIKATRU_RESULTS: gate=${{ needs.gate.result }} sandbox-slot=${{ needs.sandbox-slot.result }} deploy=${{ needs.deploy.result }} proof=${{ needs.proof.result }} main-gate=${{ needs.main-gate.result }} restore=${{ needs.restore.result }} stranded=${{ needs.stranded.result }}
+          NIKATRU_RESULTS: gate=${{ needs.gate.result }} sandbox-slot=${{ needs.sandbox-slot.result }} ephemeral-db=${{ needs.ephemeral-db.result }} deploy=${{ needs.deploy.result }} proof=${{ needs.proof.result }} main-gate=${{ needs.main-gate.result }} restore=${{ needs.restore.result }} stranded=${{ needs.stranded.result }} ephemeral-drop=${{ needs.ephemeral-drop.result }}
         run: |
           for r in $NIKATRU_RESULTS; do
             if [ "${r#*=}" != skipped ]; then echo "ran: $NIKATRU_RESULTS"; exit 0; fi

@@ -248,7 +248,7 @@ jobs:
         run: |
           NIKATRU_QUIET="$(mktemp "${RUNNER_TEMP:-/tmp}/nikatru-step.XXXXXX")"
           cat > "$NIKATRU_QUIET" <<'NIKATRU_QUIET_EOF'
-          dart pub global activate mason_cli 0.1.4
+          node tooling/ops/dart-tools.mjs mason
           NIKATRU_QUIET_EOF
           NIKATRU_SHELL="${BASH:-bash}"; if command -v cygpath >/dev/null 2>&1; then NIKATRU_SHELL="$(cygpath -w "$NIKATRU_SHELL")"; fi
           node "$GITHUB_WORKSPACE/../.nikatru-shell/quiet-step.mjs" --name mutation-proofs.execute.5 -- "$NIKATRU_SHELL" -e "$NIKATRU_QUIET"
@@ -304,6 +304,13 @@ jobs:
           sparse-checkout: |
             tooling/ci
             tooling/versions.json
+            tooling/ops
+            tooling/app-yaml
+            tooling/catalog
+            tooling/entity
+            tooling/legal
+            tooling/ports
+            services/gh-bridge/wrangler.jsonc
           ssh-key: ${{ secrets.PRIVATE_DEPLOY_KEY }}
           persist-credentials: false
       - name: Name the private commit (generated)
@@ -536,7 +543,7 @@ jobs:
         run: |
           NIKATRU_QUIET="$(mktemp "${RUNNER_TEMP:-/tmp}/nikatru-step.XXXXXX")"
           cat > "$NIKATRU_QUIET" <<'NIKATRU_QUIET_EOF'
-          dart pub global activate mason_cli 0.1.4
+          node tooling/ops/dart-tools.mjs mason
           NIKATRU_QUIET_EOF
           NIKATRU_SHELL="${BASH:-bash}"; if command -v cygpath >/dev/null 2>&1; then NIKATRU_SHELL="$(cygpath -w "$NIKATRU_SHELL")"; fi
           node "$GITHUB_WORKSPACE/../.nikatru-shell/quiet-step.mjs" --name mutation-proofs.refresh.5 -- "$NIKATRU_SHELL" -e "$NIKATRU_QUIET"
@@ -615,6 +622,12 @@ jobs:
           sparse-checkout: |
             tooling/ops
             tooling/ci
+            tooling/app-yaml
+            tooling/catalog
+            tooling/entity
+            tooling/legal
+            tooling/ports
+            services/gh-bridge/wrangler.jsonc
           ssh-key: ${{ secrets.PRIVATE_DEPLOY_KEY }}
           persist-credentials: false
       - name: Name the private commit (generated)
@@ -957,15 +970,34 @@ jobs:
           NIKATRU_EVENT_NAME: ${{ github.event.client_payload.event || github.event_name }}
           NIKATRU_PR: ${{ github.event.client_payload.pr }}
       - name: Install restic
+        timeout-minutes: 9
         run: |
           NIKATRU_QUIET="$(mktemp "${RUNNER_TEMP:-/tmp}/nikatru-step.XXXXXX")"
           cat > "$NIKATRU_QUIET" <<'NIKATRU_QUIET_EOF'
-          sudo apt-get update
-          sudo apt-get install -y restic
-          restic version
+          cached_install() {
+            if [ -f "$GITHUB_WORKSPACE/tooling/ops/ci-install-cache.mjs" ]; then
+              node "$GITHUB_WORKSPACE/tooling/ops/ci-install-cache.mjs" run --cache-dir "${DEBS_DIR:-$RUNNER_TEMP/ci-install-debs}" --attempt-minutes "${ATTEMPT_MINUTES:-4}" -- "$@"
+              return
+            fi
+            bound="$(awk -v m="${ATTEMPT_MINUTES:-4}" 'BEGIN { print int(m * 120) + 1 }')"
+            echo "::warning title=Install uncached::this checkout has no tooling/ops/ci-install-cache.mjs (it predates #981): $* runs uncached, bounded at ${bound} s"
+            if [ "$1" = sudo ]; then timeout -k 15 "$bound" sudo apt-get update; fi
+            timeout -k 15 "$bound" "$@"
+          }
+          cached_install \
+            sudo apt-get install -y \
+            restic
           NIKATRU_QUIET_EOF
           NIKATRU_SHELL="${BASH:-bash}"; if command -v cygpath >/dev/null 2>&1; then NIKATRU_SHELL="$(cygpath -w "$NIKATRU_SHELL")"; fi
           node "$GITHUB_WORKSPACE/../.nikatru-shell/quiet-step.mjs" --name mutation-proofs.opt-in-cases.3 -- "$NIKATRU_SHELL" -e "$NIKATRU_QUIET"
+      - name: The restic installed
+        run: |
+          NIKATRU_QUIET="$(mktemp "${RUNNER_TEMP:-/tmp}/nikatru-step.XXXXXX")"
+          cat > "$NIKATRU_QUIET" <<'NIKATRU_QUIET_EOF'
+          restic version
+          NIKATRU_QUIET_EOF
+          NIKATRU_SHELL="${BASH:-bash}"; if command -v cygpath >/dev/null 2>&1; then NIKATRU_SHELL="$(cygpath -w "$NIKATRU_SHELL")"; fi
+          node "$GITHUB_WORKSPACE/../.nikatru-shell/quiet-step.mjs" --name mutation-proofs.opt-in-cases.4 -- "$NIKATRU_SHELL" -e "$NIKATRU_QUIET"
       - name: The restic drill, the real-network pin cases and a real CodeQL analysis run, and none skips
         env:
           RESTIC_BIN: restic
@@ -983,7 +1015,7 @@ jobs:
           done
           NIKATRU_QUIET_EOF
           NIKATRU_SHELL="${BASH:-bash}"; if command -v cygpath >/dev/null 2>&1; then NIKATRU_SHELL="$(cygpath -w "$NIKATRU_SHELL")"; fi
-          node "$GITHUB_WORKSPACE/../.nikatru-shell/quiet-step.mjs" --name mutation-proofs.opt-in-cases.4 -- "$NIKATRU_SHELL" -e "$NIKATRU_QUIET"
+          node "$GITHUB_WORKSPACE/../.nikatru-shell/quiet-step.mjs" --name mutation-proofs.opt-in-cases.5 -- "$NIKATRU_SHELL" -e "$NIKATRU_QUIET"
       - name: Store this job's red detail in the bridge's private home (generated)
         if: always()
         continue-on-error: true

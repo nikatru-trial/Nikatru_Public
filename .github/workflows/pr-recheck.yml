@@ -62,6 +62,8 @@ jobs:
           [[ "${NIKATRU_POLL_S:-}" =~ ^[0-9]{1,4}$ ]] || unknown "NIKATRU_POLL_S is not a number of seconds"
           [ -n "${BRIDGE_READ_SECRET:-}" ] || unknown "BRIDGE_READ_SECRET is not set: the bridge read cannot be signed"
           [[ "${NIKATRU_BRIDGE_READ_URL:-}" =~ ^https://[A-Za-z0-9.-]+/pr-meta$ ]] || [[ "${NIKATRU_BRIDGE_READ_URL:-}" =~ ^http://127\.0\.0\.1:[0-9]+/pr-meta$ ]] || unknown "NIKATRU_BRIDGE_READ_URL is not the bridge's https /pr-meta URL"
+          retry_base_s="${NIKATRU_RETRY_BASE_S:-1}"
+          [[ "$retry_base_s" =~ ^[0-9]{1,2}$ ]] || unknown "NIKATRU_RETRY_BASE_S is not a number of seconds"
           audience="${NIKATRU_OIDC_AUDIENCE:-nikatru-gh-bridge-propose}"
           [[ "$audience" =~ ^[A-Za-z0-9._-]+$ ]] || unknown "NIKATRU_OIDC_AUDIENCE holds a character this script will not pass"
 
@@ -105,10 +107,51 @@ jobs:
             printf '%s' "$newest"
           }
 
+          # One GitHub API read (the `gh api …` command in "$@"), asked again on a 5xx, a 429 or a dropped connection with
+          # tooling/ops/bounded-retry.mjs's plan: READ_ATTEMPTS=3 attempts, gaps RETRY_BASE_MS doubling (1 s, 2 s;
+          # NIKATRU_RETRY_BASE_S scales them, 0 in the test). Any other failure (a 404, a 403) is an answer and is not
+          # asked again. Prints the body; returns 1 once the plan is spent, and the CALLER says UNKNOWN (fail closed).
+          read_attempts=3
+          retry_read() {
+            local attempt=1 gap="$retry_base_s" out errf
+            errf=$(mktemp)
+            while :; do
+              if out=$("$@" 2>"$errf"); then rm -f "$errf"; printf '%s' "$out"; return 0; fi
+              if [ "$attempt" -ge "$read_attempts" ] || ! grep -Eqi 'HTTP (5[0-9]{2}|429)|connection reset|connection refused|i/o timeout|TLS handshake timeout|unexpected EOF|context deadline exceeded' "$errf"; then
+                echo "the read \`${*:2}\` failed (attempt $attempt of $read_attempts): $(head -c 300 "$errf" | tr '\n' ' ')" >&2
+                rm -f "$errf"
+                return 1
+              fi
+              echo "the read \`${*:2}\` failed with a retryable answer (attempt $attempt of $read_attempts): asking again in ${gap}s" >&2
+              sleep "$gap"
+              attempt=$(( attempt + 1 ))
+              gap=$(( gap * 2 ))
+            done
+          }
+
+          # Run $1's status and its jobs, as one {status, jobs:[{name,databaseId,status,startedAt}]} object.
+          # ⏱ 2026-11-15 · speed-pr-1115 (O-PR-RECHECK-502-ON-BIG-RUNS): this was ONE `gh run view --json status,jobs`
+          # (jobs in one 100-job page), and GitHub answered HTTP 502 on big runs (99 jobs): 4 of 4 recheck failures on 11-15.
+          # Now the run is read alone, and its jobs in pages of 50 (tooling/ops/run-jobs.mjs JOB_PAGE_SIZE, the size GitHub
+          # was measured answering where 100 gave 502) with filter=latest, each read retried by retry_read. The pages must add
+          # up to the run's total_count (a short read is UNKNOWN, never judged on the jobs it happened to see).
+          run_view() {
+            local run="$1" meta status body n jobs
+            meta=$(retry_read gh api "repos/$GITHUB_REPOSITORY/actions/runs/$run") || unknown "run $run could not be read"
+            status=$(jq -r 'try (if (.status | type) == "string" then .status else "" end) catch ""' <<<"$meta") || status=""
+            [ -n "$status" ] || unknown "run $run is not a run"
+            body=$(retry_read gh api --paginate "repos/$GITHUB_REPOSITORY/actions/runs/$run/jobs?filter=latest&per_page=50") || unknown "the jobs of run $run could not be read"
+            jobs=$(jq -cs 'try (if length > 0 and all(.[]; (.jobs | type) == "array" and (.total_count | type) == "number") then {total: .[0].total_count, jobs: [.[].jobs[] | {name, databaseId: .id, status, startedAt: .started_at}]} else "" end) catch ""' <<<"$body") || jobs=""
+            [ -n "$jobs" ] && [ "$jobs" != '""' ] || unknown "run $run has no single $NIKATRU_GATE_JOB job: its jobs are not a job list"
+            n=$(jq -r 'if (.jobs | length) == .total then "ok" else "\(.jobs | length) of \(.total)" end' <<<"$jobs")
+            [ "$n" = ok ] || unknown "the jobs of run $run read short ($n): the pages did not add up to total_count"
+            jq -c --arg s "$status" '{status: $s, jobs: .jobs}' <<<"$jobs"
+          }
+
           # The status of run $1's gate job: "absent" when it has none yet. Read, never trusted from a list.
           gate_status_of() {
             local run="$1" view st
-            view=$(gh run view "$run" --repo "$GITHUB_REPOSITORY" --json status,jobs) || unknown "run $run could not be read"
+            view=$(run_view "$run")
             st=$(jq -r --arg n "$NIKATRU_GATE_JOB" 'try ([.jobs[] | select(.name == $n)] as $g | if ($g | length) == 0 then "absent" elif ($g | length) == 1 and ($g[0].status | type) == "string" then $g[0].status else "" end) catch ""' <<<"$view") || st=""
             [ -n "$st" ] || unknown "run $run has more than one $NIKATRU_GATE_JOB job, or is not a run"
             printf '%s' "$st"
@@ -156,7 +199,7 @@ jobs:
             [[ "$id" =~ ^[1-9][0-9]{0,19}$ ]] || unknown "the $NIKATRU_GATE_JOB status names no run id"
             # (e) named a newer run of this PR's head whose gate may hold the old body's verdict: act on it.
             if [ -n "$pinned" ] && [ "$pinned" -gt "$id" ]; then id="$pinned"; fi
-            view=$(gh run view "$id" --repo "$GITHUB_REPOSITORY" --json status,jobs) || unknown "run $id could not be read"
+            view=$(run_view "$id")
             gate=$(jq -r --arg n "$NIKATRU_GATE_JOB" 'try ([.jobs[] | select(.name == $n)] as $g | if ($g | length) == 1 then "\(.status) \($g[0].databaseId) \($g[0].status) \(if ($g[0].startedAt | type) == "string" and ($g[0].startedAt | test("^[0-9]{4}-[0-9]{2}-[0-9]{2}T[0-9]{2}:[0-9]{2}:[0-9]{2}Z$")) then $g[0].startedAt else "-" end)" else "" end) catch ""' <<<"$view") || gate=""
             [ -n "$gate" ] || unknown "run $id has no single $NIKATRU_GATE_JOB job"
             read -r run_status job_id job_status job_started <<<"$gate"

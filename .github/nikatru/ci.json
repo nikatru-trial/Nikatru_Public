@@ -3,7 +3,7 @@
   "bridgeUrl": "https://gh-bridge.nikatru.workers.dev/report",
   "postTimeoutS": 30,
   "prefix": "nikatru-detail-",
-  "slots": 8,
+  "slots": 32,
   "sendBudgetS": 360,
   "gate": {
     "job": "ci-gate",
@@ -71,5 +71,6 @@
     }
   ],
   "gateMeta": true,
-  "dispatchDetailUrl": "https://gh-bridge.nikatru.workers.dev/dispatch-detail"
+  "dispatchDetailUrl": "https://gh-bridge.nikatru.workers.dev/dispatch-detail",
+  "artifactUrl": "https://gh-bridge.nikatru.workers.dev/artifact"
 }

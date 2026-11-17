@@ -3,7 +3,7 @@
   "bridgeUrl": "https://gh-bridge.nikatru.workers.dev/report",
   "postTimeoutS": 30,
   "prefix": "nikatru-detail-",
-  "slots": 8,
+  "slots": 32,
   "sendBudgetS": 360,
   "gate": {
     "job": "shell-rehearsal",
@@ -34,5 +34,6 @@
         "shell-rehearsal.await."
       ]
     }
-  ]
+  ],
+  "artifactUrl": "https://gh-bridge.nikatru.workers.dev/artifact"
 }

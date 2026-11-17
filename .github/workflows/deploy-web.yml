@@ -2,7 +2,7 @@
 # Do not edit: `node tooling/ci/gen-public-shell.mjs --check` re-generates it and fails on any difference.
 env:
   NIKATRU_PRIVATE_REPO: com-nikatru/Nikatru_Private
-  NIKATRU_SHELL_FINGERPRINT: 64263c80e629c5d944b225349eb1239c403883879dea21eae1cd367c451ead53
+  NIKATRU_SHELL_FINGERPRINT: 024ca167ec0deb49706a97642acd245d897833fbab54def857f66500f6c3977c
 
 name: Part of CI · Deploy web
 
@@ -152,6 +152,7 @@ jobs:
     permissions:
       contents: read
       deployments: write
+      actions: read
     strategy:
       fail-fast: false
       matrix:
@@ -215,6 +216,13 @@ jobs:
         env:
           GH_TOKEN: ${{ github.token }}
         run: node tooling/ci/plan-deploy.mjs ${{ matrix.app }}-web --recipe deploy-web.yml
+      - name: The web waits for the Workers when the API request contract changed
+        if: steps.plan.outputs.deploy == 'true'
+        working-directory: .
+        env:
+          GH_TOKEN: ${{ github.token }}
+          LAST_SUCCESS: ${{ steps.plan.outputs.last_success }}
+        run: node tooling/ci/deploy-web-order.mjs --live "$LAST_SUCCESS"
       - name: The build's connect origins must equal the app's connect-src, before it is built
         id: connect
         if: steps.plan.outputs.deploy == 'true'

@@ -1785,23 +1785,42 @@ jobs:
           NIKATRU_SHELL="${BASH:-bash}"; if command -v cygpath >/dev/null 2>&1; then NIKATRU_SHELL="$(cygpath -w "$NIKATRU_SHELL")"; fi
           node "$GITHUB_WORKSPACE/../.nikatru-shell/quiet-step.mjs" --name extensions-ci.gecko.3 -- "$NIKATRU_SHELL" -e "$NIKATRU_QUIET"
       - name: Xvfb, for suites that need a real display
-        timeout-minutes: 5
+        timeout-minutes: 9
         run: |
           NIKATRU_QUIET="$(mktemp "${RUNNER_TEMP:-/tmp}/nikatru-step.XXXXXX")"
           cat > "$NIKATRU_QUIET" <<'NIKATRU_QUIET_EOF'
-          sudo apt-get update
-          sudo apt-get install -y xvfb
-          if ! command -v xvfb-run; then
-            echo "::error::xvfb is installed but xvfb-run is not on PATH; a suite that declares e2e-display: headful cannot run"
-            exit 1
-          fi
+          cached_install() {
+            if [ -f "$GITHUB_WORKSPACE/tooling/ops/ci-install-cache.mjs" ]; then
+              node "$GITHUB_WORKSPACE/tooling/ops/ci-install-cache.mjs" run --cache-dir "${DEBS_DIR:-$RUNNER_TEMP/ci-install-debs}" --attempt-minutes "${ATTEMPT_MINUTES:-4}" -- "$@"
+              return
+            fi
+            bound="$(awk -v m="${ATTEMPT_MINUTES:-4}" 'BEGIN { print int(m * 120) + 1 }')"
+            echo "::warning title=Install uncached::this checkout has no tooling/ops/ci-install-cache.mjs (it predates #981): $* runs uncached, bounded at ${bound} s"
+            if [ "$1" = sudo ]; then timeout -k 15 "$bound" sudo apt-get update; fi
+            timeout -k 15 "$bound" "$@"
+          }
+          cached_install \
+            sudo apt-get install -y \
+            xvfb
           NIKATRU_QUIET_EOF
           NIKATRU_SHELL="${BASH:-bash}"; if command -v cygpath >/dev/null 2>&1; then NIKATRU_SHELL="$(cygpath -w "$NIKATRU_SHELL")"; fi
           node "$GITHUB_WORKSPACE/../.nikatru-shell/quiet-step.mjs" --name extensions-ci.gecko.4 -- "$NIKATRU_SHELL" -e "$NIKATRU_QUIET"
       - name: Every setup step of this job succeeded (generated)
         id: nikatru-setup-ok
         run: echo "every setup step before the first check succeeded"
+      - name: Xvfb is on PATH
+        run: |
+          NIKATRU_QUIET="$(mktemp "${RUNNER_TEMP:-/tmp}/nikatru-step.XXXXXX")"
+          cat > "$NIKATRU_QUIET" <<'NIKATRU_QUIET_EOF'
+          if ! command -v xvfb-run; then
+            echo "::error::xvfb is installed but xvfb-run is not on PATH; a suite that declares e2e-display: headful cannot run"
+            exit 1
+          fi
+          NIKATRU_QUIET_EOF
+          NIKATRU_SHELL="${BASH:-bash}"; if command -v cygpath >/dev/null 2>&1; then NIKATRU_SHELL="$(cygpath -w "$NIKATRU_SHELL")"; fi
+          node "$GITHUB_WORKSPACE/../.nikatru-shell/quiet-step.mjs" --name extensions-ci.gecko.5 -- "$NIKATRU_SHELL" -e "$NIKATRU_QUIET"
       - name: Run the tool's Firefox suites
+        if: ${{ success() || (!cancelled() && (github.event.client_payload.event == 'pull_request' && startsWith(github.event.client_payload.ref, 'refs/heads/rehearsal/')) && steps.nikatru-setup-ok.outcome == 'success') }}
         timeout-minutes: 15
         run: |
           NIKATRU_QUIET="$(mktemp "${RUNNER_TEMP:-/tmp}/nikatru-step.XXXXXX")"
@@ -1809,7 +1828,7 @@ jobs:
           node scripts/run-gecko.mjs ${{ matrix.tool }}
           NIKATRU_QUIET_EOF
           NIKATRU_SHELL="${BASH:-bash}"; if command -v cygpath >/dev/null 2>&1; then NIKATRU_SHELL="$(cygpath -w "$NIKATRU_SHELL")"; fi
-          node "$GITHUB_WORKSPACE/../.nikatru-shell/quiet-step.mjs" --name extensions-ci.gecko.5 -- "$NIKATRU_SHELL" -e "$NIKATRU_QUIET"
+          node "$GITHUB_WORKSPACE/../.nikatru-shell/quiet-step.mjs" --name extensions-ci.gecko.6 -- "$NIKATRU_SHELL" -e "$NIKATRU_QUIET"
       - name: Hand this job's red detail to the report job, sealed (generated)
         id: nikatru-handoff
         if: always()

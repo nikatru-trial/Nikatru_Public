@@ -191,6 +191,7 @@ jobs:
     environment: sandbox
     outputs:
       rails: ${{ steps.rails.outputs.rails }}
+      matrix: ${{ steps.rails.outputs.matrix || '[{"rail":"none","account":"none","lock":"money-sandbox-noop"}]' }}
     steps:
       - name: Check out the private tree (generated)
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
@@ -260,20 +261,26 @@ jobs:
           NIKATRU_REF: ${{ github.event.client_payload.ref || 'refs/heads/main' }}
           NIKATRU_EVENT_NAME: ${{ github.event.client_payload.event || github.event_name }}
           NIKATRU_PR: ${{ github.event.client_payload.pr }}
-      - name: The rails this run proves come from the input, never from this file
+      - name: The rails this run proves come from the input and the rail register, never from this file
         if: needs.plan.outputs.money == 'true'
         id: rails
         env:
           RAIL_INPUT: ${{ inputs.rail || 'all' }}
         run: |
           set -euo pipefail
-          case "$RAIL_INPUT" in
-            all) rails='paddle razorpay' ;;
-            paddle|razorpay) rails="$RAIL_INPUT" ;;
-            *) echo "::error title=Money sandbox proof cannot run::rail \"$RAIL_INPUT\" is not one of all, paddle, razorpay."; exit 1 ;;
-          esac
-          echo "rails=${rails}" >> "$GITHUB_OUTPUT"
-          echo "Proving: ${rails}" >> "$GITHUB_STEP_SUMMARY"
+          if [ -f tooling/ci/money-walk-plan.mjs ]; then
+            node tooling/ci/money-walk-plan.mjs --rail "$RAIL_INPUT"
+          else
+            case "$RAIL_INPUT" in
+              all) rails='paddle razorpay' ;;
+              paddle|razorpay) rails="$RAIL_INPUT" ;;
+              *) echo "::error title=Money sandbox proof cannot run::rail \"$RAIL_INPUT\" is not one of all, paddle, razorpay."; exit 1 ;;
+            esac
+            matrix="$(for r in $rails; do printf '{"rail":"%s","account":"TEST_ACCOUNT_EMAIL","lock":"money-sandbox-legs"}\n' "$r"; done | paste -sd, -)"
+            printf 'matrix=[%s]\nparallel=1\nrails=%s\n' "$matrix" "$rails" >> "$GITHUB_OUTPUT"
+            echo "::warning title=Money walk plan::this checkout predates tooling/ci/money-walk-plan.mjs: its rails walk one after another."
+          fi
+          echo "Proving: $(sed -n 's/^rails=//p' "$GITHUB_OUTPUT" | tail -1)" >> "$GITHUB_STEP_SUMMARY"
       - name: Every test-mode secret the run needs is set (one sentence per missing secret)
         if: needs.plan.outputs.money == 'true'
         env:
@@ -304,15 +311,23 @@ jobs:
         run: node tooling/e2e/money/preflight.mjs --one-commit "$NIKATRU_SHA"
 
   legs:
-    name: Every money leg on every rail (sandbox)
+    name: Every money leg on ${{ matrix.rail }} (sandbox)
     needs: [plan, preflight]
+    strategy:
+      fail-fast: false
+      max-parallel: 2
+      matrix:
+        include: ${{ fromJSON(needs.preflight.outputs.matrix) }}
     outputs:
-      walked: ${{ steps.walk.outputs.walked }}
+      walked_paddle: ${{ steps.walk.outputs.walked_paddle }}
+      walked_razorpay: ${{ steps.walk.outputs.walked_razorpay }}
+      fallbacks_paddle: ${{ steps.walk.outputs.fallbacks_paddle }}
+      fallbacks_razorpay: ${{ steps.walk.outputs.fallbacks_razorpay }}
     runs-on: ubuntu-24.04
-    timeout-minutes: 90
+    timeout-minutes: 60
     environment: sandbox
     concurrency:
-      group: ${{ needs.plan.outputs.money == 'true' && 'money-sandbox-legs' || format('money-sandbox-noop-{0}-{1}', github.run_id, github.job) }}
+      group: ${{ needs.plan.outputs.money == 'true' && matrix.lock || format('money-sandbox-noop-{0}-{1}-{2}', github.run_id, github.job, matrix.rail) }}
       cancel-in-progress: false
     permissions:
       contents: read
@@ -363,6 +378,18 @@ jobs:
         with:
           repository: ${{ env.NIKATRU_PRIVATE_REPO }}
           ref: ${{ inputs.ref || inputs.nikatru_sha || (github.event.client_payload.event == 'pull_request' && format('refs/pull/{0}/merge', github.event.client_payload.pr) || github.event.client_payload.sha || 'main') }}
+          ssh-key: ${{ secrets.PRIVATE_DEPLOY_KEY }}
+          persist-credentials: false
+      - name: "Check out the private history beside it (every branch's commits, no file) (generated: the private tree)"
+        if: needs.plan.outputs.money == 'true'
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
+        with:
+          repository: ${{ env.NIKATRU_PRIVATE_REPO }}
+          ref: ${{ inputs.ref || inputs.nikatru_sha || (github.event.client_payload.event == 'pull_request' && format('refs/pull/{0}/merge', github.event.client_payload.pr) || github.event.client_payload.sha || 'main') }}
+          path: .money-history
+          fetch-depth: 0
+          filter: tree:0
+          sparse-checkout: .github/ISSUE_TEMPLATE
           ssh-key: ${{ secrets.PRIVATE_DEPLOY_KEY }}
           persist-credentials: false
       - name: Check out private main's composite actions (generated)
@@ -426,15 +453,16 @@ jobs:
         if: needs.plan.outputs.money == 'true'
         env:
           SANDBOX_ADMIN_ROUTE_SECRET: ${{ secrets.SANDBOX_ADMIN_ROUTE_SECRET }}
-        run: node tooling/e2e/money/sandbox-paywall.mjs --open --by "$GITHUB_RUN_ID"
+        run: node tooling/e2e/money/sandbox-paywall.mjs --open --unless-superseded --history .money-history --by "$GITHUB_RUN_ID"
       - name: The harness, the sandbox Worker and the pinned commit are one commit
         if: needs.plan.outputs.money == 'true'
         run: node tooling/e2e/money/preflight.mjs --one-commit "$NIKATRU_SHA"
-      - name: Walk every money leg on each rail
+      - name: Walk every money leg on this rail
         id: walk
         if: needs.plan.outputs.money == 'true'
+        timeout-minutes: ${{ matrix.rail == 'razorpay' && 30 || 45 }}
         env:
-          RAILS: ${{ needs.preflight.outputs.rails }}
+          RAIL: ${{ matrix.rail }}
           APP: subscriptiontracker
           MONEY_EVIDENCE_DIR: ${{ runner.temp }}/money-evidence
           SANDBOX_ADMIN_ROUTE_SECRET: ${{ secrets.SANDBOX_ADMIN_ROUTE_SECRET }}
@@ -452,62 +480,71 @@ jobs:
           RAZORPAY_TEST_WEBHOOK_SECRET: ${{ secrets.RAZORPAY_TEST_WEBHOOK_SECRET }}
         run: |
           set -uo pipefail
+          case "$RAIL" in
+            paddle|razorpay) ;;
+            *) echo "::error title=Money sandbox proof cannot run::matrix rail \"$RAIL\" is not one of paddle, razorpay."; exit 1 ;;
+          esac
           chrome="$(command -v google-chrome)"
           status=0
-          for rail in $RAILS; do
-            out="$RUNNER_TEMP/throwaway-${rail}.out"
-            : > "$out"
-            if ! GITHUB_OUTPUT="$out" node tooling/e2e/provision_user.mjs; then
-              echo "::error title=Money sandbox proof (${rail})::the throwaway second account could not be provisioned; the ${rail} legs did not run."
-              status=1
-              continue
-            fi
-            email="$(sed -n 's/^email=//p' "$out")"
-            password="$(sed -n 's/^password=//p' "$out")"
-            echo "::add-mask::${password}"
-            # why: THE RAIL'S CONSENT ROWS (money run 38905635333 passed every leg and went red here on "no consent
-            # anon_id resolved"): the spec logs each consent request its contexts issue (consent-log.mjs), and the
-            # purge deletes by that log, or proves from it that no row was written (consent_anon_id.mjs
-            # resolveMoneyConsentLog). Removed first, so a log this rail did not write is never read.
-            consent_log="$RUNNER_TEMP/money-consent-${rail}.log"
-            rm -f "$consent_log"
-            MONEY_RAIL="$rail" THROWAWAY_EMAIL="$email" THROWAWAY_PASSWORD="$password" MONEY_CHROME="$chrome" MONEY_CONSENT_LOG="$consent_log" \
-              node --import "$SPAWN_CEILING" --test-timeout=600000 --test --test-reporter=spec tooling/e2e/money/money-sandbox.spec.mjs || status=1
-            uid="$(sed -n 's/^user_id=//p' "$out")"
-            # why: ALWAYS after the spec, a user or not: the consent rows belong to the browser profiles, not to the user.
-            E2E_USER_ID="$uid" E2E_APP_ID=subscriptiontracker E2E_MONEY_CONSENT_LOG="$consent_log" PLATFORM_D1_DATABASE_ID="$(node tooling/e2e/money/preflight.mjs --print-sandbox-platform-db)" \
-              node tooling/e2e/purge.mjs || status=1
-          done
-          # why: the verdict job reads this: a proof that never reached this line proved nothing.
-          echo "walked=true" >> "$GITHUB_OUTPUT"
+          out="$RUNNER_TEMP/throwaway-${RAIL}.out"
+          : > "$out"
+          if ! GITHUB_OUTPUT="$out" node tooling/e2e/provision_user.mjs; then
+            echo "::error title=Money sandbox proof (${RAIL})::the throwaway second account could not be provisioned; the ${RAIL} legs did not run."
+            exit 1
+          fi
+          email="$(sed -n 's/^email=//p' "$out")"
+          password="$(sed -n 's/^password=//p' "$out")"
+          echo "::add-mask::${password}"
+          # why: THE RAIL'S CONSENT ROWS (money run 38905635333 passed every leg and went red here on "no consent
+          # anon_id resolved"): the spec logs each consent request its contexts issue (consent-log.mjs), and the
+          # purge deletes by that log, or proves from it that no row was written (consent_anon_id.mjs
+          # resolveMoneyConsentLog). Removed first, so a log this rail did not write is never read.
+          consent_log="$RUNNER_TEMP/money-consent-${RAIL}.log"
+          rm -f "$consent_log"
+          MONEY_RAIL="$RAIL" THROWAWAY_EMAIL="$email" THROWAWAY_PASSWORD="$password" MONEY_CHROME="$chrome" MONEY_CONSENT_LOG="$consent_log" \
+            node --import "$SPAWN_CEILING" --test-timeout=600000 --test --test-reporter=spec tooling/e2e/money/money-sandbox.spec.mjs || status=1
+          uid="$(sed -n 's/^user_id=//p' "$out")"
+          # why: ALWAYS after the spec, a user or not: the consent rows belong to the browser profiles, not to the user.
+          E2E_USER_ID="$uid" E2E_APP_ID=subscriptiontracker E2E_MONEY_CONSENT_LOG="$consent_log" PLATFORM_D1_DATABASE_ID="$(node tooling/e2e/money/preflight.mjs --print-sandbox-platform-db)" \
+            node tooling/e2e/purge.mjs || status=1
+          # why: the verdict job reads this rail's own key: a proof that never reached this line proved nothing.
+          echo "walked_${RAIL}=true" >> "$GITHUB_OUTPUT"
           exit "$status"
-      - name: Close the sandbox paywall again
+      - name: "Money walk fallbacks: ${{ steps.walk.outputs.fallbacks || 'none' }}"
         if: ${{ (always()) && needs.plan.outputs.money == 'true' }}
         env:
-          SANDBOX_ADMIN_ROUTE_SECRET: ${{ secrets.SANDBOX_ADMIN_ROUTE_SECRET }}
-        run: node tooling/e2e/money/sandbox-paywall.mjs --close --by "$GITHUB_RUN_ID"
-      - name: Every leg's verdict into the job summary (no ids)
+          FALLBACKS: ${{ steps.walk.outputs.fallbacks }}
+        run: |
+          if [ -n "$FALLBACKS" ]; then
+            echo "::warning title=Money walk AMBER::$FALLBACKS"
+            echo "**AMBER** — $FALLBACKS (a pass that leaned on a lost-event fallback, never a plain green)" >> "$GITHUB_STEP_SUMMARY"
+          else
+            echo "no lost-event fallback carried this walk"
+          fi
+      - name: This rail's leg verdicts into the job summary (no ids)
         if: ${{ (always()) && needs.plan.outputs.money == 'true' }}
+        env:
+          RAIL: ${{ matrix.rail }}
         run: |
           node -e '
             const fs = require("fs"), path = require("path");
             const dir = path.join(process.env.RUNNER_TEMP, "money-evidence");
             const files = fs.existsSync(dir) ? fs.readdirSync(dir).filter((f) => f.endsWith(".json")) : [];
-            const out = ["| rail | leg | verdict |", "|---|---|---|"];
+            const out = [`### ${process.env.RAIL}`, "", "| rail | leg | verdict |", "|---|---|---|"];
             for (const f of files) {
               const r = JSON.parse(fs.readFileSync(path.join(dir, f), "utf8"));
               for (const l of r.legs ?? []) out.push(`| ${r.rail} | ${l.id} | ${l.verdict} |`);
             }
-            if (files.length === 0) out.push("| - | no evidence record was written | - |");
+            if (files.length === 0) out.push(`| ${process.env.RAIL} | no evidence record was written | - |`);
             fs.appendFileSync(process.env.GITHUB_STEP_SUMMARY, out.join("\n") + "\n");
           '
-      - name: Store money-sandbox-evidence in the bridge's private home (generated)
+      - name: Store money-sandbox-evidence-${{ matrix.rail }} in the bridge's private home (generated)
         if: ${{ (always()) && needs.plan.outputs.money == 'true' && inputs.evidence != 'false' }}
         shell: bash
         working-directory: ${{ github.workspace }}
         env:
           NIKATRU_PATHS: ${{ runner.temp }}/money-evidence/
-          NIKATRU_ARTIFACT_NAME: money-sandbox-evidence
+          NIKATRU_ARTIFACT_NAME: money-sandbox-evidence-${{ matrix.rail }}
           NIKATRU_IF_NO_FILES: error
           BRIDGE_ARTIFACT_SECRET: ${{ secrets.BRIDGE_ARTIFACT_SECRET }}
           NIKATRU_BRIDGE_ARTIFACT_URL: https://gh-bridge.nikatru.workers.dev/artifact
@@ -570,6 +607,18 @@ jobs:
         with:
           repository: ${{ env.NIKATRU_PRIVATE_REPO }}
           ref: ${{ inputs.ref || inputs.nikatru_sha || (github.event.client_payload.event == 'pull_request' && format('refs/pull/{0}/merge', github.event.client_payload.pr) || github.event.client_payload.sha || 'main') }}
+          ssh-key: ${{ secrets.PRIVATE_DEPLOY_KEY }}
+          persist-credentials: false
+      - name: "Check out the private history beside it (every branch's commits, no file) (generated: the private tree)"
+        if: needs.plan.outputs.money == 'true'
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
+        with:
+          repository: ${{ env.NIKATRU_PRIVATE_REPO }}
+          ref: ${{ inputs.ref || inputs.nikatru_sha || (github.event.client_payload.event == 'pull_request' && format('refs/pull/{0}/merge', github.event.client_payload.pr) || github.event.client_payload.sha || 'main') }}
+          path: .money-history
+          fetch-depth: 0
+          filter: tree:0
+          sparse-checkout: .github/ISSUE_TEMPLATE
           ssh-key: ${{ secrets.PRIVATE_DEPLOY_KEY }}
           persist-credentials: false
       - name: Check out private main's composite actions (generated)
@@ -651,7 +700,7 @@ jobs:
         if: needs.plan.outputs.money == 'true'
         env:
           SANDBOX_ADMIN_ROUTE_SECRET: ${{ secrets.SANDBOX_ADMIN_ROUTE_SECRET }}
-        run: node tooling/e2e/money/sandbox-paywall.mjs --open --by "$GITHUB_RUN_ID"
+        run: node tooling/e2e/money/sandbox-paywall.mjs --open --unless-superseded --history .money-history --by "$GITHUB_RUN_ID"
       - name: The harness, the sandbox Worker and the pinned commit are one commit
         if: needs.plan.outputs.money == 'true'
         run: node tooling/e2e/money/preflight.mjs --one-commit "$NIKATRU_SHA"
@@ -677,11 +726,6 @@ jobs:
             xvfb-run -a -s "-screen 0 1920x1200x24" node tooling/e2e/money/desktop.mjs --target linux --log "$RUNNER_TEMP/money-desktop.log"
           '
           echo "walked=true" >> "$GITHUB_OUTPUT"
-      - name: Close the sandbox paywall again
-        if: ${{ (always()) && needs.plan.outputs.money == 'true' }}
-        env:
-          SANDBOX_ADMIN_ROUTE_SECRET: ${{ secrets.SANDBOX_ADMIN_ROUTE_SECRET }}
-        run: node tooling/e2e/money/sandbox-paywall.mjs --close --by "$GITHUB_RUN_ID"
 
   desktop-windows:
     name: Desktop money legs — Windows app (sandbox)
@@ -743,6 +787,18 @@ jobs:
         with:
           repository: ${{ env.NIKATRU_PRIVATE_REPO }}
           ref: ${{ inputs.ref || inputs.nikatru_sha || (github.event.client_payload.event == 'pull_request' && format('refs/pull/{0}/merge', github.event.client_payload.pr) || github.event.client_payload.sha || 'main') }}
+          ssh-key: ${{ secrets.PRIVATE_DEPLOY_KEY }}
+          persist-credentials: false
+      - name: "Check out the private history beside it (every branch's commits, no file) (generated: the private tree)"
+        if: needs.plan.outputs.money == 'true'
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
+        with:
+          repository: ${{ env.NIKATRU_PRIVATE_REPO }}
+          ref: ${{ inputs.ref || inputs.nikatru_sha || (github.event.client_payload.event == 'pull_request' && format('refs/pull/{0}/merge', github.event.client_payload.pr) || github.event.client_payload.sha || 'main') }}
+          path: .money-history
+          fetch-depth: 0
+          filter: tree:0
+          sparse-checkout: .github/ISSUE_TEMPLATE
           ssh-key: ${{ secrets.PRIVATE_DEPLOY_KEY }}
           persist-credentials: false
       - name: Check out private main's composite actions (generated)
@@ -808,7 +864,7 @@ jobs:
         if: needs.plan.outputs.money == 'true'
         env:
           SANDBOX_ADMIN_ROUTE_SECRET: ${{ secrets.SANDBOX_ADMIN_ROUTE_SECRET }}
-        run: node tooling/e2e/money/sandbox-paywall.mjs --open --by "$GITHUB_RUN_ID"
+        run: node tooling/e2e/money/sandbox-paywall.mjs --open --unless-superseded --history .money-history --by "$GITHUB_RUN_ID"
       - name: The harness, the sandbox Worker and the pinned commit are one commit
         if: needs.plan.outputs.money == 'true'
         run: node tooling/e2e/money/preflight.mjs --one-commit "$NIKATRU_SHA"
@@ -827,15 +883,107 @@ jobs:
         run: |
           node tooling/e2e/money/desktop.mjs --target windows --log "$RUNNER_TEMP/money-desktop.log"
           echo "walked=true" >> "$GITHUB_OUTPUT"
+
+  close-paywall:
+    name: Close the sandbox paywall once every money leg is done
+    needs: [plan, legs, desktop-linux, desktop-windows]
+    if: always()
+    runs-on: ubuntu-24.04
+    timeout-minutes: 15
+    environment: sandbox
+    concurrency:
+      group: ${{ needs.plan.outputs.money == 'true' && 'money-sandbox-legs' || format('money-sandbox-noop-{0}-{1}', github.run_id, github.job) }}
+      cancel-in-progress: false
+    steps:
+      - name: Check out the private tree (generated)
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
+        with:
+          repository: ${{ env.NIKATRU_PRIVATE_REPO }}
+          ref: ${{ inputs.nikatru_sha || (github.event.client_payload.event == 'pull_request' && format('refs/pull/{0}/merge', github.event.client_payload.pr) || github.event.client_payload.sha || 'main') }}
+          ssh-key: ${{ secrets.PRIVATE_DEPLOY_KEY }}
+          persist-credentials: false
+      - name: Name the private commit (generated)
+        shell: bash
+        working-directory: ${{ github.workspace }}
+        env:
+          NIKATRU_P_EVENT: ${{ github.event.client_payload.event || github.event_name }}
+          NIKATRU_P_REF: ${{ github.event.client_payload.ref || 'refs/heads/main' }}
+          NIKATRU_P_BASE_SHA: ${{ github.event.client_payload.base_sha }}
+          NIKATRU_P_BASE_REF: ${{ github.event.client_payload.base_ref }}
+          NIKATRU_P_PR: ${{ github.event.client_payload.pr }}
+          NIKATRU_P_PR_CREATED_AT: ${{ github.event.client_payload.pr_created_at }}
+          NIKATRU_P_DRAFT: ${{ github.event.client_payload.draft }}
+          NIKATRU_P_SHA: ${{ github.event.client_payload.sha }}
+        run: |
+          if [ "$NIKATRU_P_EVENT" = pull_request ]; then
+            set -- $(git cat-file -p HEAD | sed -n '1,/^$/s/^parent //p')
+            if [ "${2:-}" != "$NIKATRU_P_SHA" ]; then
+              echo "::error::the checked-out merge of PR #$NIKATRU_P_PR is not the merge of the dispatched head $NIKATRU_P_SHA (its second parent is ${2:-none}); the nikatru-pin job pins it — re-run the whole workflow, not this job"
+              exit 1
+            fi
+          fi
+          {
+            echo "NIKATRU_SHA=$(git rev-parse HEAD)"
+            echo "NIKATRU_HEAD_SHA=${NIKATRU_P_SHA:-$(git rev-parse HEAD)}"
+            echo "NIKATRU_EVENT_NAME=$NIKATRU_P_EVENT"
+            echo "NIKATRU_REF=$NIKATRU_P_REF"
+            echo "NIKATRU_REF_NAME=${NIKATRU_P_REF#refs/*/}"
+            echo "NIKATRU_BASE_SHA=$NIKATRU_P_BASE_SHA"
+            echo "NIKATRU_BASE_REF=$NIKATRU_P_BASE_REF"
+            echo "NIKATRU_PR=$NIKATRU_P_PR"
+            echo "NIKATRU_PR_CREATED_AT=$NIKATRU_P_PR_CREATED_AT"
+            echo "NIKATRU_DRAFT=$NIKATRU_P_DRAFT"
+          } >> "$GITHUB_ENV"
+      - name: Check out the private tree (generated)
+        if: needs.plan.outputs.money == 'true'
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
+        with:
+          repository: ${{ env.NIKATRU_PRIVATE_REPO }}
+          ref: ${{ inputs.ref || inputs.nikatru_sha || (github.event.client_payload.event == 'pull_request' && format('refs/pull/{0}/merge', github.event.client_payload.pr) || github.event.client_payload.sha || 'main') }}
+          ssh-key: ${{ secrets.PRIVATE_DEPLOY_KEY }}
+          persist-credentials: false
+      - name: "Check out the private history beside it (every branch's commits, no file) (generated: the private tree)"
+        if: needs.plan.outputs.money == 'true'
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
+        with:
+          repository: ${{ env.NIKATRU_PRIVATE_REPO }}
+          ref: ${{ inputs.ref || inputs.nikatru_sha || (github.event.client_payload.event == 'pull_request' && format('refs/pull/{0}/merge', github.event.client_payload.pr) || github.event.client_payload.sha || 'main') }}
+          path: .money-history
+          fetch-depth: 0
+          filter: tree:0
+          sparse-checkout: .github/ISSUE_TEMPLATE
+          ssh-key: ${{ secrets.PRIVATE_DEPLOY_KEY }}
+          persist-credentials: false
+      - name: Check out private main's composite actions (generated)
+        if: needs.plan.outputs.money == 'true'
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
+        with:
+          repository: ${{ env.NIKATRU_PRIVATE_REPO }}
+          ref: refs/heads/main
+          path: .nikatru-trusted
+          sparse-checkout: .github/actions
+          ssh-key: ${{ secrets.PRIVATE_DEPLOY_KEY }}
+          persist-credentials: false
+      - name: Keep private main's composite actions out of the branch's tree (generated)
+        if: needs.plan.outputs.money == 'true'
+        shell: bash
+        working-directory: ${{ github.workspace }}
+        run: printf '/.nikatru-trusted/\n' >> "$(git rev-parse --git-path info/exclude)"
+      - uses: ./.nikatru-trusted/.github/actions/setup-node
+        if: needs.plan.outputs.money == 'true'
+        env:
+          NIKATRU_REF: ${{ github.event.client_payload.ref || 'refs/heads/main' }}
+          NIKATRU_EVENT_NAME: ${{ github.event.client_payload.event || github.event_name }}
+          NIKATRU_PR: ${{ github.event.client_payload.pr }}
       - name: Close the sandbox paywall again
-        if: ${{ (always()) && needs.plan.outputs.money == 'true' }}
+        if: needs.plan.outputs.money == 'true'
         env:
           SANDBOX_ADMIN_ROUTE_SECRET: ${{ secrets.SANDBOX_ADMIN_ROUTE_SECRET }}
-        run: node tooling/e2e/money/sandbox-paywall.mjs --close --by "$GITHUB_RUN_ID"
+        run: node tooling/e2e/money/sandbox-paywall.mjs --close --unless-superseded --history .money-history --by "$GITHUB_RUN_ID"
 
   verdict:
     name: The money proof ran (every proof job walked its legs)
-    needs: [plan, legs, desktop-linux, desktop-windows]
+    needs: [plan, preflight, legs, desktop-linux, desktop-windows, close-paywall]
     runs-on: ubuntu-24.04
     timeout-minutes: 5
     steps:
@@ -902,7 +1050,8 @@ jobs:
       - name: Every proof job walked when the plan says money
         env:
           MONEY: ${{ needs.plan.outputs.money }}
-          WEB: ${{ needs.legs.outputs.walked }}
+          RAILS: ${{ needs.preflight.outputs.rails }}
+          NEEDS: ${{ toJSON(needs) }}
           LINUX: ${{ needs.desktop-linux.outputs.walked }}
           WINDOWS: ${{ needs.desktop-windows.outputs.walked }}
         run: |
@@ -914,12 +1063,28 @@ jobs:
             exit 0
           fi
           missing=""
-          [ "$WEB" = "true" ] || missing="$missing web"
+          rails="$(printf '%s' "$RAILS" | tr -d '[]"' | tr ',' ' ')"
+          legs_result="$(printf '%s' "$NEEDS" | jq -r '.legs.result // ""')"
+          wrote="$(printf '%s' "$NEEDS" | jq -r '[(.legs.outputs // {}) | to_entries[] | select((.key | startswith("walked_")) and .value == "true")] | length')"
+          [ "$legs_result" = "success" ] || missing="$missing web (the legs concluded ${legs_result:-nothing})"
+          for rail in $rails; do
+            walked="$(printf '%s' "$NEEDS" | jq -r --arg k "walked_${rail}" '.legs.outputs[$k] // ""')"
+            [ -z "$walked" ] && [ "$legs_result" = "success" ] && [ "$wrote" -gt 0 ] && walked="true"
+            [ "$walked" = "true" ] || missing="$missing web-${rail}"
+          done
+          [ -n "$(printf '%s' "$rails" | tr -d ' ')" ] || missing="$missing web (no rail was planned)"
           [ "$LINUX" = "true" ] || missing="$missing linux"
           [ "$WINDOWS" = "true" ] || missing="$missing windows"
           if [ -n "$missing" ]; then
             echo "::error title=Money proof did not run::the plan says money, and these proof jobs never walked their legs:${missing}. Green here would mean nothing was proven."
             exit 1
+          fi
+          # decision pr:1427 05:54:17Z: a walk that leaned on a lost-event fallback is AMBER, never a plain green (still a pass).
+          fb="$(printf '%s' "$NEEDS" | jq -r '[(.legs.outputs // {}) | to_entries[] | select((.key | startswith("fallbacks_")) and .value != "") | "\(.key | ltrimstr("fallbacks_")): \(.value)"] | join("; ")')"
+          if [ -n "$fb" ]; then
+            echo "::warning title=Money proof AMBER::PASS with fallbacks — ${fb}"
+            echo "money proof: PASS with fallbacks (AMBER, never a plain green) — ${fb}"
+            exit 0
           fi
           echo "every proof job walked its legs."
           NIKATRU_QUIET_EOF

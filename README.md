@@ -6,11 +6,12 @@ repository at the commit it was dispatched for, with a read-only deploy key, and
 verdict back to that repository. It is generated: a pull request here is not how it changes.
 
 - **Triggers**: `repository_dispatch` (types `ci`, `main` and `tag`, sent by the bridge Worker for a
-  pull request, a push of main or a push of a tag in the private repository), plus `workflow_dispatch` and `schedule`.
+  pull request, a push of main or a push of a tag in the private repository), plus `workflow_dispatch`.
   `e2e.yml` also runs on `e2e`, against the head of a private pull request (sent by the bridge on a `run-e2e` label of the pull request, or the maintainer).
   `new-user-e2e.yml` also runs on `new-user-e2e`, against the head of a private pull request (sent by the bridge on a `run-new-user-e2e` label of the pull request, or the maintainer).
+  `claude-triage.yml` also runs on `claude-triage`, against the head of a private pull request (sent by the bridge when a ci or rehearsal run ends red and its claude_triage_auto variable is on, or the maintainer).
   `replay.yml` also runs on `replay`, against the head of a private pull request (sent by the maintainer).
-  `claude-review.yml` also runs on `claude-review`, against the head of a private pull request (sent by the bridge on a `run-claude-review` label of the pull request, or the maintainer).
+  `claude-review.yml` also runs on `claude-review`, against the head of a private pull request (sent by the bridge on a `run-claude-review` label of the pull request, or the bridge after each ci dispatch of a pull request head when its claude_review_auto variable is on, or the maintainer).
   `pr-recheck.yml` runs on the bridge's `nikatru-pr-recheck` (a pull request body or base
   edit, or a draft conversion) and re-runs only the gate job of the ONE run named by the newest
   gate status on the pull request's current head (read live through the bridge); nothing when the
@@ -58,7 +59,7 @@ verdict back to that repository. It is generated: a pull request here is not how
   `BRIDGE_ARTIFACT_SECRET` (signs a private artifact upload; held only by the private-artifact
   steps), plus what each workflow reads.
 
-## Workflows (57)
+## Workflows (60)
 
 - `apple-expiry-write.yml`
 - `artifact-drill.yml`
@@ -67,6 +68,7 @@ verdict back to that repository. It is generated: a pull request here is not how
 - `catalog-sync.yml` — reports `catalog-sync`
 - `ci.yml` — reports `ci-gate`
 - `claude-review.yml` — reports `claude-review`
+- `claude-triage.yml` — reports `claude-triage`
 - `codeql.yml` — reports `codeql`
 - `deploy-sandbox-unit.yml`
 - `deploy-sandbox.yml`
@@ -91,6 +93,7 @@ verdict back to that repository. It is generated: a pull request here is not how
 - `money-sandbox-legs.yml`
 - `mutation-proofs.yml`
 - `name-clearance.yml`
+- `names-render.yml`
 - `native-auth-proof.yml`
 - `new-user-e2e.yml` — reports `new-user-e2e`
 - `ops-watch.yml` — reports `ops-watch`
@@ -114,6 +117,7 @@ verdict back to that repository. It is generated: a pull request here is not how
 - `symbolication-proof.yml`
 - `template-verifier-windows.yml`
 - `time-travel.yml`
+- `translations-wave.yml`
 - `trufflehog.yml`
 - `update-goldens.yml`
 - `web-preview.yml` — reports `web-preview`

@@ -256,7 +256,7 @@ jobs:
         run: |
           NIKATRU_QUIET="$(mktemp "${RUNNER_TEMP:-/tmp}/nikatru-step.XXXXXX")"
           cat > "$NIKATRU_QUIET" <<'NIKATRU_QUIET_EOF'
-          dart pub global activate mason_cli 0.1.4
+          node tooling/ops/dart-tools.mjs mason
           NIKATRU_QUIET_EOF
           NIKATRU_SHELL="${BASH:-bash}"; if command -v cygpath >/dev/null 2>&1; then NIKATRU_SHELL="$(cygpath -w "$NIKATRU_SHELL")"; fi
           node "$GITHUB_WORKSPACE/../.nikatru-shell/quiet-step.mjs" --name lane-apps.app-brick.4 -- "$NIKATRU_SHELL" -e "$NIKATRU_QUIET"
@@ -489,7 +489,7 @@ jobs:
         run: |
           NIKATRU_QUIET="$(mktemp "${RUNNER_TEMP:-/tmp}/nikatru-step.XXXXXX")"
           cat > "$NIKATRU_QUIET" <<'NIKATRU_QUIET_EOF'
-          echo "import { spawnSync } from 'node:child_process'; const guards = ['assert-seams-wired', 'assert-signup-consent-shape', 'assert-package-boundaries', 'assert-analytics-contract', 'assert-capability-register', 'assert-discovery-surface', 'assert-mechanism-claims']; let bad = 0; for (const g of guards) { const r = spawnSync(process.execPath, ['tooling/ci/' + g + '.mjs'], { encoding: 'utf8' }); const out = (r.stdout || '') + (r.stderr || ''); const hits = out.split(String.fromCharCode(10)).filter((l) => /apps=2(?![0-9])/.test(l)); console.log(g + ': exit ' + r.status + ', ' + hits.length + ' apps=2 line(s)'); for (const l of hits) console.log('  ' + l.trim().slice(0, 300)); if (r.status !== 0 || hits.length === 0) { bad += 1; console.log(out); } } if (bad > 0) { console.log('::error::' + bad + ' of ' + guards.length + ' app-set guard(s) did not exit 0 with apps=2'); process.exit(1); } console.log('all ' + guards.length + ' app-set guards exit 0 with apps=2');" > "$RUNNER_TEMP/app-set-probe.mjs"
+          echo "import { spawnSync } from 'node:child_process'; const guards = ['tooling/ci/assert-seams-wired.mjs', 'tooling/ci/assert-signup-consent-shape.mjs', 'tooling/ci/assert-package-boundaries.mjs', 'tooling/ci/assert-analytics-contract.mjs', 'tooling/ci/assert-capability-register.mjs', 'tooling/ci/assert-discovery-surface.mjs', 'tooling/ci/assert-mechanism-claims.mjs']; let bad = 0; for (const g of guards) { const r = spawnSync(process.execPath, [g], { encoding: 'utf8' }); const out = (r.stdout || '') + (r.stderr || ''); const hits = out.split(String.fromCharCode(10)).filter((l) => /apps=2(?![0-9])/.test(l)); console.log(g + ': exit ' + r.status + ', ' + hits.length + ' apps=2 line(s)'); for (const l of hits) console.log('  ' + l.trim().slice(0, 300)); if (r.status !== 0 || hits.length === 0) { bad += 1; console.log(out); } } if (bad > 0) { console.log('::error::' + bad + ' of ' + guards.length + ' app-set guard(s) did not exit 0 with apps=2'); process.exit(1); } console.log('all ' + guards.length + ' app-set guards exit 0 with apps=2');" > "$RUNNER_TEMP/app-set-probe.mjs"
           node "$RUNNER_TEMP/app-set-probe.mjs"
           NIKATRU_QUIET_EOF
           NIKATRU_SHELL="${BASH:-bash}"; if command -v cygpath >/dev/null 2>&1; then NIKATRU_SHELL="$(cygpath -w "$NIKATRU_SHELL")"; fi
@@ -1079,7 +1079,7 @@ jobs:
         run: |
           NIKATRU_QUIET="$(mktemp "${RUNNER_TEMP:-/tmp}/nikatru-step.XXXXXX")"
           cat > "$NIKATRU_QUIET" <<'NIKATRU_QUIET_EOF'
-          dart pub global activate mason_cli 0.1.4
+          node tooling/ops/dart-tools.mjs mason
           NIKATRU_QUIET_EOF
           NIKATRU_SHELL="${BASH:-bash}"; if command -v cygpath >/dev/null 2>&1; then NIKATRU_SHELL="$(cygpath -w "$NIKATRU_SHELL")"; fi
           node "$GITHUB_WORKSPACE/../.nikatru-shell/quiet-step.mjs" --name lane-apps.app-brick-client.4 -- "$NIKATRU_SHELL" -e "$NIKATRU_QUIET"
@@ -1121,13 +1121,23 @@ jobs:
       - name: Linux build deps for the native probe build
         id: nikatru-setup-8
         if: ${{ success() || (!cancelled() && (github.event.client_payload.event == 'pull_request' && startsWith(github.event.client_payload.ref, 'refs/heads/rehearsal/')) && steps.nikatru-setup-ok.outcome == 'success' && steps.nikatru-setup-6.outcome == 'success') }}
+        timeout-minutes: 9
         run: |
           NIKATRU_QUIET="$(mktemp "${RUNNER_TEMP:-/tmp}/nikatru-step.XXXXXX")"
           cat > "$NIKATRU_QUIET" <<'NIKATRU_QUIET_EOF'
-          sudo apt-get update
-          sudo apt-get install -y \
-            clang cmake ninja-build pkg-config libgtk-3-dev liblzma-dev \
-            libsecret-1-dev libjsoncpp-dev libcurl4-openssl-dev
+          cached_install() {
+            if [ -f "$GITHUB_WORKSPACE/tooling/ops/ci-install-cache.mjs" ]; then
+              node "$GITHUB_WORKSPACE/tooling/ops/ci-install-cache.mjs" run --cache-dir "${DEBS_DIR:-$RUNNER_TEMP/ci-install-debs}" --attempt-minutes "${ATTEMPT_MINUTES:-4}" -- "$@"
+              return
+            fi
+            bound="$(awk -v m="${ATTEMPT_MINUTES:-4}" 'BEGIN { print int(m * 120) + 1 }')"
+            echo "::warning title=Install uncached::this checkout has no tooling/ops/ci-install-cache.mjs (it predates #981): $* runs uncached, bounded at ${bound} s"
+            if [ "$1" = sudo ]; then timeout -k 15 "$bound" sudo apt-get update; fi
+            timeout -k 15 "$bound" "$@"
+          }
+          cached_install \
+            sudo apt-get install -y \
+            clang cmake ninja-build pkg-config libgtk-3-dev liblzma-dev libsecret-1-dev libjsoncpp-dev libcurl4-openssl-dev
           NIKATRU_QUIET_EOF
           NIKATRU_SHELL="${BASH:-bash}"; if command -v cygpath >/dev/null 2>&1; then NIKATRU_SHELL="$(cygpath -w "$NIKATRU_SHELL")"; fi
           node "$GITHUB_WORKSPACE/../.nikatru-shell/quiet-step.mjs" --name lane-apps.app-brick-client.8 -- "$NIKATRU_SHELL" -e "$NIKATRU_QUIET"
@@ -1296,7 +1306,7 @@ jobs:
         run: |
           NIKATRU_QUIET="$(mktemp "${RUNNER_TEMP:-/tmp}/nikatru-step.XXXXXX")"
           cat > "$NIKATRU_QUIET" <<'NIKATRU_QUIET_EOF'
-          dart pub global activate mason_cli 0.1.4
+          node tooling/ops/dart-tools.mjs mason
           NIKATRU_QUIET_EOF
           NIKATRU_SHELL="${BASH:-bash}"; if command -v cygpath >/dev/null 2>&1; then NIKATRU_SHELL="$(cygpath -w "$NIKATRU_SHELL")"; fi
           node "$GITHUB_WORKSPACE/../.nikatru-shell/quiet-step.mjs" --name lane-apps.app-brick-backend.4 -- "$NIKATRU_SHELL" -e "$NIKATRU_QUIET"
@@ -1463,7 +1473,7 @@ jobs:
         run: |
           NIKATRU_QUIET="$(mktemp "${RUNNER_TEMP:-/tmp}/nikatru-step.XXXXXX")"
           cat > "$NIKATRU_QUIET" <<'NIKATRU_QUIET_EOF'
-          node tooling/ops/pub-activate-retry.mjs -- dart pub global activate melos 8.9.0
+          node tooling/ops/dart-tools.mjs melos
           NIKATRU_QUIET_EOF
           NIKATRU_SHELL="${BASH:-bash}"; if command -v cygpath >/dev/null 2>&1; then NIKATRU_SHELL="$(cygpath -w "$NIKATRU_SHELL")"; fi
           node "$GITHUB_WORKSPACE/../.nikatru-shell/quiet-step.mjs" --name lane-apps.workspace-gate.4 -- "$NIKATRU_SHELL" -e "$NIKATRU_QUIET"
@@ -1620,7 +1630,7 @@ jobs:
               if ! [[ "$n" =~ ^[0-9]+$ ]]; then echo "::error::leg '$PART' names no shard number"; exit 1; fi
               if [ "$n" -gt "$APPS_SHARDS" ]; then echo "::error::leg '$PART' is past APPS_SHARDS=$APPS_SHARDS, so its shard index names no files"; exit 1; fi
               filter="--ignore=$MEMBERS_GLOB"
-              shard="--total-shards=$APPS_SHARDS --shard-index=$((n - 1))" ;;
+              shard="$((n - 1))" ;;
             *) echo "::error::unknown workspace-gate leg '$PART'"; exit 1 ;;
           esac
           members="$(melos list --parsable --flutter --dir-exists=test "$filter")"
@@ -1628,6 +1638,21 @@ jobs:
           if [ -z "$members" ]; then echo "::error::leg '$PART' ($filter) matched no Flutter member with tests, so it would test nothing"; exit 1; fi
           export NIKATRU_TEST_RESULTS="${NIKATRU_TEST_RESULTS:-$RUNNER_TEMP/test-results}"
           mkdir -p "$NIKATRU_TEST_RESULTS"
+          if [ -n "$shard" ]; then
+            ran=0
+            while IFS= read -r dir; do
+              if ! [ -d "$dir" ]; then echo "::error::melos listed '$dir', which is not a member directory"; exit 1; fi
+              files="$(node tooling/ci/flutter-test-shard.mjs --member "$dir" --shards "$APPS_SHARDS" --index "$shard")"
+              if [ -z "$files" ]; then continue; fi
+              name="$(sed -n 's/^name: *//p' "$dir/pubspec.yaml" | sed -n 1p)"
+              echo "$name: $(wc -l <<<"$files") test file(s) in shard $n of $APPS_SHARDS"
+              mapfile -t shard_files <<<"$files"
+              (cd "$dir" && flutter test "${shard_files[@]}" "--file-reporter=json:$NIKATRU_TEST_RESULTS/$name.json")
+              ran=$((ran + 1))
+            done <<<"$members"
+            if [ "$ran" -eq 0 ]; then echo "::error::leg '$PART' ran no test file of any member, so it tested nothing"; exit 1; fi
+            exit 0
+          fi
           melos exec --fail-fast --dir-exists=test --flutter "$filter" -- flutter test $shard '--file-reporter=json:$NIKATRU_TEST_RESULTS/$MELOS_PACKAGE_NAME.json'
           NIKATRU_QUIET_EOF
           NIKATRU_SHELL="${BASH:-bash}"; if command -v cygpath >/dev/null 2>&1; then NIKATRU_SHELL="$(cygpath -w "$NIKATRU_SHELL")"; fi

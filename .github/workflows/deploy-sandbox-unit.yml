@@ -43,6 +43,21 @@ on:
         required: false
         default: 'gate'
         type: string
+      platform_db:
+        description: "A branch proof's own platform database id (money-sandbox-e2e.yml ephemeral-db); empty = the shared sandbox database."
+        required: false
+        default: ''
+        type: string
+      platform_db_name:
+        description: "That database's name (nk-proof-<run>-<attempt>); empty with platform_db."
+        required: false
+        default: ''
+        type: string
+      migrate_after:
+        description: "'true' migrates PLATFORM_DB after the deploy, through the new build's binding (restore after an ephemeral proof); 'false' before."
+        required: false
+        default: 'false'
+        type: string
     secrets:
       CLOUDFLARE_SANDBOX_WORKERS_TOKEN:
         required: false
@@ -196,6 +211,8 @@ jobs:
         run: echo "every setup step before the first check succeeded"
       - name: Every migration this deploy carries is private main's
         if: inputs.when != 'skip'
+        env:
+          NK_EPHEMERAL_PLATFORM_DB: ${{ inputs.platform_db }}
         working-directory: .sandbox-main
         run: |
           NIKATRU_QUIET="$(mktemp "${RUNNER_TEMP:-/tmp}/nikatru-step.XXXXXX")"
@@ -310,10 +327,15 @@ jobs:
             tooling/app-yaml
             tooling/e2e
             tooling/store
+            tooling/ports
+            tooling/catalog
+            tooling/entity
+            tooling/legal
             services
             contracts/entitlement
           ssh-key: ${{ secrets.PRIVATE_DEPLOY_KEY }}
           persist-credentials: false
+        id: sandbox-main
       - name: Refuse any ref but main
         working-directory: .sandbox-main
         run: node tooling/ci/assert-deploy-ref.mjs --allow sandbox
@@ -342,6 +364,14 @@ jobs:
           CLOUDFLARE_SANDBOX_WORKERS_TOKEN: ${{ secrets.CLOUDFLARE_SANDBOX_WORKERS_TOKEN }}
           CLOUDFLARE_ACCOUNT_ID: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
         run: node tooling/ci/sandbox-deploy-preflight.mjs --probe-token --main .
+      - name: A branch deploy never runs while a main-only secret is live on platform-sandbox
+        if: inputs.pr != '' && needs.workers.outputs.platform == 'true'
+        working-directory: .sandbox-main
+        env:
+          CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_SANDBOX_WORKERS_TOKEN }}
+          CLOUDFLARE_ACCOUNT_ID: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
+          PR: ${{ inputs.pr }}
+        run: node tooling/ci/assert-sandbox-branch-secrets.mjs --worker platform-sandbox --pr "$PR" --root .
       - name: Check out private main's composite actions (generated)
         if: needs.workers.outputs.platform == 'true'
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
@@ -370,19 +400,48 @@ jobs:
         if: needs.workers.outputs.platform == 'true'
       - name: The deployed tree is still main's, in THIS job (limb T and the migrations), before any secret step
         if: needs.workers.outputs.platform == 'true'
+        env:
+          NK_EPHEMERAL_PLATFORM_DB: ${{ inputs.platform_db }}
         working-directory: .sandbox-main
         run: node tooling/ci/sandbox-deploy-preflight.mjs --tree .. --main . --history . && node tooling/ci/assert-sandbox-migrations.mjs --main . --tree ..
       - name: Bundle platform-sandbox with no token in the environment
         if: needs.workers.outputs.platform == 'true'
         working-directory: services/platform
         run: npx --no-install wrangler deploy --dry-run --outdir "$RUNNER_TEMP/bundle" --config wrangler.jsonc --env sandbox --env-file /dev/null
+      - name: Main's checkout is untouched before the first secret step after the workspace install (HEAD, clean worktree, env)
+        if: needs.workers.outputs.platform == 'true'
+        env:
+          MAIN_COMMIT: ${{ steps.sandbox-main.outputs.commit }}
+        run: |
+          set -euo pipefail
+          if [ -z "$MAIN_COMMIT" ]; then echo "::error title=Sandbox deploy cannot run::the main checkout named no commit; nothing was migrated or deployed."; exit 2; fi
+          at="$(git -C .sandbox-main rev-parse HEAD)"
+          if [ "$at" != "$MAIN_COMMIT" ]; then echo "::error title=Sandbox deploy refused::.sandbox-main is at $at, not the main commit this job checked out ($MAIN_COMMIT); nothing was migrated or deployed."; exit 1; fi
+          dirty="$(git -C .sandbox-main status --porcelain --ignored --untracked-files=all)"
+          if [ -n "$dirty" ]; then echo "::error title=Sandbox deploy refused::.sandbox-main was changed after its checkout (a step before this one wrote into main's copy); nothing was migrated or deployed."; printf '%s\n' "$dirty" | sed -n 1,20p; exit 1; fi
+          bad=0
+          IFS=: read -r -a dirs <<< "$PATH"
+          for d in "${dirs[@]}"; do
+            case "$d" in "$GITHUB_WORKSPACE"|"$GITHUB_WORKSPACE"/*|"$RUNNER_TEMP"|"$RUNNER_TEMP"/*|""|.*) echo "::error title=Sandbox deploy refused::PATH carries '$d' (inside the workspace or the runner's temp, or relative) before the secret steps; nothing was migrated or deployed."; bad=1 ;; esac
+          done
+          for n in BASH_ENV LD_PRELOAD LD_AUDIT NODE_OPTIONS GIT_DIR GIT_WORK_TREE GIT_CONFIG_PARAMETERS GIT_CONFIG_COUNT; do
+            if [ -n "${!n+x}" ]; then echo "::error title=Sandbox deploy refused::$n is set before the secret steps (a step before this one appended it to \$GITHUB_ENV); nothing was migrated or deployed."; bad=1; fi
+          done
+          exit "$bad"
       - name: Apply PLATFORM_DB migrations to the sandbox BEFORE the deploy, through the serving platform-sandbox
         id: premigrate
-        if: needs.workers.outputs.platform == 'true'
+        if: needs.workers.outputs.platform == 'true' && inputs.platform_db == '' && inputs.migrate_after != 'true'
         env:
           SANDBOX_ADMIN_ROUTE_SECRET: ${{ secrets.SANDBOX_ADMIN_ROUTE_SECRET }}
         working-directory: .sandbox-main
         run: node tooling/ci/sandbox-admin.mjs --migrate --worker platform --binding PLATFORM_DB --bootstrap-ok --root "$GITHUB_WORKSPACE"
+      - name: Bind platform-sandbox to this proof's own platform database (runner copy only)
+        if: needs.workers.outputs.platform == 'true' && inputs.platform_db != ''
+        env:
+          DB_ID: ${{ inputs.platform_db }}
+          DB_NAME: ${{ inputs.platform_db_name }}
+        working-directory: .sandbox-main
+        run: node tooling/ci/sandbox-ephemeral-db.mjs --rewrite-binding --config "$GITHUB_WORKSPACE/services/platform/wrangler.jsonc" --id "$DB_ID" --name "$DB_NAME"
       - uses: cloudflare/wrangler-action@953926a2e2182532811c01a25e53647d93bf07c0
         if: needs.workers.outputs.platform == 'true'
         with:
@@ -392,7 +451,7 @@ jobs:
           workingDirectory: services/platform
           command: deploy ${{ runner.temp }}/bundle/index.js --no-bundle --config wrangler.jsonc --env-file /dev/null --env sandbox --var RELEASE:${{ env.NIKATRU_SHA }}
       - name: Apply PLATFORM_DB migrations after the deploy (BOOTSTRAP only, the serving build had no route)
-        if: needs.workers.outputs.platform == 'true' && steps.premigrate.outputs.bootstrap == 'true'
+        if: needs.workers.outputs.platform == 'true' && (steps.premigrate.outputs.bootstrap == 'true' || inputs.platform_db != '' || inputs.migrate_after == 'true')
         env:
           SANDBOX_ADMIN_ROUTE_SECRET: ${{ secrets.SANDBOX_ADMIN_ROUTE_SECRET }}
         working-directory: .sandbox-main
@@ -473,6 +532,7 @@ jobs:
             contracts/entitlement
           ssh-key: ${{ secrets.PRIVATE_DEPLOY_KEY }}
           persist-credentials: false
+        id: sandbox-main
       - name: Refuse any ref but main
         working-directory: .sandbox-main
         run: node tooling/ci/assert-deploy-ref.mjs --allow sandbox
@@ -514,12 +574,34 @@ jobs:
         if: matrix.worker.worker != 'none'
       - name: The deployed tree is still main's, in THIS job (limb T and the migrations), before any secret step
         if: matrix.worker.worker != 'none'
+        env:
+          NK_EPHEMERAL_PLATFORM_DB: ${{ inputs.platform_db }}
         working-directory: .sandbox-main
         run: node tooling/ci/sandbox-deploy-preflight.mjs --tree .. --main . --history . && node tooling/ci/assert-sandbox-migrations.mjs --main . --tree ..
       - name: Bundle the app Worker with no token in the environment
         if: matrix.worker.worker != 'none'
         working-directory: ${{ matrix.worker.dir }}
         run: npx --no-install wrangler deploy --dry-run --outdir "$RUNNER_TEMP/bundle" --config wrangler.jsonc --env sandbox --env-file /dev/null
+      - name: Main's checkout is untouched before the first secret step after the workspace install (HEAD, clean worktree, env)
+        if: matrix.worker.worker != 'none'
+        env:
+          MAIN_COMMIT: ${{ steps.sandbox-main.outputs.commit }}
+        run: |
+          set -euo pipefail
+          if [ -z "$MAIN_COMMIT" ]; then echo "::error title=Sandbox deploy cannot run::the main checkout named no commit; nothing was migrated or deployed."; exit 2; fi
+          at="$(git -C .sandbox-main rev-parse HEAD)"
+          if [ "$at" != "$MAIN_COMMIT" ]; then echo "::error title=Sandbox deploy refused::.sandbox-main is at $at, not the main commit this job checked out ($MAIN_COMMIT); nothing was migrated or deployed."; exit 1; fi
+          dirty="$(git -C .sandbox-main status --porcelain --ignored --untracked-files=all)"
+          if [ -n "$dirty" ]; then echo "::error title=Sandbox deploy refused::.sandbox-main was changed after its checkout (a step before this one wrote into main's copy); nothing was migrated or deployed."; printf '%s\n' "$dirty" | sed -n 1,20p; exit 1; fi
+          bad=0
+          IFS=: read -r -a dirs <<< "$PATH"
+          for d in "${dirs[@]}"; do
+            case "$d" in "$GITHUB_WORKSPACE"|"$GITHUB_WORKSPACE"/*|"$RUNNER_TEMP"|"$RUNNER_TEMP"/*|""|.*) echo "::error title=Sandbox deploy refused::PATH carries '$d' (inside the workspace or the runner's temp, or relative) before the secret steps; nothing was migrated or deployed."; bad=1 ;; esac
+          done
+          for n in BASH_ENV LD_PRELOAD LD_AUDIT NODE_OPTIONS GIT_DIR GIT_WORK_TREE GIT_CONFIG_PARAMETERS GIT_CONFIG_COUNT; do
+            if [ -n "${!n+x}" ]; then echo "::error title=Sandbox deploy refused::$n is set before the secret steps (a step before this one appended it to \$GITHUB_ENV); nothing was migrated or deployed."; bad=1; fi
+          done
+          exit "$bad"
       - name: The sandbox-only credentials are set (named, before any deploy)
         if: matrix.worker.worker != 'none'
         env:
@@ -539,6 +621,14 @@ jobs:
           BINDING: ${{ matrix.worker.migrations }}
         working-directory: .sandbox-main
         run: node tooling/ci/sandbox-admin.mjs --migrate --worker "${DIR#services/}" --binding "$BINDING" --root "$GITHUB_WORKSPACE"
+      - name: Bind the app Worker to this proof's own platform database (runner copy only)
+        if: matrix.worker.worker != 'none' && inputs.platform_db != ''
+        env:
+          DB_ID: ${{ inputs.platform_db }}
+          DB_NAME: ${{ inputs.platform_db_name }}
+          DIR: ${{ matrix.worker.dir }}
+        working-directory: .sandbox-main
+        run: node tooling/ci/sandbox-ephemeral-db.mjs --rewrite-binding --config "$GITHUB_WORKSPACE/$DIR/wrangler.jsonc" --id "$DB_ID" --name "$DB_NAME"
       - uses: cloudflare/wrangler-action@953926a2e2182532811c01a25e53647d93bf07c0
         if: matrix.worker.worker != 'none'
         with:

@@ -139,18 +139,38 @@ export async function sendPushBounded(url, token, title, text, fetchImpl = globa
 export async function pageAlert(env = process.env, deps = {}) {
   const { send = sendPushBounded, log = (line) => process.stdout.write(`${line}\n`) } = deps;
   const readZone = deps.readZone ?? (() => JSON.parse(readFileSync(ZONE_FILE, 'utf8')));
-  const notPaged = (why) => (log(`::error title=The owner was NOT paged for this ops-watch red::${why}. The durable issue may be the only record, and it is filed under the owner's own account; tell the owner yourself.`), 2);
+  // ⏱ 2026-11-12 · lane c1113-ci, row O-R1110-OPS-WATCH-ALERT-NO-HANDOFF, lead ruling (b): the alert is a shell-own job that
+  // holds no key and seals no hand-off, so a failed page's REASON goes to the bridge's /ops door — ops-issue, kind alert-page (its own kind, one filing step per kind; the same title, so
+  // the same durable private issue) — and not only to this quiet step's log, where it was stored nowhere. Best-effort:
+  // the exit stays 2 whatever the bridge answers. [deps.report] (tests) replaces the door.
+  const report = deps.report ?? ((params) => callBridgeOps({ ...opsEnv(), op: 'ops-issue', params }));
+  const notPaged = async (why) => {
+    const line = `The owner was NOT paged for this ops-watch red: ${why}. The durable issue may be the only record, and it is filed under the owner's own account; tell the owner yourself.`;
+    log(`::error title=The owner was NOT paged for this ops-watch red::${why}. The durable issue may be the only record, and it is filed under the owner's own account; tell the owner yourself.`);
+    const runId = Number(env.GITHUB_RUN_ID);
+    const attempt = Number(env.GITHUB_RUN_ATTEMPT);
+    let r;
+    try {
+      r = Number.isSafeInteger(runId) && runId > 0 && Number.isSafeInteger(attempt) && attempt > 0 ? await report({ kind: 'alert-page', run_id: runId, run_attempt: attempt, body: fitOpsBody(line).text }) : { lost: 'GITHUB_RUN_ID / GITHUB_RUN_ATTEMPT do not name a run' };
+    } catch (e) {
+      r = { lost: e?.name ?? 'the /ops call failed' };
+    }
+    const judged = r?.answer ? judgeAnswer(r.answer) : null;
+    if (judged?.ok) log(`filed: the reason is on private issue #${judged.ok.issue} (${judged.ok.action})`);
+    else log(`::error title=The page's reason was NOT filed either::${r?.lost ?? r?.refused ?? judged?.lost ?? 'no answer'}`);
+    return 2;
+  };
   let ch;
   try {
     ch = channels(env, zoneFacts(readZone()));
   } catch (e) {
-    return notPaged(`the zone register is unreadable: ${e.message}`);
+    return await notPaged(`the zone register is unreadable: ${e.message}`);
   }
-  if (ch.error) return notPaged(ch.error);
-  if (ch.push === null) return notPaged(`${ENV_NAMES.push} is not set (a heartbeat cannot carry an event page)`);
+  if (ch.error) return await notPaged(ch.error);
+  if (ch.push === null) return await notPaged(`${ENV_NAMES.push} is not set (a heartbeat cannot carry an event page)`);
   const page = composeAlertPage(env);
   const sent = await send(ch.push, ch.pushToken, page.title, page.text);
-  if (!sent?.ok) return notPaged(`the push answered HTTP ${sent?.status ?? 0}${sent?.error ? `, ${sent.error}` : ''}`);
+  if (!sent?.ok) return await notPaged(`the push answered HTTP ${sent?.status ?? 0}${sent?.error ? `, ${sent.error}` : ''}`);
   if (viaCloudflare(sent.headers)) {
     log(`FINDING: the ops-watch page was delivered, but ${ENV_NAMES.push} answered through Cloudflare (cf-ray): in a Cloudflare outage it is lost.`);
     return 1;

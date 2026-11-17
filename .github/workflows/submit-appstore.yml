@@ -5,7 +5,7 @@ env:
 
 name: "Store submit: Apple App Store"
 
-run-name: "Store submit: Apple App Store · ${{ inputs.app }} · ${{ inputs.confirm_ios }} · ${{ inputs.confirm_macos }}${{ inputs.release_tag && format(' · tag {0}', inputs.release_tag) || '' }}${{ inputs.worker_slot && format(' [worker slot {0}]', inputs.worker_slot) || '' }}"
+run-name: "Store submit: Apple App Store · ${{ inputs.app }} · ${{ inputs.confirm_ios }} · ${{ inputs.confirm_macos }}${{ inputs.release_tag && format(' · tag {0}', inputs.release_tag) || '' }}${{ inputs.server && inputs.server != 'production' && format(' · server {0}', inputs.server) || '' }}${{ inputs.worker_slot && format(' [worker slot {0}]', inputs.worker_slot) || '' }}"
 
 on:
   workflow_dispatch:
@@ -34,6 +34,12 @@ on:
         required: false
         default: ''
         type: string
+      server:
+        description: 'The Workers the build talks to: production (default), or sandbox (the capture runner''s sandbox hosts, pinned) — sandbox only for TestFlight, with release_tag empty. The gate refuses any other value.'
+        required: false
+        default: 'production'
+        type: choice
+        options: [production, sandbox]
       worker_slot:
         description: 'Set by the platform Worker cron only: the slot of record it fired for. A worker-slot run is the weekly dry run. Empty on a hand dispatch.'
         required: false
@@ -151,6 +157,7 @@ jobs:
     outputs:
       sha: ${{ steps.verdict.outputs.sha }}
       app: ${{ steps.app.outputs.app }}
+      server: ${{ steps.server.outputs.server }}
     permissions:
       contents: read
       checks: read
@@ -267,6 +274,23 @@ jobs:
           NIKATRU_QUIET_EOF
           NIKATRU_SHELL="${BASH:-bash}"; if command -v cygpath >/dev/null 2>&1; then NIKATRU_SHELL="$(cygpath -w "$NIKATRU_SHELL")"; fi
           node "$GITHUB_WORKSPACE/../.nikatru-shell/quiet-step.mjs" --name submit-appstore.gate.4 -- "$NIKATRU_SHELL" -e "$NIKATRU_QUIET"
+      - name: The server input is production, or sandbox for TestFlight only
+        id: server
+        env:
+          SERVER_INPUT: ${{ inputs.server || 'production' }}
+          CONFIRM_IOS: ${{ inputs.confirm_ios }}
+          CONFIRM_MACOS: ${{ inputs.confirm_macos }}
+          RELEASE_TAG: ${{ inputs.release_tag }}
+          WORKER_SLOT: ${{ inputs.worker_slot }}
+        run: |
+          NIKATRU_QUIET="$(mktemp "${RUNNER_TEMP:-/tmp}/nikatru-step.XXXXXX")"
+          cat > "$NIKATRU_QUIET" <<'NIKATRU_QUIET_EOF'
+          set -euo pipefail
+          node tooling/store/play-server.mjs --apple-gate --server "$SERVER_INPUT" --confirm-ios "$CONFIRM_IOS" --confirm-macos "$CONFIRM_MACOS" --release-tag "$RELEASE_TAG" --worker-slot "$WORKER_SLOT"
+          echo "server=${SERVER_INPUT}" >> "$GITHUB_OUTPUT"
+          NIKATRU_QUIET_EOF
+          NIKATRU_SHELL="${BASH:-bash}"; if command -v cygpath >/dev/null 2>&1; then NIKATRU_SHELL="$(cygpath -w "$NIKATRU_SHELL")"; fi
+          node "$GITHUB_WORKSPACE/../.nikatru-shell/quiet-step.mjs" --name submit-appstore.gate.5 -- "$NIKATRU_SHELL" -e "$NIKATRU_QUIET"
       - name: Store this job's red detail in the bridge's private home (generated)
         if: always()
         continue-on-error: true
@@ -298,6 +322,7 @@ jobs:
       bundle_version: ${{ steps.versions.outputs.bundle_version }}
     env:
       APP: ${{ needs.gate.outputs.app }}
+      SERVER: ${{ needs.gate.outputs.server }}
     steps:
       - name: Check out the private tree (generated)
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
@@ -505,6 +530,29 @@ jobs:
           NIKATRU_QUIET_EOF
           NIKATRU_SHELL="${BASH:-bash}"; if command -v cygpath >/dev/null 2>&1; then NIKATRU_SHELL="$(cygpath -w "$NIKATRU_SHELL")"; fi
           node "$GITHUB_WORKSPACE/../.nikatru-shell/quiet-step.mjs" --name submit-appstore.dry-run.12 -- "$NIKATRU_SHELL" -e "$NIKATRU_QUIET"
+      - name: The sandbox hosts, when the server is sandbox
+        if: env.SERVER == 'sandbox'
+        env:
+          SUPABASE_URL: ${{ secrets.SUPABASE_URL }}
+        run: |
+          NIKATRU_QUIET="$(mktemp "${RUNNER_TEMP:-/tmp}/nikatru-step.XXXXXX")"
+          cat > "$NIKATRU_QUIET" <<'NIKATRU_QUIET_EOF'
+          node tooling/store/play-server.mjs --sandbox-build-env >> "$GITHUB_ENV"
+          NIKATRU_QUIET_EOF
+          NIKATRU_SHELL="${BASH:-bash}"; if command -v cygpath >/dev/null 2>&1; then NIKATRU_SHELL="$(cygpath -w "$NIKATRU_SHELL")"; fi
+          node "$GITHUB_WORKSPACE/../.nikatru-shell/quiet-step.mjs" --name submit-appstore.dry-run.13 -- "$NIKATRU_SHELL" -e "$NIKATRU_QUIET"
+      - name: The composed builds point at the server the dispatch named
+        run: |
+          NIKATRU_QUIET="$(mktemp "${RUNNER_TEMP:-/tmp}/nikatru-step.XXXXXX")"
+          cat > "$NIKATRU_QUIET" <<'NIKATRU_QUIET_EOF'
+          set -euo pipefail
+          node tooling/ci/flutter-release-build.mjs "$APP" macos macos-appstore --server="$SERVER" --print \
+            | node tooling/store/play-server.mjs --check-build-command --server "$SERVER"
+          node tooling/ci/flutter-release-build.mjs "$APP" ipa ios-appstore --server="$SERVER" --print \
+            | node tooling/store/play-server.mjs --check-build-command --server "$SERVER"
+          NIKATRU_QUIET_EOF
+          NIKATRU_SHELL="${BASH:-bash}"; if command -v cygpath >/dev/null 2>&1; then NIKATRU_SHELL="$(cygpath -w "$NIKATRU_SHELL")"; fi
+          node "$GITHUB_WORKSPACE/../.nikatru-shell/quiet-step.mjs" --name submit-appstore.dry-run.14 -- "$NIKATRU_SHELL" -e "$NIKATRU_QUIET"
       - name: Build macOS (signed by the imported identity)
         env:
           RELEASE_LINE: ${{ steps.ver.outputs.release_line }}
@@ -514,10 +562,10 @@ jobs:
         run: |
           NIKATRU_QUIET="$(mktemp "${RUNNER_TEMP:-/tmp}/nikatru-step.XXXXXX")"
           cat > "$NIKATRU_QUIET" <<'NIKATRU_QUIET_EOF'
-          node tooling/ci/flutter-release-build.mjs "$APP" macos macos-appstore
+          node tooling/ci/flutter-release-build.mjs "$APP" macos macos-appstore --server="$SERVER"
           NIKATRU_QUIET_EOF
           NIKATRU_SHELL="${BASH:-bash}"; if command -v cygpath >/dev/null 2>&1; then NIKATRU_SHELL="$(cygpath -w "$NIKATRU_SHELL")"; fi
-          node "$GITHUB_WORKSPACE/../.nikatru-shell/quiet-step.mjs" --name submit-appstore.dry-run.13 -- "$NIKATRU_SHELL" -e "$NIKATRU_QUIET"
+          node "$GITHUB_WORKSPACE/../.nikatru-shell/quiet-step.mjs" --name submit-appstore.dry-run.15 -- "$NIKATRU_SHELL" -e "$NIKATRU_QUIET"
       - name: Build iOS (signed archive + export)
         env:
           RELEASE_LINE: ${{ steps.ver.outputs.release_line }}
@@ -527,10 +575,10 @@ jobs:
         run: |
           NIKATRU_QUIET="$(mktemp "${RUNNER_TEMP:-/tmp}/nikatru-step.XXXXXX")"
           cat > "$NIKATRU_QUIET" <<'NIKATRU_QUIET_EOF'
-          node tooling/ci/flutter-release-build.mjs "$APP" ipa ios-appstore
+          node tooling/ci/flutter-release-build.mjs "$APP" ipa ios-appstore --server="$SERVER"
           NIKATRU_QUIET_EOF
           NIKATRU_SHELL="${BASH:-bash}"; if command -v cygpath >/dev/null 2>&1; then NIKATRU_SHELL="$(cygpath -w "$NIKATRU_SHELL")"; fi
-          node "$GITHUB_WORKSPACE/../.nikatru-shell/quiet-step.mjs" --name submit-appstore.dry-run.14 -- "$NIKATRU_SHELL" -e "$NIKATRU_QUIET"
+          node "$GITHUB_WORKSPACE/../.nikatru-shell/quiet-step.mjs" --name submit-appstore.dry-run.16 -- "$NIKATRU_SHELL" -e "$NIKATRU_QUIET"
       - name: Stage symbols-${{ needs.gate.outputs.app }}-appstore for this run's later jobs (generated)
         id: nikatru-stage-1
         shell: bash
@@ -580,7 +628,7 @@ jobs:
           ls -l "$out"
           NIKATRU_QUIET_EOF
           NIKATRU_SHELL="${BASH:-bash}"; if command -v cygpath >/dev/null 2>&1; then NIKATRU_SHELL="$(cygpath -w "$NIKATRU_SHELL")"; fi
-          node "$GITHUB_WORKSPACE/../.nikatru-shell/quiet-step.mjs" --name submit-appstore.dry-run.16 -- "$NIKATRU_SHELL" -e "$NIKATRU_QUIET"
+          node "$GITHUB_WORKSPACE/../.nikatru-shell/quiet-step.mjs" --name submit-appstore.dry-run.18 -- "$NIKATRU_SHELL" -e "$NIKATRU_QUIET"
       - name: PROVE the .ipa and .pkg are real and signed
         run: |
           NIKATRU_QUIET="$(mktemp "${RUNNER_TEMP:-/tmp}/nikatru-step.XXXXXX")"
@@ -588,7 +636,7 @@ jobs:
           node tooling/ci/assert-artifact-signed-apple.mjs apps/${{ needs.gate.outputs.app }}/build/ios/ipa/*.ipa apps/${{ needs.gate.outputs.app }}/build/macos/pkg/*.pkg
           NIKATRU_QUIET_EOF
           NIKATRU_SHELL="${BASH:-bash}"; if command -v cygpath >/dev/null 2>&1; then NIKATRU_SHELL="$(cygpath -w "$NIKATRU_SHELL")"; fi
-          node "$GITHUB_WORKSPACE/../.nikatru-shell/quiet-step.mjs" --name submit-appstore.dry-run.17 -- "$NIKATRU_SHELL" -e "$NIKATRU_QUIET"
+          node "$GITHUB_WORKSPACE/../.nikatru-shell/quiet-step.mjs" --name submit-appstore.dry-run.19 -- "$NIKATRU_SHELL" -e "$NIKATRU_QUIET"
       - name: Install glitchtip-cli (pinned by version AND by digest)
         run: |
           NIKATRU_QUIET="$(mktemp "${RUNNER_TEMP:-/tmp}/nikatru-step.XXXXXX")"
@@ -596,7 +644,7 @@ jobs:
           node tooling/ci/install-pinned-tool.mjs glitchtip-cli --out "$RUNNER_TEMP"
           NIKATRU_QUIET_EOF
           NIKATRU_SHELL="${BASH:-bash}"; if command -v cygpath >/dev/null 2>&1; then NIKATRU_SHELL="$(cygpath -w "$NIKATRU_SHELL")"; fi
-          node "$GITHUB_WORKSPACE/../.nikatru-shell/quiet-step.mjs" --name submit-appstore.dry-run.18 -- "$NIKATRU_SHELL" -e "$NIKATRU_QUIET"
+          node "$GITHUB_WORKSPACE/../.nikatru-shell/quiet-step.mjs" --name submit-appstore.dry-run.20 -- "$NIKATRU_SHELL" -e "$NIKATRU_QUIET"
       - name: Upload the native debug symbols to GlitchTip
         timeout-minutes: 12
         env:
@@ -616,7 +664,7 @@ jobs:
           done
           NIKATRU_QUIET_EOF
           NIKATRU_SHELL="${BASH:-bash}"; if command -v cygpath >/dev/null 2>&1; then NIKATRU_SHELL="$(cygpath -w "$NIKATRU_SHELL")"; fi
-          node "$GITHUB_WORKSPACE/../.nikatru-shell/quiet-step.mjs" --name submit-appstore.dry-run.19 -- "$NIKATRU_SHELL" -e "$NIKATRU_QUIET"
+          node "$GITHUB_WORKSPACE/../.nikatru-shell/quiet-step.mjs" --name submit-appstore.dry-run.21 -- "$NIKATRU_SHELL" -e "$NIKATRU_QUIET"
       - name: Dry-run the App Store submission (iOS)
         env:
           APP_STORE_CONNECT_ISSUER_ID: ${{ secrets.APP_STORE_CONNECT_READ_ISSUER_ID }}
@@ -628,7 +676,7 @@ jobs:
           node tooling/release/submit-appstore.mjs --dry-run --touch-store --channel ios-appstore --app "$APP"
           NIKATRU_QUIET_EOF
           NIKATRU_SHELL="${BASH:-bash}"; if command -v cygpath >/dev/null 2>&1; then NIKATRU_SHELL="$(cygpath -w "$NIKATRU_SHELL")"; fi
-          node "$GITHUB_WORKSPACE/../.nikatru-shell/quiet-step.mjs" --name submit-appstore.dry-run.20 -- "$NIKATRU_SHELL" -e "$NIKATRU_QUIET"
+          node "$GITHUB_WORKSPACE/../.nikatru-shell/quiet-step.mjs" --name submit-appstore.dry-run.22 -- "$NIKATRU_SHELL" -e "$NIKATRU_QUIET"
       - name: Dry-run the App Store submission (macOS)
         env:
           APP_STORE_CONNECT_ISSUER_ID: ${{ secrets.APP_STORE_CONNECT_READ_ISSUER_ID }}
@@ -640,7 +688,7 @@ jobs:
           node tooling/release/submit-appstore.mjs --dry-run --touch-store --channel macos-appstore --app "$APP"
           NIKATRU_QUIET_EOF
           NIKATRU_SHELL="${BASH:-bash}"; if command -v cygpath >/dev/null 2>&1; then NIKATRU_SHELL="$(cygpath -w "$NIKATRU_SHELL")"; fi
-          node "$GITHUB_WORKSPACE/../.nikatru-shell/quiet-step.mjs" --name submit-appstore.dry-run.21 -- "$NIKATRU_SHELL" -e "$NIKATRU_QUIET"
+          node "$GITHUB_WORKSPACE/../.nikatru-shell/quiet-step.mjs" --name submit-appstore.dry-run.23 -- "$NIKATRU_SHELL" -e "$NIKATRU_QUIET"
       - name: Name clearance holds for ios-appstore (owner HELD or PROVEN-FREE)
         run: |
           NIKATRU_QUIET="$(mktemp "${RUNNER_TEMP:-/tmp}/nikatru-step.XXXXXX")"
@@ -648,7 +696,7 @@ jobs:
           node tooling/ci/assert-name-clearance.mjs --for-submission=ios-appstore
           NIKATRU_QUIET_EOF
           NIKATRU_SHELL="${BASH:-bash}"; if command -v cygpath >/dev/null 2>&1; then NIKATRU_SHELL="$(cygpath -w "$NIKATRU_SHELL")"; fi
-          node "$GITHUB_WORKSPACE/../.nikatru-shell/quiet-step.mjs" --name submit-appstore.dry-run.22 -- "$NIKATRU_SHELL" -e "$NIKATRU_QUIET"
+          node "$GITHUB_WORKSPACE/../.nikatru-shell/quiet-step.mjs" --name submit-appstore.dry-run.24 -- "$NIKATRU_SHELL" -e "$NIKATRU_QUIET"
       - name: Every supported language is translated by the pipeline (ios-appstore, dry run)
         run: |
           NIKATRU_QUIET="$(mktemp "${RUNNER_TEMP:-/tmp}/nikatru-step.XXXXXX")"
@@ -656,7 +704,7 @@ jobs:
           node tooling/ci/assert-translations-generated.mjs --for-submission=ios-appstore --real-submission
           NIKATRU_QUIET_EOF
           NIKATRU_SHELL="${BASH:-bash}"; if command -v cygpath >/dev/null 2>&1; then NIKATRU_SHELL="$(cygpath -w "$NIKATRU_SHELL")"; fi
-          node "$GITHUB_WORKSPACE/../.nikatru-shell/quiet-step.mjs" --name submit-appstore.dry-run.23 -- "$NIKATRU_SHELL" -e "$NIKATRU_QUIET"
+          node "$GITHUB_WORKSPACE/../.nikatru-shell/quiet-step.mjs" --name submit-appstore.dry-run.25 -- "$NIKATRU_SHELL" -e "$NIKATRU_QUIET"
       - name: Name clearance holds for macos-appstore (owner HELD or PROVEN-FREE)
         run: |
           NIKATRU_QUIET="$(mktemp "${RUNNER_TEMP:-/tmp}/nikatru-step.XXXXXX")"
@@ -664,7 +712,7 @@ jobs:
           node tooling/ci/assert-name-clearance.mjs --for-submission=macos-appstore
           NIKATRU_QUIET_EOF
           NIKATRU_SHELL="${BASH:-bash}"; if command -v cygpath >/dev/null 2>&1; then NIKATRU_SHELL="$(cygpath -w "$NIKATRU_SHELL")"; fi
-          node "$GITHUB_WORKSPACE/../.nikatru-shell/quiet-step.mjs" --name submit-appstore.dry-run.24 -- "$NIKATRU_SHELL" -e "$NIKATRU_QUIET"
+          node "$GITHUB_WORKSPACE/../.nikatru-shell/quiet-step.mjs" --name submit-appstore.dry-run.26 -- "$NIKATRU_SHELL" -e "$NIKATRU_QUIET"
       - name: Every supported language is translated by the pipeline (macos-appstore, dry run)
         run: |
           NIKATRU_QUIET="$(mktemp "${RUNNER_TEMP:-/tmp}/nikatru-step.XXXXXX")"
@@ -672,7 +720,7 @@ jobs:
           node tooling/ci/assert-translations-generated.mjs --for-submission=macos-appstore --real-submission
           NIKATRU_QUIET_EOF
           NIKATRU_SHELL="${BASH:-bash}"; if command -v cygpath >/dev/null 2>&1; then NIKATRU_SHELL="$(cygpath -w "$NIKATRU_SHELL")"; fi
-          node "$GITHUB_WORKSPACE/../.nikatru-shell/quiet-step.mjs" --name submit-appstore.dry-run.25 -- "$NIKATRU_SHELL" -e "$NIKATRU_QUIET"
+          node "$GITHUB_WORKSPACE/../.nikatru-shell/quiet-step.mjs" --name submit-appstore.dry-run.27 -- "$NIKATRU_SHELL" -e "$NIKATRU_QUIET"
       - name: Every auto-renewable has its review screenshot (--for-submission)
         env:
           APPLE_RELEASE_TARGET: testflight
@@ -682,7 +730,7 @@ jobs:
           node tooling/ci/assert-iap-review-screenshots.mjs --for-submission
           NIKATRU_QUIET_EOF
           NIKATRU_SHELL="${BASH:-bash}"; if command -v cygpath >/dev/null 2>&1; then NIKATRU_SHELL="$(cygpath -w "$NIKATRU_SHELL")"; fi
-          node "$GITHUB_WORKSPACE/../.nikatru-shell/quiet-step.mjs" --name submit-appstore.dry-run.26 -- "$NIKATRU_SHELL" -e "$NIKATRU_QUIET"
+          node "$GITHUB_WORKSPACE/../.nikatru-shell/quiet-step.mjs" --name submit-appstore.dry-run.28 -- "$NIKATRU_SHELL" -e "$NIKATRU_QUIET"
       - name: The app's App Store declarations are sworn, not preview (--for-submission)
         run: |
           NIKATRU_QUIET="$(mktemp "${RUNNER_TEMP:-/tmp}/nikatru-step.XXXXXX")"
@@ -690,7 +738,7 @@ jobs:
           node tooling/ci/assert-sworn-store-files.mjs --for-submission=ios-appstore --app "$APP"
           NIKATRU_QUIET_EOF
           NIKATRU_SHELL="${BASH:-bash}"; if command -v cygpath >/dev/null 2>&1; then NIKATRU_SHELL="$(cygpath -w "$NIKATRU_SHELL")"; fi
-          node "$GITHUB_WORKSPACE/../.nikatru-shell/quiet-step.mjs" --name submit-appstore.dry-run.27 -- "$NIKATRU_SHELL" -e "$NIKATRU_QUIET"
+          node "$GITHUB_WORKSPACE/../.nikatru-shell/quiet-step.mjs" --name submit-appstore.dry-run.29 -- "$NIKATRU_SHELL" -e "$NIKATRU_QUIET"
       - name: The App Review reviewer can sign in (App Review Information names a demo account, ios-appstore)
         run: |
           NIKATRU_QUIET="$(mktemp "${RUNNER_TEMP:-/tmp}/nikatru-step.XXXXXX")"
@@ -698,7 +746,7 @@ jobs:
           node tooling/ci/assert-reviewer-access.mjs --for-submission=ios-appstore --app "$APP"
           NIKATRU_QUIET_EOF
           NIKATRU_SHELL="${BASH:-bash}"; if command -v cygpath >/dev/null 2>&1; then NIKATRU_SHELL="$(cygpath -w "$NIKATRU_SHELL")"; fi
-          node "$GITHUB_WORKSPACE/../.nikatru-shell/quiet-step.mjs" --name submit-appstore.dry-run.28 -- "$NIKATRU_SHELL" -e "$NIKATRU_QUIET"
+          node "$GITHUB_WORKSPACE/../.nikatru-shell/quiet-step.mjs" --name submit-appstore.dry-run.30 -- "$NIKATRU_SHELL" -e "$NIKATRU_QUIET"
       - name: The App Review reviewer can sign in (App Review Information names a demo account, macos-appstore)
         run: |
           NIKATRU_QUIET="$(mktemp "${RUNNER_TEMP:-/tmp}/nikatru-step.XXXXXX")"
@@ -706,7 +754,7 @@ jobs:
           node tooling/ci/assert-reviewer-access.mjs --for-submission=macos-appstore --app "$APP"
           NIKATRU_QUIET_EOF
           NIKATRU_SHELL="${BASH:-bash}"; if command -v cygpath >/dev/null 2>&1; then NIKATRU_SHELL="$(cygpath -w "$NIKATRU_SHELL")"; fi
-          node "$GITHUB_WORKSPACE/../.nikatru-shell/quiet-step.mjs" --name submit-appstore.dry-run.29 -- "$NIKATRU_SHELL" -e "$NIKATRU_QUIET"
+          node "$GITHUB_WORKSPACE/../.nikatru-shell/quiet-step.mjs" --name submit-appstore.dry-run.31 -- "$NIKATRU_SHELL" -e "$NIKATRU_QUIET"
       - name: A pending in-app purchase declaration is not submitted (ios-appstore)
         run: |
           NIKATRU_QUIET="$(mktemp "${RUNNER_TEMP:-/tmp}/nikatru-step.XXXXXX")"
@@ -714,7 +762,7 @@ jobs:
           node tooling/ci/assert-app-yaml.mjs --for-submission=ios-appstore --app "$APP"
           NIKATRU_QUIET_EOF
           NIKATRU_SHELL="${BASH:-bash}"; if command -v cygpath >/dev/null 2>&1; then NIKATRU_SHELL="$(cygpath -w "$NIKATRU_SHELL")"; fi
-          node "$GITHUB_WORKSPACE/../.nikatru-shell/quiet-step.mjs" --name submit-appstore.dry-run.30 -- "$NIKATRU_SHELL" -e "$NIKATRU_QUIET"
+          node "$GITHUB_WORKSPACE/../.nikatru-shell/quiet-step.mjs" --name submit-appstore.dry-run.32 -- "$NIKATRU_SHELL" -e "$NIKATRU_QUIET"
       - name: A pending in-app purchase declaration is not submitted (macos-appstore)
         run: |
           NIKATRU_QUIET="$(mktemp "${RUNNER_TEMP:-/tmp}/nikatru-step.XXXXXX")"
@@ -722,7 +770,7 @@ jobs:
           node tooling/ci/assert-app-yaml.mjs --for-submission=macos-appstore --app "$APP"
           NIKATRU_QUIET_EOF
           NIKATRU_SHELL="${BASH:-bash}"; if command -v cygpath >/dev/null 2>&1; then NIKATRU_SHELL="$(cygpath -w "$NIKATRU_SHELL")"; fi
-          node "$GITHUB_WORKSPACE/../.nikatru-shell/quiet-step.mjs" --name submit-appstore.dry-run.31 -- "$NIKATRU_SHELL" -e "$NIKATRU_QUIET"
+          node "$GITHUB_WORKSPACE/../.nikatru-shell/quiet-step.mjs" --name submit-appstore.dry-run.33 -- "$NIKATRU_SHELL" -e "$NIKATRU_QUIET"
       - name: The Small Business Program enrolment is recorded before an App Store sale (ios-appstore)
         run: |
           NIKATRU_QUIET="$(mktemp "${RUNNER_TEMP:-/tmp}/nikatru-step.XXXXXX")"
@@ -730,7 +778,7 @@ jobs:
           node tooling/ci/assert-small-business-program.mjs --for-submission=ios-appstore
           NIKATRU_QUIET_EOF
           NIKATRU_SHELL="${BASH:-bash}"; if command -v cygpath >/dev/null 2>&1; then NIKATRU_SHELL="$(cygpath -w "$NIKATRU_SHELL")"; fi
-          node "$GITHUB_WORKSPACE/../.nikatru-shell/quiet-step.mjs" --name submit-appstore.dry-run.32 -- "$NIKATRU_SHELL" -e "$NIKATRU_QUIET"
+          node "$GITHUB_WORKSPACE/../.nikatru-shell/quiet-step.mjs" --name submit-appstore.dry-run.34 -- "$NIKATRU_SHELL" -e "$NIKATRU_QUIET"
       - name: The Small Business Program enrolment is recorded before an App Store sale (macos-appstore)
         run: |
           NIKATRU_QUIET="$(mktemp "${RUNNER_TEMP:-/tmp}/nikatru-step.XXXXXX")"
@@ -738,7 +786,7 @@ jobs:
           node tooling/ci/assert-small-business-program.mjs --for-submission=macos-appstore
           NIKATRU_QUIET_EOF
           NIKATRU_SHELL="${BASH:-bash}"; if command -v cygpath >/dev/null 2>&1; then NIKATRU_SHELL="$(cygpath -w "$NIKATRU_SHELL")"; fi
-          node "$GITHUB_WORKSPACE/../.nikatru-shell/quiet-step.mjs" --name submit-appstore.dry-run.33 -- "$NIKATRU_SHELL" -e "$NIKATRU_QUIET"
+          node "$GITHUB_WORKSPACE/../.nikatru-shell/quiet-step.mjs" --name submit-appstore.dry-run.35 -- "$NIKATRU_SHELL" -e "$NIKATRU_QUIET"
       - name: The App Store screenshot sets cover their declared device types (ios-appstore)
         env:
           APPLE_RELEASE_TARGET: testflight
@@ -748,7 +796,7 @@ jobs:
           node tooling/ci/assert-play-device-coverage.mjs --for-submission=ios-appstore
           NIKATRU_QUIET_EOF
           NIKATRU_SHELL="${BASH:-bash}"; if command -v cygpath >/dev/null 2>&1; then NIKATRU_SHELL="$(cygpath -w "$NIKATRU_SHELL")"; fi
-          node "$GITHUB_WORKSPACE/../.nikatru-shell/quiet-step.mjs" --name submit-appstore.dry-run.34 -- "$NIKATRU_SHELL" -e "$NIKATRU_QUIET"
+          node "$GITHUB_WORKSPACE/../.nikatru-shell/quiet-step.mjs" --name submit-appstore.dry-run.36 -- "$NIKATRU_SHELL" -e "$NIKATRU_QUIET"
       - name: The App Store screenshot sets cover their declared device types (macos-appstore)
         env:
           APPLE_RELEASE_TARGET: testflight
@@ -758,7 +806,7 @@ jobs:
           node tooling/ci/assert-play-device-coverage.mjs --for-submission=macos-appstore
           NIKATRU_QUIET_EOF
           NIKATRU_SHELL="${BASH:-bash}"; if command -v cygpath >/dev/null 2>&1; then NIKATRU_SHELL="$(cygpath -w "$NIKATRU_SHELL")"; fi
-          node "$GITHUB_WORKSPACE/../.nikatru-shell/quiet-step.mjs" --name submit-appstore.dry-run.35 -- "$NIKATRU_SHELL" -e "$NIKATRU_QUIET"
+          node "$GITHUB_WORKSPACE/../.nikatru-shell/quiet-step.mjs" --name submit-appstore.dry-run.37 -- "$NIKATRU_SHELL" -e "$NIKATRU_QUIET"
       - name: A build that cannot sign in is not submitted for App Review (ios-appstore)
         run: |
           NIKATRU_QUIET="$(mktemp "${RUNNER_TEMP:-/tmp}/nikatru-step.XXXXXX")"
@@ -766,7 +814,7 @@ jobs:
           node tooling/ci/assert-channel-register.mjs --for-submission=ios-appstore
           NIKATRU_QUIET_EOF
           NIKATRU_SHELL="${BASH:-bash}"; if command -v cygpath >/dev/null 2>&1; then NIKATRU_SHELL="$(cygpath -w "$NIKATRU_SHELL")"; fi
-          node "$GITHUB_WORKSPACE/../.nikatru-shell/quiet-step.mjs" --name submit-appstore.dry-run.36 -- "$NIKATRU_SHELL" -e "$NIKATRU_QUIET"
+          node "$GITHUB_WORKSPACE/../.nikatru-shell/quiet-step.mjs" --name submit-appstore.dry-run.38 -- "$NIKATRU_SHELL" -e "$NIKATRU_QUIET"
       - name: Every target this channel ships to has its golden-path legs graded (ios-appstore)
         run: |
           NIKATRU_QUIET="$(mktemp "${RUNNER_TEMP:-/tmp}/nikatru-step.XXXXXX")"
@@ -774,7 +822,7 @@ jobs:
           node tooling/ci/assert-e2e-legs.mjs --for-submission=ios-appstore
           NIKATRU_QUIET_EOF
           NIKATRU_SHELL="${BASH:-bash}"; if command -v cygpath >/dev/null 2>&1; then NIKATRU_SHELL="$(cygpath -w "$NIKATRU_SHELL")"; fi
-          node "$GITHUB_WORKSPACE/../.nikatru-shell/quiet-step.mjs" --name submit-appstore.dry-run.37 -- "$NIKATRU_SHELL" -e "$NIKATRU_QUIET"
+          node "$GITHUB_WORKSPACE/../.nikatru-shell/quiet-step.mjs" --name submit-appstore.dry-run.39 -- "$NIKATRU_SHELL" -e "$NIKATRU_QUIET"
       - name: A build that cannot sign in is not submitted for App Review (macos-appstore)
         run: |
           NIKATRU_QUIET="$(mktemp "${RUNNER_TEMP:-/tmp}/nikatru-step.XXXXXX")"
@@ -782,7 +830,7 @@ jobs:
           node tooling/ci/assert-channel-register.mjs --for-submission=macos-appstore
           NIKATRU_QUIET_EOF
           NIKATRU_SHELL="${BASH:-bash}"; if command -v cygpath >/dev/null 2>&1; then NIKATRU_SHELL="$(cygpath -w "$NIKATRU_SHELL")"; fi
-          node "$GITHUB_WORKSPACE/../.nikatru-shell/quiet-step.mjs" --name submit-appstore.dry-run.38 -- "$NIKATRU_SHELL" -e "$NIKATRU_QUIET"
+          node "$GITHUB_WORKSPACE/../.nikatru-shell/quiet-step.mjs" --name submit-appstore.dry-run.40 -- "$NIKATRU_SHELL" -e "$NIKATRU_QUIET"
       - name: Every target this channel ships to has its golden-path legs graded (macos-appstore)
         run: |
           NIKATRU_QUIET="$(mktemp "${RUNNER_TEMP:-/tmp}/nikatru-step.XXXXXX")"
@@ -790,7 +838,7 @@ jobs:
           node tooling/ci/assert-e2e-legs.mjs --for-submission=macos-appstore
           NIKATRU_QUIET_EOF
           NIKATRU_SHELL="${BASH:-bash}"; if command -v cygpath >/dev/null 2>&1; then NIKATRU_SHELL="$(cygpath -w "$NIKATRU_SHELL")"; fi
-          node "$GITHUB_WORKSPACE/../.nikatru-shell/quiet-step.mjs" --name submit-appstore.dry-run.39 -- "$NIKATRU_SHELL" -e "$NIKATRU_QUIET"
+          node "$GITHUB_WORKSPACE/../.nikatru-shell/quiet-step.mjs" --name submit-appstore.dry-run.41 -- "$NIKATRU_SHELL" -e "$NIKATRU_QUIET"
       - name: Read the version strings the upload will declare, off the built bundles
         id: versions
         env:
@@ -820,7 +868,7 @@ jobs:
           echo "bundle_version=${BUILD_NUMBER}" >> "$GITHUB_OUTPUT"
           NIKATRU_QUIET_EOF
           NIKATRU_SHELL="${BASH:-bash}"; if command -v cygpath >/dev/null 2>&1; then NIKATRU_SHELL="$(cygpath -w "$NIKATRU_SHELL")"; fi
-          node "$GITHUB_WORKSPACE/../.nikatru-shell/quiet-step.mjs" --name submit-appstore.dry-run.40 -- "$NIKATRU_SHELL" -e "$NIKATRU_QUIET"
+          node "$GITHUB_WORKSPACE/../.nikatru-shell/quiet-step.mjs" --name submit-appstore.dry-run.42 -- "$NIKATRU_SHELL" -e "$NIKATRU_QUIET"
       - name: Hash the validated .ipa and .pkg for the owner's upload
         id: bytes
         env:
@@ -845,7 +893,7 @@ jobs:
           echo "${pkg_sum}  ${pkg}"
           NIKATRU_QUIET_EOF
           NIKATRU_SHELL="${BASH:-bash}"; if command -v cygpath >/dev/null 2>&1; then NIKATRU_SHELL="$(cygpath -w "$NIKATRU_SHELL")"; fi
-          node "$GITHUB_WORKSPACE/../.nikatru-shell/quiet-step.mjs" --name submit-appstore.dry-run.41 -- "$NIKATRU_SHELL" -e "$NIKATRU_QUIET"
+          node "$GITHUB_WORKSPACE/../.nikatru-shell/quiet-step.mjs" --name submit-appstore.dry-run.43 -- "$NIKATRU_SHELL" -e "$NIKATRU_QUIET"
       - name: Stage ${{ steps.bytes.outputs.artifact }} for this run's later jobs (generated)
         id: nikatru-stage-2
         shell: bash
@@ -883,7 +931,7 @@ jobs:
           node tooling/ci/record-deployment.mjs "${APP}-ios-appstore" --mode dry-run
           NIKATRU_QUIET_EOF
           NIKATRU_SHELL="${BASH:-bash}"; if command -v cygpath >/dev/null 2>&1; then NIKATRU_SHELL="$(cygpath -w "$NIKATRU_SHELL")"; fi
-          node "$GITHUB_WORKSPACE/../.nikatru-shell/quiet-step.mjs" --name submit-appstore.dry-run.43 -- "$NIKATRU_SHELL" -e "$NIKATRU_QUIET"
+          node "$GITHUB_WORKSPACE/../.nikatru-shell/quiet-step.mjs" --name submit-appstore.dry-run.45 -- "$NIKATRU_SHELL" -e "$NIKATRU_QUIET"
       - name: Record the macOS dry run in the [10]D-9 ledger (mode dry-run)
         env:
           GH_TOKEN: ${{ github.token }}
@@ -894,7 +942,7 @@ jobs:
           node tooling/ci/record-deployment.mjs "${APP}-macos-appstore" --mode dry-run
           NIKATRU_QUIET_EOF
           NIKATRU_SHELL="${BASH:-bash}"; if command -v cygpath >/dev/null 2>&1; then NIKATRU_SHELL="$(cygpath -w "$NIKATRU_SHELL")"; fi
-          node "$GITHUB_WORKSPACE/../.nikatru-shell/quiet-step.mjs" --name submit-appstore.dry-run.44 -- "$NIKATRU_SHELL" -e "$NIKATRU_QUIET"
+          node "$GITHUB_WORKSPACE/../.nikatru-shell/quiet-step.mjs" --name submit-appstore.dry-run.46 -- "$NIKATRU_SHELL" -e "$NIKATRU_QUIET"
       - name: REAL SUBMISSION WOULD REFUSE ON (the submit job's gates, measured)
         if: ${{ !cancelled() }}
         run: |
@@ -903,7 +951,7 @@ jobs:
           node tooling/ops/real-submission-refusals.mjs --job submit --app "$APP"
           NIKATRU_QUIET_EOF
           NIKATRU_SHELL="${BASH:-bash}"; if command -v cygpath >/dev/null 2>&1; then NIKATRU_SHELL="$(cygpath -w "$NIKATRU_SHELL")"; fi
-          node "$GITHUB_WORKSPACE/../.nikatru-shell/quiet-step.mjs" --name submit-appstore.dry-run.45 --public -- "$NIKATRU_SHELL" -e "$NIKATRU_QUIET"
+          node "$GITHUB_WORKSPACE/../.nikatru-shell/quiet-step.mjs" --name submit-appstore.dry-run.47 --public -- "$NIKATRU_SHELL" -e "$NIKATRU_QUIET"
       - name: Store this job's red detail in the bridge's private home (generated)
         if: always()
         continue-on-error: true
@@ -1176,6 +1224,7 @@ jobs:
           CONFIRM: ${{ inputs.confirm_ios }}
           GITHUB_TOKEN: ${{ github.token }}
           APPLE_RELEASE_TARGET: testflight
+          SERVER: ${{ needs.gate.outputs.server }}
           SHORT_VERSION: ${{ needs.dry-run.outputs.short_version }}
           BUNDLE_VERSION: ${{ needs.dry-run.outputs.bundle_version }}
           LISTING_URL: ${{ inputs.listing_url }}
@@ -1187,7 +1236,7 @@ jobs:
         run: >
           node tooling/release/submit-appstore.mjs --submit --channel ios-appstore --app "$APP"
           --confirm "$CONFIRM" --bundle-short-version "$SHORT_VERSION" --bundle-version "$BUNDLE_VERSION"
-          --listing-url "$LISTING_URL" --release-tag "$RELEASE_TAG"
+          --listing-url "$LISTING_URL" --release-tag "$RELEASE_TAG" --server "$SERVER"
       - name: Upload the macOS build to App Store Connect (TestFlight processing; never submitted for review)
         id: upload_macos
         if: (github.event.client_payload.event || github.event_name) == 'workflow_dispatch' && inputs.confirm_macos == 'UPLOAD-MACOS-TO-TESTFLIGHT'
@@ -1198,6 +1247,7 @@ jobs:
           CONFIRM: ${{ inputs.confirm_macos }}
           GITHUB_TOKEN: ${{ github.token }}
           APPLE_RELEASE_TARGET: testflight
+          SERVER: ${{ needs.gate.outputs.server }}
           SHORT_VERSION: ${{ needs.dry-run.outputs.short_version }}
           BUNDLE_VERSION: ${{ needs.dry-run.outputs.bundle_version }}
           LISTING_URL: ${{ inputs.listing_url }}
@@ -1209,7 +1259,7 @@ jobs:
         run: >
           node tooling/release/submit-appstore.mjs --submit --channel macos-appstore --app "$APP"
           --confirm "$CONFIRM" --bundle-short-version "$SHORT_VERSION" --bundle-version "$BUNDLE_VERSION"
-          --listing-url "$LISTING_URL" --release-tag "$RELEASE_TAG"
+          --listing-url "$LISTING_URL" --release-tag "$RELEASE_TAG" --server "$SERVER"
       - name: Record the iOS upload in the [10]D-9 ledger
         if: always() && steps.upload_ios.outcome == 'success'
         env:

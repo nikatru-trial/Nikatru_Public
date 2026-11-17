@@ -377,14 +377,28 @@ jobs:
           NIKATRU_EVENT_NAME: ${{ github.event.client_payload.event || github.event_name }}
           NIKATRU_PR: ${{ github.event.client_payload.pr }}
       - name: Linux build deps (the same list the Linux build lane installs)
+        timeout-minutes: 9
         run: |
           NIKATRU_QUIET="$(mktemp "${RUNNER_TEMP:-/tmp}/nikatru-step.XXXXXX")"
           cat > "$NIKATRU_QUIET" <<'NIKATRU_QUIET_EOF'
           set -euo pipefail
+          # why cached_install: ⏱ 2026-11-12 (O-CI-RAW-APT-BYPASSES-CACHED-INSTALL) — bounded (4 min an attempt, ONE retry,
+          # mirror failover) through tooling/ops/ci-install-cache.mjs, uncached: this job binds the store's secrets after,
+          # so it holds no PR-writable cache restore (gen-public-shell.test RS1). assert-cached-installs.mjs refuses a raw one.
           deps="$(node tooling/release/generate-snapcraft.mjs --emit-build-deps)"
           echo "installing: ${deps}"
-          sudo apt-get update
-          sudo apt-get install -y ${deps}
+          cached_install() {
+            if [ -f "$GITHUB_WORKSPACE/tooling/ops/ci-install-cache.mjs" ]; then
+              node "$GITHUB_WORKSPACE/tooling/ops/ci-install-cache.mjs" run --cache-dir "${DEBS_DIR:-$RUNNER_TEMP/ci-install-debs}" --attempt-minutes "${ATTEMPT_MINUTES:-4}" -- "$@"
+              return
+            fi
+            bound="$(awk -v m="${ATTEMPT_MINUTES:-4}" 'BEGIN { print int(m * 120) + 1 }')"
+            echo "::warning title=Install uncached::this checkout has no tooling/ops/ci-install-cache.mjs (it predates #981): $* runs uncached, bounded at ${bound} s"
+            if [ "$1" = sudo ]; then timeout -k 15 "$bound" sudo apt-get update; fi
+            timeout -k 15 "$bound" "$@"
+          }
+          # shellcheck disable=SC2086
+          cached_install sudo apt-get install -y ${deps}
           NIKATRU_QUIET_EOF
           NIKATRU_SHELL="${BASH:-bash}"; if command -v cygpath >/dev/null 2>&1; then NIKATRU_SHELL="$(cygpath -w "$NIKATRU_SHELL")"; fi
           node "$GITHUB_WORKSPACE/../.nikatru-shell/quiet-step.mjs" --name submit-snap.dry-run.3 -- "$NIKATRU_SHELL" -e "$NIKATRU_QUIET"
@@ -996,14 +1010,28 @@ jobs:
           NIKATRU_EVENT_NAME: ${{ github.event.client_payload.event || github.event_name }}
           NIKATRU_PR: ${{ github.event.client_payload.pr }}
       - name: Linux build deps (the same list the Linux build lane installs)
+        timeout-minutes: 9
         run: |
           NIKATRU_QUIET="$(mktemp "${RUNNER_TEMP:-/tmp}/nikatru-step.XXXXXX")"
           cat > "$NIKATRU_QUIET" <<'NIKATRU_QUIET_EOF'
           set -euo pipefail
+          # why cached_install: ⏱ 2026-11-12 (O-CI-RAW-APT-BYPASSES-CACHED-INSTALL) — bounded (4 min an attempt, ONE retry,
+          # mirror failover) through tooling/ops/ci-install-cache.mjs, uncached: this job binds the store's secrets after,
+          # so it holds no PR-writable cache restore (gen-public-shell.test RS1). assert-cached-installs.mjs refuses a raw one.
           deps="$(node tooling/release/generate-snapcraft.mjs --emit-build-deps)"
           echo "installing (arm64): ${deps}"
-          sudo apt-get update
-          sudo apt-get install -y ${deps}
+          cached_install() {
+            if [ -f "$GITHUB_WORKSPACE/tooling/ops/ci-install-cache.mjs" ]; then
+              node "$GITHUB_WORKSPACE/tooling/ops/ci-install-cache.mjs" run --cache-dir "${DEBS_DIR:-$RUNNER_TEMP/ci-install-debs}" --attempt-minutes "${ATTEMPT_MINUTES:-4}" -- "$@"
+              return
+            fi
+            bound="$(awk -v m="${ATTEMPT_MINUTES:-4}" 'BEGIN { print int(m * 120) + 1 }')"
+            echo "::warning title=Install uncached::this checkout has no tooling/ops/ci-install-cache.mjs (it predates #981): $* runs uncached, bounded at ${bound} s"
+            if [ "$1" = sudo ]; then timeout -k 15 "$bound" sudo apt-get update; fi
+            timeout -k 15 "$bound" "$@"
+          }
+          # shellcheck disable=SC2086
+          cached_install sudo apt-get install -y ${deps}
           NIKATRU_QUIET_EOF
           NIKATRU_SHELL="${BASH:-bash}"; if command -v cygpath >/dev/null 2>&1; then NIKATRU_SHELL="$(cygpath -w "$NIKATRU_SHELL")"; fi
           node "$GITHUB_WORKSPACE/../.nikatru-shell/quiet-step.mjs" --name submit-snap.build-arm64.3 -- "$NIKATRU_SHELL" -e "$NIKATRU_QUIET"

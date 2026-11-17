@@ -270,6 +270,13 @@ jobs:
           sparse-checkout: |
             tooling/ci
             tooling/versions.json
+            tooling/ops
+            tooling/app-yaml
+            tooling/catalog
+            tooling/entity
+            tooling/legal
+            tooling/ports
+            services/gh-bridge
           ssh-key: ${{ secrets.PRIVATE_DEPLOY_KEY }}
           persist-credentials: false
       - name: Name the private commit (generated)
@@ -747,6 +754,12 @@ jobs:
           sparse-checkout: |
             tooling/ops
             tooling/ci
+            tooling/app-yaml
+            tooling/catalog
+            tooling/entity
+            tooling/legal
+            tooling/ports
+            services/gh-bridge
           ssh-key: ${{ secrets.PRIVATE_DEPLOY_KEY }}
           persist-credentials: false
       - name: Name the private commit (generated)
