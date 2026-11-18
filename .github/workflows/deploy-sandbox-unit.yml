@@ -228,7 +228,7 @@ jobs:
         run: |
           NIKATRU_QUIET="$(mktemp "${RUNNER_TEMP:-/tmp}/nikatru-step.XXXXXX")"
           cat > "$NIKATRU_QUIET" <<'NIKATRU_QUIET_EOF'
-          node tooling/ci/sandbox-deploy-preflight.mjs --tree .. --main . --history .
+          node tooling/ci/sandbox-deploy-preflight.mjs --tree .. --main . --history . --triggers-pinned
           NIKATRU_QUIET_EOF
           NIKATRU_SHELL="${BASH:-bash}"; if command -v cygpath >/dev/null 2>&1; then NIKATRU_SHELL="$(cygpath -w "$NIKATRU_SHELL")"; fi
           node "$GITHUB_WORKSPACE/../.nikatru-shell/quiet-step.mjs" --name deploy-sandbox-unit.workers.5 -- "$NIKATRU_SHELL" -e "$NIKATRU_QUIET"
@@ -404,7 +404,7 @@ jobs:
         env:
           NK_EPHEMERAL_PLATFORM_DB: ${{ inputs.platform_db }}
         working-directory: .sandbox-main
-        run: node tooling/ci/sandbox-deploy-preflight.mjs --tree .. --main . --history . && node tooling/ci/assert-sandbox-migrations.mjs --main . --tree ..
+        run: node tooling/ci/sandbox-deploy-preflight.mjs --tree .. --main . --history . --triggers-pinned && node tooling/ci/assert-sandbox-migrations.mjs --main . --tree ..
       - name: Bundle platform-sandbox with no token in the environment
         if: needs.workers.outputs.platform == 'true'
         working-directory: services/platform
@@ -443,6 +443,10 @@ jobs:
           DB_NAME: ${{ inputs.platform_db_name }}
         working-directory: .sandbox-main
         run: node tooling/ci/sandbox-ephemeral-db.mjs --rewrite-binding --config "$GITHUB_WORKSPACE/services/platform/wrangler.jsonc" --id "$DB_ID" --name "$DB_NAME"
+      - name: Pin platform-sandbox's cron triggers to main's (runner copy only)
+        if: needs.workers.outputs.platform == 'true'
+        working-directory: .sandbox-main
+        run: node tooling/ci/sandbox-deploy-preflight.mjs --pin-triggers --config "$GITHUB_WORKSPACE/services/platform/wrangler.jsonc" --main .
       - uses: cloudflare/wrangler-action@953926a2e2182532811c01a25e53647d93bf07c0
         if: needs.workers.outputs.platform == 'true'
         with:
@@ -578,7 +582,7 @@ jobs:
         env:
           NK_EPHEMERAL_PLATFORM_DB: ${{ inputs.platform_db }}
         working-directory: .sandbox-main
-        run: node tooling/ci/sandbox-deploy-preflight.mjs --tree .. --main . --history . && node tooling/ci/assert-sandbox-migrations.mjs --main . --tree ..
+        run: node tooling/ci/sandbox-deploy-preflight.mjs --tree .. --main . --history . --triggers-pinned && node tooling/ci/assert-sandbox-migrations.mjs --main . --tree ..
       - name: Bundle the app Worker with no token in the environment
         if: matrix.worker.worker != 'none'
         working-directory: ${{ matrix.worker.dir }}
@@ -630,6 +634,12 @@ jobs:
           DIR: ${{ matrix.worker.dir }}
         working-directory: .sandbox-main
         run: node tooling/ci/sandbox-ephemeral-db.mjs --rewrite-binding --config "$GITHUB_WORKSPACE/$DIR/wrangler.jsonc" --id "$DB_ID" --name "$DB_NAME"
+      - name: Pin the app Worker's cron triggers to main's (runner copy only)
+        if: matrix.worker.worker != 'none'
+        env:
+          DIR: ${{ matrix.worker.dir }}
+        working-directory: .sandbox-main
+        run: node tooling/ci/sandbox-deploy-preflight.mjs --pin-triggers --config "$GITHUB_WORKSPACE/$DIR/wrangler.jsonc" --main .
       - uses: cloudflare/wrangler-action@953926a2e2182532811c01a25e53647d93bf07c0
         if: matrix.worker.worker != 'none'
         with:

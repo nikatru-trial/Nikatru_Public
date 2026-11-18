@@ -72,7 +72,7 @@ shell/.github/workflows/claude-triage.yml
 shell/.github/workflows/codeql.yml
 c8bdaefaecb91971dd22c1c6eb56151010fdfe042ad9aa069374ee68fd45cc2b
 shell/.github/workflows/deploy-sandbox-unit.yml
-35e35f3d8baa9069695e3006581fa6ddcda2b2cba0a0e97b352c91502e627cd9
+194a14a81524ad8630a99dd2d9907026c58434523b912885c91d660dd988341e
 shell/.github/workflows/deploy-sandbox.yml
 b2cc8b7f7393bff9c372f6015863939f6e17f248669161de2dd2234cb9fe7a99
 shell/.github/workflows/deploy-web.yml
