@@ -49,6 +49,7 @@
 import { createHmac } from 'node:crypto';
 import { readFileSync } from 'node:fs';
 import { oidcHeaders } from './actions-oidc.mjs';
+import { nap } from './bounded-retry.mjs';
 
 const SHA = /^[0-9a-f]{40}$/;
 /** @ceiling none — how long one read may take before it is COVERAGE LOST (the bridge makes one GitHub GET). */
@@ -59,7 +60,7 @@ export const RATE_WAITS_MS = Object.freeze([20_000, 45_000]);
 /** @ceiling none — the waits before re-sending a read whose send got no answer at all (fetch's TypeError: a dropped
  *  connection or a DNS blip, PR #553); short, because the gate's other reads wait on this one. */
 export const NETWORK_WAITS_MS = Object.freeze([2_000, 6_000]);
-export const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
+export const sleep = nap;
 
 /** The string the bridge verifies: `<number>.<sha>.<ts>` (services/gh-bridge/src/pr-meta.ts readMessage). */
 export const readMessage = (number, sha, ts) => `${number}.${sha}.${ts}`;

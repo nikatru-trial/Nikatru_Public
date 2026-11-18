@@ -406,8 +406,10 @@ export function retryAfterMs(res, { ceilingMs = RETRY_AFTER_CEILING_MS, now = Da
   return Math.min(ms, ceilingMs);
 }
 
+// ⏱ 2026-11-14 · O-STD-TOOLING-HELPER-COPIES: EXPORTED, so tooling sleeps through this one helper instead of typing
+// its own one-line sleep promise (tooling/ci/test/tooling-helper-copies.test.mjs holds the count and only lets it fall).
 /** IMPURE ONLY IN ITS CLOCK. The default sleep, replaced in every test. */
-const nap = (ms) => new Promise((r) => setTimeout(r, ms));
+export const nap = (ms) => new Promise((r) => setTimeout(r, ms));
 
 /**
  * ONE attempt, under a FRESH ceiling, raced against it.

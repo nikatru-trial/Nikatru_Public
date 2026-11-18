@@ -2,7 +2,7 @@
 # Do not edit: `node tooling/ci/gen-public-shell.mjs --check` re-generates it and fails on any difference.
 env:
   NIKATRU_PRIVATE_REPO: com-nikatru/Nikatru_Private
-  NIKATRU_SHELL_FINGERPRINT: 024ca167ec0deb49706a97642acd245d897833fbab54def857f66500f6c3977c
+  NIKATRU_SHELL_FINGERPRINT: 4715ef39164c63bb031918da160db744f19d52cbb2485f5301c00f353f85ea37
 
 name: Part of CI · Deploy web
 
@@ -36,6 +36,10 @@ on:
       OWNER_PAGE_PUSH_URL:
         required: false
       OWNER_PAGE_PUSH_TOKEN:
+        required: false
+      CF_ACCESS_VAULT_CLIENT_ID:
+        required: false
+      CF_ACCESS_VAULT_CLIENT_SECRET:
         required: false
       PRIVATE_DEPLOY_KEY:
         required: true
@@ -398,6 +402,12 @@ jobs:
             exit 1
           fi
           echo "0 .map files remain in build/web"
+      - name: Write the GlitchTip DSN and release into the built shell's crash metas
+        if: steps.plan.outputs.deploy == 'true'
+        working-directory: .
+        env:
+          GLITCHTIP_DSN: ${{ secrets.GLITCHTIP_DSN }}
+        run: node tooling/web/write-crash-dsn.mjs apps/${{ matrix.app }}/build/web --release "$release"
       - name: Hold the bundle to its byte budget
         if: steps.plan.outputs.deploy == 'true'
         working-directory: .
@@ -774,6 +784,11 @@ jobs:
         if: steps.plan.outputs.deploy == 'true'
         id: site
         run: node tooling/ci/site-target.mjs --emit rajasekarselvam-site >> "$GITHUB_OUTPUT"
+      - name: Generate the personal site's sitemap (never committed)
+        if: steps.plan.outputs.deploy == 'true'
+        env:
+          SITE_SOURCE: ${{ steps.site.outputs.source }}
+        run: node tooling/sites/sitemap.mjs --site "$SITE_SOURCE"
       - name: Stage the site and stamp version.json with this commit
         if: steps.plan.outputs.deploy == 'true'
         env:
@@ -936,6 +951,8 @@ jobs:
         if: steps.live.outputs.go == 'true'
         env:
           SITE_ORIGIN: ${{ steps.target.outputs.origin }}
+          CF_ACCESS_VAULT_CLIENT_ID: ${{ secrets.CF_ACCESS_VAULT_CLIENT_ID }}
+          CF_ACCESS_VAULT_CLIENT_SECRET: ${{ secrets.CF_ACCESS_VAULT_CLIENT_SECRET }}
         run: |
           set -uo pipefail
           code=0

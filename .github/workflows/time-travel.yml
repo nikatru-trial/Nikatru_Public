@@ -5,7 +5,7 @@ env:
 
 name: Time travel
 
-run-name: "Time travel${{ inputs.instant && format(' · at {0}', inputs.instant) || '' }}${{ inputs.worker_slot && format(' [worker slot {0}]', inputs.worker_slot) || '' }}"
+run-name: "Time travel${{ inputs.instant && format(' · at {0}', inputs.instant) || '' }}${{ inputs.worker_slot && format(' [worker slot {0}]', inputs.worker_slot) || '' }}${{ inputs.private_ref && format(' — branch proof {0}', inputs.private_ref) || '' }}"
 
 on:
   workflow_dispatch:
@@ -148,13 +148,12 @@ jobs:
           echo "sha=$NIKATRU_PINNED" >> "$GITHUB_OUTPUT"
 
   plan:
-    needs: [nikatru-pin]
+    needs: [nikatru-pin, nikatru-detail-keys]
     name: The instants and the Worker set
     runs-on: ubuntu-24.04
     timeout-minutes: 5
     permissions:
       contents: read
-      id-token: write
     outputs:
       instants: ${{ steps.instants.outputs.instants }}
       workers: ${{ steps.workers.outputs.workers }}
@@ -278,27 +277,37 @@ jobs:
           NIKATRU_QUIET_EOF
           NIKATRU_SHELL="${BASH:-bash}"; if command -v cygpath >/dev/null 2>&1; then NIKATRU_SHELL="$(cygpath -w "$NIKATRU_SHELL")"; fi
           node "$GITHUB_WORKSPACE/../.nikatru-shell/quiet-step.mjs" --name time-travel.plan.5 -- "$NIKATRU_SHELL" -e "$NIKATRU_QUIET"
-      - name: Store this job's red detail in the bridge's private home (generated)
+      - name: Seal this job's red detail to this run's one-time key (generated)
+        id: nikatru-seal-detail
         if: always()
         continue-on-error: true
         shell: bash
         working-directory: ${{ github.workspace }}
         env:
-          NIKATRU_PATHS: ${{ runner.temp }}/report-detail.md
-          NIKATRU_ARTIFACT_NAME: report-detail-time-travel.plan.${{ strategy.job-index }}
-          NIKATRU_IF_NO_FILES: ignore
-          BRIDGE_ARTIFACT_SECRET: ${{ secrets.BRIDGE_ARTIFACT_SECRET }}
-          NIKATRU_BRIDGE_ARTIFACT_URL: https://gh-bridge.nikatru.workers.dev/artifact
-        run: node tooling/ops/bridge-artifact.mjs upload
+          NIKATRU_DETAIL_FILE: ${{ runner.temp }}/report-detail.md
+          NIKATRU_SEALED_OUT: ${{ runner.temp }}/nikatru-sealed-detail/sealed.bin
+          NIKATRU_HANDOFF_RECIPIENT: ${{ needs.nikatru-detail-keys.outputs.recipient }}
+          NIKATRU_HANDOFF_KEY: nikatru-sealed-detail-time-travel-plan-${{ strategy.job-index }}/${{ github.run_id }}
+        run: mkdir -p "$RUNNER_TEMP/nikatru-sealed-detail" && node tooling/ci/shell-handoff.mjs seal-detail
+      - name: Hand this job's sealed red detail to the store job (generated)
+        if: always() && steps.nikatru-seal-detail.outputs.sealed == 'true'
+        continue-on-error: true
+        timeout-minutes: 5
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9
+        with:
+          name: nikatru-sealed-detail-time-travel-plan-${{ strategy.job-index }}
+          path: ${{ runner.temp }}/nikatru-sealed-detail/sealed.bin
+          if-no-files-found: error
+          retention-days: 1
+          overwrite: true
 
   workers:
     name: ${{ matrix.worker }} Worker at ${{ matrix.instant }}
-    needs: [nikatru-pin, plan]
+    needs: [nikatru-pin, plan, nikatru-detail-keys]
     runs-on: ubuntu-24.04
     timeout-minutes: 15
     permissions:
       contents: read
-      id-token: write
     strategy:
       fail-fast: false
       max-parallel: 8
@@ -396,27 +405,37 @@ jobs:
           NIKATRU_QUIET_EOF
           NIKATRU_SHELL="${BASH:-bash}"; if command -v cygpath >/dev/null 2>&1; then NIKATRU_SHELL="$(cygpath -w "$NIKATRU_SHELL")"; fi
           node "$GITHUB_WORKSPACE/../.nikatru-shell/quiet-step.mjs" --name time-travel.workers.4 -- "$NIKATRU_SHELL" -e "$NIKATRU_QUIET"
-      - name: Store this job's red detail in the bridge's private home (generated)
+      - name: Seal this job's red detail to this run's one-time key (generated)
+        id: nikatru-seal-detail
         if: always()
         continue-on-error: true
         shell: bash
         working-directory: ${{ github.workspace }}
         env:
-          NIKATRU_PATHS: ${{ runner.temp }}/report-detail.md
-          NIKATRU_ARTIFACT_NAME: report-detail-time-travel.workers.${{ strategy.job-index }}
-          NIKATRU_IF_NO_FILES: ignore
-          BRIDGE_ARTIFACT_SECRET: ${{ secrets.BRIDGE_ARTIFACT_SECRET }}
-          NIKATRU_BRIDGE_ARTIFACT_URL: https://gh-bridge.nikatru.workers.dev/artifact
-        run: node tooling/ops/bridge-artifact.mjs upload
+          NIKATRU_DETAIL_FILE: ${{ runner.temp }}/report-detail.md
+          NIKATRU_SEALED_OUT: ${{ runner.temp }}/nikatru-sealed-detail/sealed.bin
+          NIKATRU_HANDOFF_RECIPIENT: ${{ needs.nikatru-detail-keys.outputs.recipient }}
+          NIKATRU_HANDOFF_KEY: nikatru-sealed-detail-time-travel-workers-${{ strategy.job-index }}/${{ github.run_id }}
+        run: mkdir -p "$RUNNER_TEMP/nikatru-sealed-detail" && node tooling/ci/shell-handoff.mjs seal-detail
+      - name: Hand this job's sealed red detail to the store job (generated)
+        if: always() && steps.nikatru-seal-detail.outputs.sealed == 'true'
+        continue-on-error: true
+        timeout-minutes: 5
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9
+        with:
+          name: nikatru-sealed-detail-time-travel-workers-${{ strategy.job-index }}
+          path: ${{ runner.temp }}/nikatru-sealed-detail/sealed.bin
+          if-no-files-found: error
+          retention-days: 1
+          overwrite: true
 
   night-shard:
     name: ${{ matrix.worker }} at 03:15Z today (the night shard)
-    needs: [nikatru-pin, plan]
+    needs: [nikatru-pin, plan, nikatru-detail-keys]
     runs-on: ubuntu-24.04
     timeout-minutes: 15
     permissions:
       contents: read
-      id-token: write
     strategy:
       fail-fast: false
       matrix:
@@ -516,27 +535,37 @@ jobs:
           NIKATRU_QUIET_EOF
           NIKATRU_SHELL="${BASH:-bash}"; if command -v cygpath >/dev/null 2>&1; then NIKATRU_SHELL="$(cygpath -w "$NIKATRU_SHELL")"; fi
           node "$GITHUB_WORKSPACE/../.nikatru-shell/quiet-step.mjs" --name time-travel.night-shard.4 -- "$NIKATRU_SHELL" -e "$NIKATRU_QUIET"
-      - name: Store this job's red detail in the bridge's private home (generated)
+      - name: Seal this job's red detail to this run's one-time key (generated)
+        id: nikatru-seal-detail
         if: always()
         continue-on-error: true
         shell: bash
         working-directory: ${{ github.workspace }}
         env:
-          NIKATRU_PATHS: ${{ runner.temp }}/report-detail.md
-          NIKATRU_ARTIFACT_NAME: report-detail-time-travel.night-shard.${{ strategy.job-index }}
-          NIKATRU_IF_NO_FILES: ignore
-          BRIDGE_ARTIFACT_SECRET: ${{ secrets.BRIDGE_ARTIFACT_SECRET }}
-          NIKATRU_BRIDGE_ARTIFACT_URL: https://gh-bridge.nikatru.workers.dev/artifact
-        run: node tooling/ops/bridge-artifact.mjs upload
+          NIKATRU_DETAIL_FILE: ${{ runner.temp }}/report-detail.md
+          NIKATRU_SEALED_OUT: ${{ runner.temp }}/nikatru-sealed-detail/sealed.bin
+          NIKATRU_HANDOFF_RECIPIENT: ${{ needs.nikatru-detail-keys.outputs.recipient }}
+          NIKATRU_HANDOFF_KEY: nikatru-sealed-detail-time-travel-night-shard-${{ strategy.job-index }}/${{ github.run_id }}
+        run: mkdir -p "$RUNNER_TEMP/nikatru-sealed-detail" && node tooling/ci/shell-handoff.mjs seal-detail
+      - name: Hand this job's sealed red detail to the store job (generated)
+        if: always() && steps.nikatru-seal-detail.outputs.sealed == 'true'
+        continue-on-error: true
+        timeout-minutes: 5
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9
+        with:
+          name: nikatru-sealed-detail-time-travel-night-shard-${{ strategy.job-index }}
+          path: ${{ runner.temp }}/nikatru-sealed-detail/sealed.bin
+          if-no-files-found: error
+          retention-days: 1
+          overwrite: true
 
   brick-worker:
     name: The stamped brick Worker at ${{ matrix.instant }}
-    needs: [nikatru-pin, plan]
+    needs: [nikatru-pin, plan, nikatru-detail-keys]
     runs-on: ubuntu-24.04
     timeout-minutes: 20
     permissions:
       contents: read
-      id-token: write
     strategy:
       fail-fast: false
       max-parallel: 8
@@ -662,27 +691,37 @@ jobs:
           NIKATRU_QUIET_EOF
           NIKATRU_SHELL="${BASH:-bash}"; if command -v cygpath >/dev/null 2>&1; then NIKATRU_SHELL="$(cygpath -w "$NIKATRU_SHELL")"; fi
           node "$GITHUB_WORKSPACE/../.nikatru-shell/quiet-step.mjs" --name time-travel.brick-worker.6 -- "$NIKATRU_SHELL" -e "$NIKATRU_QUIET"
-      - name: Store this job's red detail in the bridge's private home (generated)
+      - name: Seal this job's red detail to this run's one-time key (generated)
+        id: nikatru-seal-detail
         if: always()
         continue-on-error: true
         shell: bash
         working-directory: ${{ github.workspace }}
         env:
-          NIKATRU_PATHS: ${{ runner.temp }}/report-detail.md
-          NIKATRU_ARTIFACT_NAME: report-detail-time-travel.brick-worker.${{ strategy.job-index }}
-          NIKATRU_IF_NO_FILES: ignore
-          BRIDGE_ARTIFACT_SECRET: ${{ secrets.BRIDGE_ARTIFACT_SECRET }}
-          NIKATRU_BRIDGE_ARTIFACT_URL: https://gh-bridge.nikatru.workers.dev/artifact
-        run: node tooling/ops/bridge-artifact.mjs upload
+          NIKATRU_DETAIL_FILE: ${{ runner.temp }}/report-detail.md
+          NIKATRU_SEALED_OUT: ${{ runner.temp }}/nikatru-sealed-detail/sealed.bin
+          NIKATRU_HANDOFF_RECIPIENT: ${{ needs.nikatru-detail-keys.outputs.recipient }}
+          NIKATRU_HANDOFF_KEY: nikatru-sealed-detail-time-travel-brick-worker-${{ strategy.job-index }}/${{ github.run_id }}
+        run: mkdir -p "$RUNNER_TEMP/nikatru-sealed-detail" && node tooling/ci/shell-handoff.mjs seal-detail
+      - name: Hand this job's sealed red detail to the store job (generated)
+        if: always() && steps.nikatru-seal-detail.outputs.sealed == 'true'
+        continue-on-error: true
+        timeout-minutes: 5
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9
+        with:
+          name: nikatru-sealed-detail-time-travel-brick-worker-${{ strategy.job-index }}
+          path: ${{ runner.temp }}/nikatru-sealed-detail/sealed.bin
+          if-no-files-found: error
+          retention-days: 1
+          overwrite: true
 
   tooling:
     name: The tooling suites at ${{ matrix.instant }} (shard ${{ matrix.shard }})
-    needs: [nikatru-pin, plan]
+    needs: [nikatru-pin, plan, nikatru-detail-keys]
     runs-on: ubuntu-24.04
     timeout-minutes: 35
     permissions:
       contents: read
-      id-token: write
     strategy:
       fail-fast: false
       max-parallel: 8
@@ -804,27 +843,37 @@ jobs:
           NIKATRU_QUIET_EOF
           NIKATRU_SHELL="${BASH:-bash}"; if command -v cygpath >/dev/null 2>&1; then NIKATRU_SHELL="$(cygpath -w "$NIKATRU_SHELL")"; fi
           node "$GITHUB_WORKSPACE/../.nikatru-shell/quiet-step.mjs" --name time-travel.tooling.6 -- "$NIKATRU_SHELL" -e "$NIKATRU_QUIET"
-      - name: Store this job's red detail in the bridge's private home (generated)
+      - name: Seal this job's red detail to this run's one-time key (generated)
+        id: nikatru-seal-detail
         if: always()
         continue-on-error: true
         shell: bash
         working-directory: ${{ github.workspace }}
         env:
-          NIKATRU_PATHS: ${{ runner.temp }}/report-detail.md
-          NIKATRU_ARTIFACT_NAME: report-detail-time-travel.tooling.${{ strategy.job-index }}
-          NIKATRU_IF_NO_FILES: ignore
-          BRIDGE_ARTIFACT_SECRET: ${{ secrets.BRIDGE_ARTIFACT_SECRET }}
-          NIKATRU_BRIDGE_ARTIFACT_URL: https://gh-bridge.nikatru.workers.dev/artifact
-        run: node tooling/ops/bridge-artifact.mjs upload
+          NIKATRU_DETAIL_FILE: ${{ runner.temp }}/report-detail.md
+          NIKATRU_SEALED_OUT: ${{ runner.temp }}/nikatru-sealed-detail/sealed.bin
+          NIKATRU_HANDOFF_RECIPIENT: ${{ needs.nikatru-detail-keys.outputs.recipient }}
+          NIKATRU_HANDOFF_KEY: nikatru-sealed-detail-time-travel-tooling-${{ strategy.job-index }}/${{ github.run_id }}
+        run: mkdir -p "$RUNNER_TEMP/nikatru-sealed-detail" && node tooling/ci/shell-handoff.mjs seal-detail
+      - name: Hand this job's sealed red detail to the store job (generated)
+        if: always() && steps.nikatru-seal-detail.outputs.sealed == 'true'
+        continue-on-error: true
+        timeout-minutes: 5
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9
+        with:
+          name: nikatru-sealed-detail-time-travel-tooling-${{ strategy.job-index }}
+          path: ${{ runner.temp }}/nikatru-sealed-detail/sealed.bin
+          if-no-files-found: error
+          retention-days: 1
+          overwrite: true
 
   dart:
     name: The Dart workspace (${{ matrix.group }}) at ${{ matrix.instant }}
-    needs: [nikatru-pin, plan]
+    needs: [nikatru-pin, plan, nikatru-detail-keys]
     runs-on: ubuntu-24.04
     timeout-minutes: 30
     permissions:
       contents: read
-      id-token: write
     strategy:
       fail-fast: false
       max-parallel: 8
@@ -945,21 +994,32 @@ jobs:
           NIKATRU_QUIET_EOF
           NIKATRU_SHELL="${BASH:-bash}"; if command -v cygpath >/dev/null 2>&1; then NIKATRU_SHELL="$(cygpath -w "$NIKATRU_SHELL")"; fi
           node "$GITHUB_WORKSPACE/../.nikatru-shell/quiet-step.mjs" --name time-travel.dart.6 -- "$NIKATRU_SHELL" -e "$NIKATRU_QUIET"
-      - name: Store this job's red detail in the bridge's private home (generated)
+      - name: Seal this job's red detail to this run's one-time key (generated)
+        id: nikatru-seal-detail
         if: always()
         continue-on-error: true
         shell: bash
         working-directory: ${{ github.workspace }}
         env:
-          NIKATRU_PATHS: ${{ runner.temp }}/report-detail.md
-          NIKATRU_ARTIFACT_NAME: report-detail-time-travel.dart.${{ strategy.job-index }}
-          NIKATRU_IF_NO_FILES: ignore
-          BRIDGE_ARTIFACT_SECRET: ${{ secrets.BRIDGE_ARTIFACT_SECRET }}
-          NIKATRU_BRIDGE_ARTIFACT_URL: https://gh-bridge.nikatru.workers.dev/artifact
-        run: node tooling/ops/bridge-artifact.mjs upload
+          NIKATRU_DETAIL_FILE: ${{ runner.temp }}/report-detail.md
+          NIKATRU_SEALED_OUT: ${{ runner.temp }}/nikatru-sealed-detail/sealed.bin
+          NIKATRU_HANDOFF_RECIPIENT: ${{ needs.nikatru-detail-keys.outputs.recipient }}
+          NIKATRU_HANDOFF_KEY: nikatru-sealed-detail-time-travel-dart-${{ strategy.job-index }}/${{ github.run_id }}
+        run: mkdir -p "$RUNNER_TEMP/nikatru-sealed-detail" && node tooling/ci/shell-handoff.mjs seal-detail
+      - name: Hand this job's sealed red detail to the store job (generated)
+        if: always() && steps.nikatru-seal-detail.outputs.sealed == 'true'
+        continue-on-error: true
+        timeout-minutes: 5
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9
+        with:
+          name: nikatru-sealed-detail-time-travel-dart-${{ strategy.job-index }}
+          path: ${{ runner.temp }}/nikatru-sealed-detail/sealed.bin
+          if-no-files-found: error
+          retention-days: 1
+          overwrite: true
 
   near-future:
-    needs: [nikatru-pin]
+    needs: [nikatru-pin, nikatru-detail-keys]
     name: The clock-reading guards on the real tree at now+${{ matrix.days }}d
     if: ${{ (github.event.client_payload.event || github.event_name) == 'schedule' || inputs.instant == '' }}
     runs-on: ubuntu-24.04
@@ -969,7 +1029,6 @@ jobs:
       issues: read
       security-events: read
       actions: read
-      id-token: write
     strategy:
       fail-fast: false
       max-parallel: 8
@@ -1058,6 +1117,100 @@ jobs:
           NIKATRU_QUIET_EOF
           NIKATRU_SHELL="${BASH:-bash}"; if command -v cygpath >/dev/null 2>&1; then NIKATRU_SHELL="$(cygpath -w "$NIKATRU_SHELL")"; fi
           node "$GITHUB_WORKSPACE/../.nikatru-shell/quiet-step.mjs" --name time-travel.near-future.3 -- "$NIKATRU_SHELL" -e "$NIKATRU_QUIET"
+      - name: Seal this job's red detail to this run's one-time key (generated)
+        id: nikatru-seal-detail
+        if: always()
+        continue-on-error: true
+        shell: bash
+        working-directory: ${{ github.workspace }}
+        env:
+          NIKATRU_DETAIL_FILE: ${{ runner.temp }}/report-detail.md
+          NIKATRU_SEALED_OUT: ${{ runner.temp }}/nikatru-sealed-detail/sealed.bin
+          NIKATRU_HANDOFF_RECIPIENT: ${{ needs.nikatru-detail-keys.outputs.recipient }}
+          NIKATRU_HANDOFF_KEY: nikatru-sealed-detail-time-travel-near-future-${{ strategy.job-index }}/${{ github.run_id }}
+        run: mkdir -p "$RUNNER_TEMP/nikatru-sealed-detail" && node tooling/ci/shell-handoff.mjs seal-detail
+      - name: Hand this job's sealed red detail to the store job (generated)
+        if: always() && steps.nikatru-seal-detail.outputs.sealed == 'true'
+        continue-on-error: true
+        timeout-minutes: 5
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9
+        with:
+          name: nikatru-sealed-detail-time-travel-near-future-${{ strategy.job-index }}
+          path: ${{ runner.temp }}/nikatru-sealed-detail/sealed.bin
+          if-no-files-found: error
+          retention-days: 1
+          overwrite: true
+
+  nikatru-detail-keys:
+    name: Make this run's one-time key for the branch jobs' sealed red detail (generated)
+    needs: [nikatru-pin]
+    runs-on: ubuntu-24.04
+    defaults:
+      run:
+        working-directory: ${{ github.workspace }}
+    timeout-minutes: 10
+    permissions:
+      contents: read
+    outputs:
+      recipient: ${{ steps.nikatru-detail-pair.outputs.recipient }}
+    steps:
+      - name: Check out private main's hand-off script (generated)
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
+        with:
+          repository: ${{ env.NIKATRU_PRIVATE_REPO }}
+          ref: main
+          sparse-checkout: |
+            tooling/ci
+          ssh-key: ${{ secrets.PRIVATE_DEPLOY_KEY }}
+          persist-credentials: false
+      - name: This run's public key for the sealed red detail (generated)
+        id: nikatru-detail-pair
+        shell: bash
+        env:
+          NIKATRU_DETAIL_KEY: ${{ secrets.NIKATRU_DETAIL_KEY }}
+        run: node tooling/ci/shell-handoff.mjs detail-recipient
+
+  nikatru-detail-store:
+    name: Store the branch jobs' sealed red detail privately, with private main's uploader (generated)
+    needs: [nikatru-pin, nikatru-detail-keys, plan, workers, night-shard, brick-worker, tooling, dart, near-future]
+    if: "!cancelled() && needs.nikatru-detail-keys.result == 'success'"
+    runs-on: ubuntu-24.04
+    defaults:
+      run:
+        working-directory: ${{ github.workspace }}
+    timeout-minutes: 15
+    permissions:
+      contents: read
+      id-token: write
+    steps:
+      - name: Check out private main's hand-off script and uploader (generated)
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
+        with:
+          repository: ${{ env.NIKATRU_PRIVATE_REPO }}
+          ref: main
+          sparse-checkout: |
+            tooling/ci
+            tooling/ops
+            tooling/app-yaml
+            tooling/catalog
+            tooling/entity
+            tooling/legal
+            tooling/ports
+            services/gh-bridge
+          ssh-key: ${{ secrets.PRIVATE_DEPLOY_KEY }}
+          persist-credentials: false
+      - name: Download this run's sealed red detail (generated)
+        continue-on-error: true
+        timeout-minutes: 6
+        uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333
+        with:
+          pattern: nikatru-sealed-detail-time-travel-*
+          path: ${{ runner.temp }}/nikatru-sealed-cells
+      - name: Open each branch job's sealed red detail (generated)
+        shell: bash
+        env:
+          NIKATRU_DETAIL_KEY: ${{ secrets.NIKATRU_DETAIL_KEY }}
+        run: node tooling/ci/shell-handoff.mjs open-detail-cells --dir "$RUNNER_TEMP/nikatru-sealed-cells" --prefix nikatru-sealed-detail-time-travel- --out "$RUNNER_TEMP/report-detail.md"
       - name: Store this job's red detail in the bridge's private home (generated)
         if: always()
         continue-on-error: true
@@ -1065,7 +1218,7 @@ jobs:
         working-directory: ${{ github.workspace }}
         env:
           NIKATRU_PATHS: ${{ runner.temp }}/report-detail.md
-          NIKATRU_ARTIFACT_NAME: report-detail-time-travel.near-future.${{ strategy.job-index }}
+          NIKATRU_ARTIFACT_NAME: report-detail-time-travel.nikatru-detail-store.${{ strategy.job-index }}
           NIKATRU_IF_NO_FILES: ignore
           BRIDGE_ARTIFACT_SECRET: ${{ secrets.BRIDGE_ARTIFACT_SECRET }}
           NIKATRU_BRIDGE_ARTIFACT_URL: https://gh-bridge.nikatru.workers.dev/artifact

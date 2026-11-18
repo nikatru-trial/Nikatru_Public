@@ -695,6 +695,7 @@ jobs:
         env:
           NIKATRU_PATHS: build/web-preview/record/
           NIKATRU_ARTIFACT_NAME: web-preview-${{ matrix.unit }}
+          NIKATRU_RETENTION_CLASS: diag
           BRIDGE_ARTIFACT_SECRET: ${{ secrets.BRIDGE_ARTIFACT_SECRET }}
           NIKATRU_BRIDGE_ARTIFACT_URL: https://gh-bridge.nikatru.workers.dev/artifact
         run: node tooling/ops/bridge-artifact.mjs upload

@@ -34,6 +34,8 @@ jobs:
     timeout-minutes: 5
     permissions:
       contents: read
+      actions: read
+      checks: read
     outputs:
       affected: ${{ steps.detect.outputs.affected }}
       reason: ${{ steps.detect.outputs.reason }}
@@ -44,6 +46,7 @@ jobs:
           repository: ${{ env.NIKATRU_PRIVATE_REPO }}
           ref: ${{ inputs.nikatru_sha || (github.event.client_payload.event == 'pull_request' && format('refs/pull/{0}/merge', github.event.client_payload.pr) || github.event.client_payload.sha || 'main') }}
           fetch-depth: 0
+          filter: blob:none
           ssh-key: ${{ secrets.PRIVATE_DEPLOY_KEY }}
           persist-credentials: false
       - name: Name the private commit (generated)
@@ -114,12 +117,10 @@ jobs:
           NIKATRU_REF: ${{ github.event.client_payload.ref || 'refs/heads/main' }}
           NIKATRU_EVENT_NAME: ${{ github.event.client_payload.event || github.event_name }}
           NIKATRU_PR: ${{ github.event.client_payload.pr }}
-      - name: Every setup step of this job succeeded (generated)
-        id: nikatru-setup-ok
-        run: echo "every setup step before the first check succeeded"
       - id: detect
         name: Does this change touch the build lane
         env:
+          GH_TOKEN: ${{ ((env.NIKATRU_EVENT_NAME || (github.event.client_payload.event || github.event_name)) == 'pull_request' && startsWith(env.NIKATRU_REF || (github.event.client_payload.ref || 'refs/heads/main'), 'refs/heads/land/')) && github.token || '' }}
           NIKATRU_TIER: ${{ inputs.nikatru_tier }}
         run: |
           NIKATRU_QUIET="$(mktemp "${RUNNER_TEMP:-/tmp}/nikatru-step.XXXXXX")"
@@ -859,6 +860,15 @@ jobs:
           NIKATRU_QUIET_EOF
           NIKATRU_SHELL="${BASH:-bash}"; if command -v cygpath >/dev/null 2>&1; then NIKATRU_SHELL="$(cygpath -w "$NIKATRU_SHELL")"; fi
           node "$GITHUB_WORKSPACE/../.nikatru-shell/quiet-step.mjs" --name lane-build.android-jvm-tests.4 -- "$NIKATRU_SHELL" -e "$NIKATRU_QUIET"
+      - name: Restore the Gradle caches android-artifacts saved on main (restore only, never saved here)
+        uses: actions/cache/restore@55cc8345863c7cc4c66a329aec7e433d2d1c52a9
+        with:
+          path: |
+            ~/.gradle/caches
+            ~/.gradle/wrapper
+          key: gradle-android-artifacts-v2-${{ runner.os }}-${{ hashFiles('apps/*/android/**/*.gradle*', 'apps/*/android/gradle/wrapper/gradle-wrapper.properties', 'apps/*/android/gradle.properties') }}
+          restore-keys: |
+            gradle-android-artifacts-v2-${{ runner.os }}-
       - name: Every setup step of this job succeeded (generated)
         id: nikatru-setup-ok
         run: echo "every setup step before the first check succeeded"
@@ -872,26 +882,26 @@ jobs:
           if [ ! -x android/gradlew ]; then echo "::error title=Android JVM tests::the config-only step wrote no android/gradlew in apps/${APP}"; exit 1; fi
           NIKATRU_QUIET_EOF
           NIKATRU_SHELL="${BASH:-bash}"; if command -v cygpath >/dev/null 2>&1; then NIKATRU_SHELL="$(cygpath -w "$NIKATRU_SHELL")"; fi
-          node "$GITHUB_WORKSPACE/../.nikatru-shell/quiet-step.mjs" --name lane-build.android-jvm-tests.5 -- "$NIKATRU_SHELL" -e "$NIKATRU_QUIET"
+          node "$GITHUB_WORKSPACE/../.nikatru-shell/quiet-step.mjs" --name lane-build.android-jvm-tests.6 -- "$NIKATRU_SHELL" -e "$NIKATRU_QUIET"
       - name: Telemetry native scrub — JVM unit tests (packages/telemetry/android/jvm)
         if: ${{ success() || (!cancelled() && (github.event.client_payload.event == 'pull_request' && startsWith(github.event.client_payload.ref, 'refs/heads/rehearsal/')) && steps.nikatru-setup-ok.outcome == 'success') }}
         run: |
           NIKATRU_QUIET="$(mktemp "${RUNNER_TEMP:-/tmp}/nikatru-step.XXXXXX")"
           cat > "$NIKATRU_QUIET" <<'NIKATRU_QUIET_EOF'
-          apps/${APP}/android/gradlew --no-daemon -p packages/telemetry/android/jvm test
+          node "$GITHUB_WORKSPACE/tooling/ci/retry-transient.mjs" -- apps/${APP}/android/gradlew --no-daemon -p packages/telemetry/android/jvm test
           NIKATRU_QUIET_EOF
           NIKATRU_SHELL="${BASH:-bash}"; if command -v cygpath >/dev/null 2>&1; then NIKATRU_SHELL="$(cygpath -w "$NIKATRU_SHELL")"; fi
-          node "$GITHUB_WORKSPACE/../.nikatru-shell/quiet-step.mjs" --name lane-build.android-jvm-tests.6 -- "$NIKATRU_SHELL" -e "$NIKATRU_QUIET"
+          node "$GITHUB_WORKSPACE/../.nikatru-shell/quiet-step.mjs" --name lane-build.android-jvm-tests.7 -- "$NIKATRU_SHELL" -e "$NIKATRU_QUIET"
       - name: platform_storage — JVM unit tests (:nikatru_platform_storage:testDebugUnitTest)
         if: ${{ success() || (!cancelled() && (github.event.client_payload.event == 'pull_request' && startsWith(github.event.client_payload.ref, 'refs/heads/rehearsal/')) && steps.nikatru-setup-ok.outcome == 'success') }}
         working-directory: apps/${{ env.APP }}/android
         run: |
           NIKATRU_QUIET="$(mktemp "${RUNNER_TEMP:-/tmp}/nikatru-step.XXXXXX")"
           cat > "$NIKATRU_QUIET" <<'NIKATRU_QUIET_EOF'
-          ./gradlew --no-daemon --dependency-verification lenient :nikatru_platform_storage:testDebugUnitTest
+          node "$GITHUB_WORKSPACE/tooling/ci/retry-transient.mjs" -- ./gradlew --no-daemon --dependency-verification lenient :nikatru_platform_storage:testDebugUnitTest
           NIKATRU_QUIET_EOF
           NIKATRU_SHELL="${BASH:-bash}"; if command -v cygpath >/dev/null 2>&1; then NIKATRU_SHELL="$(cygpath -w "$NIKATRU_SHELL")"; fi
-          node "$GITHUB_WORKSPACE/../.nikatru-shell/quiet-step.mjs" --name lane-build.android-jvm-tests.7 -- "$NIKATRU_SHELL" -e "$NIKATRU_QUIET"
+          node "$GITHUB_WORKSPACE/../.nikatru-shell/quiet-step.mjs" --name lane-build.android-jvm-tests.8 -- "$NIKATRU_SHELL" -e "$NIKATRU_QUIET"
       - name: Hand this job's red detail to the report job, sealed (generated)
         id: nikatru-handoff
         if: always()

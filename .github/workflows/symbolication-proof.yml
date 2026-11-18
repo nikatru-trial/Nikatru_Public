@@ -655,6 +655,7 @@ jobs:
             ${{ runner.temp }}/emulator.log
           NIKATRU_ARTIFACT_NAME: symbolication-proof-evidence-${{ matrix.app }}-${{ matrix.target }}
           NIKATRU_IF_NO_FILES: warn
+          NIKATRU_RETENTION_CLASS: release
           BRIDGE_ARTIFACT_SECRET: ${{ secrets.BRIDGE_ARTIFACT_SECRET }}
           NIKATRU_BRIDGE_ARTIFACT_URL: https://gh-bridge.nikatru.workers.dev/artifact
         run: node tooling/ops/bridge-artifact.mjs upload

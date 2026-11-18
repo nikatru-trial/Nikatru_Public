@@ -1077,9 +1077,9 @@ jobs:
           APPLE_RELEASE_TARGET: testflight
         run: node tooling/ci/assert-reviewer-access.mjs --for-submission=macos-appstore --app "$APP" --real-submission
       - name: A pending in-app purchase declaration is not submitted (ios-appstore)
-        run: node tooling/ci/assert-app-yaml.mjs --for-submission=ios-appstore --app "$APP"
+        run: node tooling/ci/assert-app-yaml.mjs --for-submission=ios-appstore --app "$APP" --real-submission
       - name: A pending in-app purchase declaration is not submitted (macos-appstore)
-        run: node tooling/ci/assert-app-yaml.mjs --for-submission=macos-appstore --app "$APP"
+        run: node tooling/ci/assert-app-yaml.mjs --for-submission=macos-appstore --app "$APP" --real-submission
       - name: The Small Business Program enrolment is recorded before an App Store sale (ios-appstore)
         run: node tooling/ci/assert-small-business-program.mjs --for-submission=ios-appstore --real-submission
       - name: The Small Business Program enrolment is recorded before an App Store sale (macos-appstore)
@@ -1267,8 +1267,10 @@ jobs:
           GITHUB_REPOSITORY: ${{ github.repository }}
           LISTING_URL: ${{ inputs.listing_url }}
           BUNDLE_VERSION: ${{ needs.dry-run.outputs.bundle_version }}
+          SHORT_VERSION: ${{ needs.dry-run.outputs.short_version }}
         run: >
           node tooling/ci/record-deployment.mjs "${APP}-ios-appstore" --state draft_staged --listing-url "$LISTING_URL"
+          --release-version "${SHORT_VERSION}+${BUNDLE_VERSION}"
           --mode production --artifact "apps/${APP}/build/ios/ipa/${APP}.ipa" --build-number "$BUNDLE_VERSION"
           --symbols-record "${RUNNER_TEMP}/symbols-record-ios.json"
       - name: Record the macOS upload in the [10]D-9 ledger
@@ -1278,8 +1280,10 @@ jobs:
           GITHUB_REPOSITORY: ${{ github.repository }}
           LISTING_URL: ${{ inputs.listing_url }}
           BUNDLE_VERSION: ${{ needs.dry-run.outputs.bundle_version }}
+          SHORT_VERSION: ${{ needs.dry-run.outputs.short_version }}
         run: >
           node tooling/ci/record-deployment.mjs "${APP}-macos-appstore" --state draft_staged --listing-url "$LISTING_URL"
+          --release-version "${SHORT_VERSION}+${BUNDLE_VERSION}"
           --mode production --artifact "apps/${APP}/build/macos/pkg/${APP}.pkg" --build-number "$BUNDLE_VERSION"
           --symbols-record "${RUNNER_TEMP}/symbols-record-macos.json"
 

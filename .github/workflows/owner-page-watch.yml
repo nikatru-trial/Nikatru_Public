@@ -5,7 +5,7 @@ env:
 
 name: Owner page watch
 
-run-name: "Owner page watch${{ inputs.worker_slot && format(' [worker slot {0}]', inputs.worker_slot) || '' }}"
+run-name: "[main] Owner page watch${{ inputs.worker_slot && format(' [worker slot {0}]', inputs.worker_slot) || '' }}"
 
 on:
   workflow_dispatch:

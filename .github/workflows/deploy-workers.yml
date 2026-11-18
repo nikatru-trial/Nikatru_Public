@@ -2,7 +2,7 @@
 # Do not edit: `node tooling/ci/gen-public-shell.mjs --check` re-generates it and fails on any difference.
 env:
   NIKATRU_PRIVATE_REPO: com-nikatru/Nikatru_Private
-  NIKATRU_SHELL_FINGERPRINT: 1d51f130cd35ed675f8b052d0f260978315cfc8bfb1834aa788ae761e66644fe
+  NIKATRU_SHELL_FINGERPRINT: b68c645f6ead7155ef482ae1e368e76c2ec949cc88cf5b8ac200ee979d1e6a31
 
 name: Part of CI · Deploy workers
 
@@ -26,6 +26,10 @@ on:
       OWNER_PAGE_PUSH_URL:
         required: false
       OWNER_PAGE_PUSH_TOKEN:
+        required: false
+      CF_ACCESS_VAULT_CLIENT_ID:
+        required: false
+      CF_ACCESS_VAULT_CLIENT_SECRET:
         required: false
       PRIVATE_DEPLOY_KEY:
         required: true
@@ -258,7 +262,8 @@ jobs:
         env:
           D1_TIME_TRAVEL_OUTPUT: ${{ steps.time_travel.outputs.command-output }}
           D1_DATABASE: ${{ matrix.worker.migrations }}
-        run: node tooling/ops/d1-restore-bookmark.mjs --database "$D1_DATABASE"
+          WORKER_DIR: ${{ matrix.worker.dir }}
+        run: node tooling/ops/d1-restore-bookmark.mjs --database "$D1_DATABASE" --worker-dir "$WORKER_DIR"
       - name: Name the export bucket (services/platform/wrangler.jsonc BACKUPS_R2)
         id: export_bucket
         if: steps.plan.outputs.deploy == 'true' && matrix.worker.migrations
@@ -583,6 +588,9 @@ jobs:
       - name: Smoke — this commit's shield is in path on both routes
         id: smoke
         if: steps.plan.outputs.deploy == 'true'
+        env:
+          CF_ACCESS_VAULT_CLIENT_ID: ${{ secrets.CF_ACCESS_VAULT_CLIENT_ID }}
+          CF_ACCESS_VAULT_CLIENT_SECRET: ${{ secrets.CF_ACCESS_VAULT_CLIENT_SECRET }}
         run: node tooling/ops/check-edge-shield.mjs --settle --expect-release ${{ env.NIKATRU_SHA }}
       - name: Apply the zone's per-IP credential rule (tooling/edge-ratelimit-rule.json)
         id: ratelimit

@@ -1,0 +1,88 @@
+{
+  "_generated": "by tooling/ci/gen-public-shell.mjs; read by report.py beside it. Do not edit.",
+  "bridgeUrl": "https://gh-bridge.nikatru.workers.dev/report",
+  "postTimeoutS": 30,
+  "prefix": "nikatru-detail-",
+  "slots": 32,
+  "sendBudgetS": 360,
+  "gate": {
+    "job": "rehearsal-report",
+    "context": "rehearsal-report",
+    "members": [
+      "rehearsal.rehearsal-report."
+    ]
+  },
+  "lanes": [
+    {
+      "job": "first-pass",
+      "context": "rehearsal/first-pass",
+      "members": [
+        "rehearsal.first-pass."
+      ]
+    },
+    {
+      "job": "lane-workers",
+      "context": "rehearsal/lane-workers",
+      "members": [
+        "lane-workers."
+      ]
+    },
+    {
+      "job": "lane-guards",
+      "context": "rehearsal/lane-guards",
+      "members": [
+        "lane-guards."
+      ]
+    },
+    {
+      "job": "lane-sites",
+      "context": "rehearsal/lane-sites",
+      "members": [
+        "lane-sites."
+      ]
+    },
+    {
+      "job": "lane-apps",
+      "context": "rehearsal/lane-apps",
+      "members": [
+        "lane-apps."
+      ]
+    },
+    {
+      "job": "lane-build",
+      "context": "rehearsal/lane-build",
+      "members": [
+        "lane-build."
+      ]
+    },
+    {
+      "job": "as-if-main",
+      "context": "rehearsal/as-if-main",
+      "members": [
+        "rehearsal.as-if-main."
+      ]
+    },
+    {
+      "job": "extensions",
+      "context": "rehearsal/extensions",
+      "members": [
+        "extensions-ci."
+      ]
+    },
+    {
+      "job": "main-only-setup-plan",
+      "context": "rehearsal/main-only-setup-plan",
+      "members": [
+        "rehearsal.main-only-setup-plan."
+      ]
+    },
+    {
+      "job": "main-only-setup",
+      "context": "rehearsal/main-only-setup",
+      "members": [
+        "rehearsal.main-only-setup."
+      ]
+    }
+  ],
+  "artifactUrl": "https://gh-bridge.nikatru.workers.dev/artifact"
+}

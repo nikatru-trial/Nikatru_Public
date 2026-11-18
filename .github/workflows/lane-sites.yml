@@ -48,6 +48,7 @@ jobs:
           repository: ${{ env.NIKATRU_PRIVATE_REPO }}
           ref: ${{ inputs.nikatru_sha || (github.event.client_payload.event == 'pull_request' && format('refs/pull/{0}/merge', github.event.client_payload.pr) || github.event.client_payload.sha || 'main') }}
           fetch-depth: 0
+          filter: blob:none
           ssh-key: ${{ secrets.PRIVATE_DEPLOY_KEY }}
           persist-credentials: false
       - name: Name the private commit (generated)
@@ -121,7 +122,7 @@ jobs:
       - id: detect
         name: Does this change touch the sites lane
         env:
-          GH_TOKEN: ${{ ((env.NIKATRU_REF || (github.event.client_payload.ref || 'refs/heads/main')) == 'refs/heads/main' && (env.NIKATRU_EVENT_NAME || (github.event.client_payload.event || github.event_name)) == 'push' && !env.NIKATRU_PR) && github.token || '' }}
+          GH_TOKEN: ${{ (((env.NIKATRU_REF || (github.event.client_payload.ref || 'refs/heads/main')) == 'refs/heads/main' && (env.NIKATRU_EVENT_NAME || (github.event.client_payload.event || github.event_name)) == 'push' && !env.NIKATRU_PR) || ((env.NIKATRU_EVENT_NAME || (github.event.client_payload.event || github.event_name)) == 'pull_request' && startsWith(env.NIKATRU_REF || (github.event.client_payload.ref || 'refs/heads/main'), 'refs/heads/land/'))) && github.token || '' }}
           NIKATRU_TIER: ${{ inputs.nikatru_tier }}
         run: |
           NIKATRU_QUIET="$(mktemp "${RUNNER_TEMP:-/tmp}/nikatru-step.XXXXXX")"
@@ -1145,6 +1146,7 @@ jobs:
           repository: ${{ env.NIKATRU_PRIVATE_REPO }}
           ref: ${{ inputs.nikatru_sha || (github.event.client_payload.event == 'pull_request' && format('refs/pull/{0}/merge', github.event.client_payload.pr) || github.event.client_payload.sha || 'main') }}
           fetch-depth: 0
+          filter: blob:none
           ssh-key: ${{ secrets.PRIVATE_DEPLOY_KEY }}
           persist-credentials: false
       - name: Name the private commit (generated)
@@ -1479,6 +1481,7 @@ jobs:
           NIKATRU_PATHS: ${{ runner.temp }}/review-crawl-reach-detail/
           NIKATRU_ARTIFACT_NAME: review-crawl-reach-detail-${{ github.run_attempt }}
           NIKATRU_IF_NO_FILES: ignore
+          NIKATRU_RETENTION_CLASS: diag
           BRIDGE_ARTIFACT_SECRET: ${{ secrets.BRIDGE_ARTIFACT_SECRET }}
           NIKATRU_BRIDGE_ARTIFACT_URL: https://gh-bridge.nikatru.workers.dev/artifact
         run: node tooling/ops/bridge-artifact.mjs upload

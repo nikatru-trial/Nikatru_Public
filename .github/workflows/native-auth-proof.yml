@@ -1139,6 +1139,7 @@ jobs:
             ${{ runner.temp }}/nk-proof-ios-launch-attempt-*.png
           NIKATRU_ARTIFACT_NAME: native-auth-proof-ios-after-open-${{ matrix.app }}
           NIKATRU_IF_NO_FILES: ignore
+          NIKATRU_RETENTION_CLASS: diag
           BRIDGE_ARTIFACT_SECRET: ${{ secrets.BRIDGE_ARTIFACT_SECRET }}
           NIKATRU_BRIDGE_ARTIFACT_URL: https://gh-bridge.nikatru.workers.dev/artifact
         run: node tooling/ops/bridge-artifact.mjs upload
@@ -2513,6 +2514,7 @@ jobs:
             ${{ runner.temp }}/nk-proof-ios-launch-attempt-*.png
           NIKATRU_ARTIFACT_NAME: native-oauth-return-ios-after-open-${{ matrix.app }}
           NIKATRU_IF_NO_FILES: ignore
+          NIKATRU_RETENTION_CLASS: diag
           BRIDGE_ARTIFACT_SECRET: ${{ secrets.BRIDGE_ARTIFACT_SECRET }}
           NIKATRU_BRIDGE_ARTIFACT_URL: https://gh-bridge.nikatru.workers.dev/artifact
         run: node tooling/ops/bridge-artifact.mjs upload

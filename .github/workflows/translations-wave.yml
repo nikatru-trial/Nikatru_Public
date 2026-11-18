@@ -19,9 +19,9 @@ on:
         required: false
         default: ''
       accounts:
-        description: 'The accounts to run on, lowest weekly usage first (acct1..acct4). Job i translates on the i-th and is QA''d on the next.'
+        description: 'The accounts to run on, lowest weekly usage first (acct1..acct4). Job i translates on the i-th and is QA''d on the next. Empty = every live account of tooling/ci/claude-accounts.json (an account past its endedOn is never planned, and naming one is refused).'
         required: false
-        default: 'acct1 acct2 acct3 acct4'
+        default: ''
       force:
         description: 'Fire even under the debounce threshold.'
         required: false

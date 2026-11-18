@@ -30,7 +30,7 @@
 //        LOST — nothing could be sent, or the bridge could not complete it.
 //        A report that did not land is never a pass.
 // ─────────────────────────────────────────────────────────────────────────────
-import { readFileSync } from 'node:fs';
+import { appendFileSync, readFileSync } from 'node:fs';
 import { resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { callBridgeOps, opsEnv } from './bridge-ops.mjs';
@@ -125,10 +125,39 @@ export async function sendPushBounded(url, token, title, text, fetchImpl = globa
   if (token) headers.authorization = `Bearer ${token}`;
   try {
     const res = await sendWithBoundedRetry(({ signal }) => fetchImpl(url, { method: 'POST', body: text, headers, signal }), { timeoutMs: PAGE_SEND_TIMEOUT_MS, slowPath: () => {}, ...opts });
-    return { ok: res.ok, status: res.status, headers: Object.fromEntries([...res.headers].map(([k, v]) => [k.toLowerCase(), v])) };
+    const out = { ok: res.ok, status: res.status, headers: Object.fromEntries([...res.headers].map(([k, v]) => [k.toLowerCase(), v])) };
+    if (res.ok) out.id = await deliveryId(res);
+    return out;
   } catch (e) {
     return { ok: false, status: 0, headers: {}, error: e?.name ?? 'send failed' };
   }
+}
+
+/**
+ * ⏱ 2026-11-16 · O-R52-OPS-001 (lead ruling 10:06:28Z, limb B): the delivery id ntfy gives a published message (its
+ * JSON answer's `id`), so an unattended page leaves a record the lead can quote (alarm-chains.json chainsObserved).
+ * Only a plain token ([A-Za-z0-9_-], at most 64) is taken: anything else — no body, not JSON, no id, a value that
+ * could carry a `::` workflow command or a newline — is null, and the page is still delivered. Never throws.
+ */
+export async function deliveryId(res) {
+  try {
+    const id = JSON.parse(await res.text())?.id;
+    const v = typeof id === 'number' ? String(id) : id;
+    return typeof v === 'string' && /^[A-Za-z0-9_-]{1,64}$/.test(v) ? v : null;
+  } catch {
+    return null;
+  }
+}
+
+/** PURE. The one record line of a delivered page: the id (or `unread`) and the push URL's HOST only — never its path (the topic) or a token. */
+export function pagedRecord(pushUrl, id) {
+  let host = 'unread';
+  try {
+    host = new URL(pushUrl).hostname || 'unread';
+  } catch {
+    /* the URL was accepted by channels(); an unparsable one still records no path */
+  }
+  return `PAGED id=${id ?? 'unread'} topic-host=${host}`;
 }
 
 /**
@@ -137,7 +166,10 @@ export async function sendPushBounded(url, token, title, text, fetchImpl = globa
  * (a heartbeat alone cannot carry an event page), a push URL refused, the zone unreadable, or the push refused.
  */
 export async function pageAlert(env = process.env, deps = {}) {
-  const { send = sendPushBounded, log = (line) => process.stdout.write(`${line}\n`) } = deps;
+  const { log = (line) => process.stdout.write(`${line}\n`) } = deps;
+  const send = deps.send ?? ((url, token, title, text) => sendPushBounded(url, token, title, text, deps.fetch ?? globalThis.fetch));
+  // The step summary is the record quiet-step cannot hide (it swallows a green step's stdout).
+  const summary = deps.summary ?? ((line) => env.GITHUB_STEP_SUMMARY && appendFileSync(env.GITHUB_STEP_SUMMARY, `${line}\n`));
   const readZone = deps.readZone ?? (() => JSON.parse(readFileSync(ZONE_FILE, 'utf8')));
   // ⏱ 2026-11-12 · lane c1113-ci, row O-R1110-OPS-WATCH-ALERT-NO-HANDOFF, lead ruling (b): the alert is a shell-own job that
   // holds no key and seals no hand-off, so a failed page's REASON goes to the bridge's /ops door — ops-issue, kind alert-page (its own kind, one filing step per kind; the same title, so
@@ -171,6 +203,14 @@ export async function pageAlert(env = process.env, deps = {}) {
   const page = composeAlertPage(env);
   const sent = await send(ch.push, ch.pushToken, page.title, page.text);
   if (!sent?.ok) return await notPaged(`the push answered HTTP ${sent?.status ?? 0}${sent?.error ? `, ${sent.error}` : ''}`);
+  const id = /^[A-Za-z0-9_-]{1,64}$/.test(String(sent.id ?? '')) ? String(sent.id) : null;
+  const record = pagedRecord(ch.push, id);
+  try {
+    summary(record);
+  } catch {
+    /* an unwritable summary never turns a delivered page into a failure */
+  }
+  log(`::notice title=owner page::PAGED id=${id ?? 'unread'}`);
   if (viaCloudflare(sent.headers)) {
     log(`FINDING: the ops-watch page was delivered, but ${ENV_NAMES.push} answered through Cloudflare (cf-ray): in a Cloudflare outage it is lost.`);
     return 1;

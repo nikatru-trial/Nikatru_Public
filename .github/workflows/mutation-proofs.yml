@@ -5,7 +5,7 @@ env:
 
 name: Mutation proofs
 
-run-name: "Mutation proofs${{ inputs.worker_slot && format(' [worker slot {0}]', inputs.worker_slot) || '' }}"
+run-name: "Mutation proofs${{ inputs.worker_slot && format(' [worker slot {0}]', inputs.worker_slot) || '' }}${{ inputs.private_ref && format(' — branch proof {0}', inputs.private_ref) || '' }}"
 
 on:
   workflow_dispatch:
@@ -310,7 +310,7 @@ jobs:
             tooling/entity
             tooling/legal
             tooling/ports
-            services/gh-bridge/wrangler.jsonc
+            services/gh-bridge
           ssh-key: ${{ secrets.PRIVATE_DEPLOY_KEY }}
           persist-credentials: false
       - name: Name the private commit (generated)
@@ -526,7 +526,7 @@ jobs:
         run: printf '/.nikatru-trusted/\n' >> "$(git rev-parse --git-path info/exclude)"
       - uses: ./.nikatru-trusted/.github/actions/setup-flutter
         with:
-          cache: 'false'
+          cache: 'restore-only'
         env:
           NIKATRU_REF: ${{ github.event.client_payload.ref || inputs.private_ref || 'refs/heads/main' }}
           NIKATRU_EVENT_NAME: ${{ github.event.client_payload.event || github.event_name }}
@@ -627,7 +627,7 @@ jobs:
             tooling/entity
             tooling/legal
             tooling/ports
-            services/gh-bridge/wrangler.jsonc
+            services/gh-bridge
           ssh-key: ${{ secrets.PRIVATE_DEPLOY_KEY }}
           persist-credentials: false
       - name: Name the private commit (generated)
@@ -765,6 +765,7 @@ jobs:
           NIKATRU_PATHS: ${{ runner.temp }}/mutation-proofs-refresh/
           NIKATRU_ARTIFACT_NAME: mutation-proofs-refresh
           NIKATRU_IF_NO_FILES: error
+          NIKATRU_RETENTION_CLASS: release
           BRIDGE_ARTIFACT_SECRET: ${{ secrets.BRIDGE_ARTIFACT_SECRET }}
           NIKATRU_BRIDGE_ARTIFACT_URL: https://gh-bridge.nikatru.workers.dev/artifact
         run: node tooling/ops/bridge-artifact.mjs upload
@@ -880,6 +881,7 @@ jobs:
           NIKATRU_PATHS: ${{ runner.temp }}/guard-mutations.junit.xml
           NIKATRU_ARTIFACT_NAME: guard-mutations-junit
           NIKATRU_IF_NO_FILES: ignore
+          NIKATRU_RETENTION_CLASS: release
           BRIDGE_ARTIFACT_SECRET: ${{ secrets.BRIDGE_ARTIFACT_SECRET }}
           NIKATRU_BRIDGE_ARTIFACT_URL: https://gh-bridge.nikatru.workers.dev/artifact
         run: node tooling/ops/bridge-artifact.mjs upload

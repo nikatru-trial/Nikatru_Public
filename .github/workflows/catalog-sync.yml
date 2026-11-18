@@ -293,6 +293,7 @@ jobs:
           NIKATRU_PATHS: ${{ runner.temp }}/catalog-sync/
           NIKATRU_ARTIFACT_NAME: catalog-sync-diff
           NIKATRU_IF_NO_FILES: ignore
+          NIKATRU_RETENTION_CLASS: release
           BRIDGE_ARTIFACT_SECRET: ${{ secrets.BRIDGE_ARTIFACT_SECRET }}
           NIKATRU_BRIDGE_ARTIFACT_URL: https://gh-bridge.nikatru.workers.dev/artifact
         run: node tooling/ops/bridge-artifact.mjs upload
@@ -452,6 +453,7 @@ jobs:
           NIKATRU_PATHS: ${{ runner.temp }}/catalog-sync/
           NIKATRU_ARTIFACT_NAME: catalog-sync-apply
           NIKATRU_IF_NO_FILES: ignore
+          NIKATRU_RETENTION_CLASS: release
           BRIDGE_ARTIFACT_SECRET: ${{ secrets.BRIDGE_ARTIFACT_SECRET }}
           NIKATRU_BRIDGE_ARTIFACT_URL: https://gh-bridge.nikatru.workers.dev/artifact
         run: node tooling/ops/bridge-artifact.mjs upload

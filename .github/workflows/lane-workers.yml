@@ -47,6 +47,7 @@ jobs:
           repository: ${{ env.NIKATRU_PRIVATE_REPO }}
           ref: ${{ inputs.nikatru_sha || (github.event.client_payload.event == 'pull_request' && format('refs/pull/{0}/merge', github.event.client_payload.pr) || github.event.client_payload.sha || 'main') }}
           fetch-depth: 0
+          filter: blob:none
           ssh-key: ${{ secrets.PRIVATE_DEPLOY_KEY }}
           persist-credentials: false
       - name: Name the private commit (generated)
@@ -120,7 +121,7 @@ jobs:
       - id: detect
         name: Does this change touch the workers lane
         env:
-          GH_TOKEN: ${{ ((env.NIKATRU_REF || (github.event.client_payload.ref || 'refs/heads/main')) == 'refs/heads/main' && (env.NIKATRU_EVENT_NAME || (github.event.client_payload.event || github.event_name)) == 'push' && !env.NIKATRU_PR) && github.token || '' }}
+          GH_TOKEN: ${{ (((env.NIKATRU_REF || (github.event.client_payload.ref || 'refs/heads/main')) == 'refs/heads/main' && (env.NIKATRU_EVENT_NAME || (github.event.client_payload.event || github.event_name)) == 'push' && !env.NIKATRU_PR) || ((env.NIKATRU_EVENT_NAME || (github.event.client_payload.event || github.event_name)) == 'pull_request' && startsWith(env.NIKATRU_REF || (github.event.client_payload.ref || 'refs/heads/main'), 'refs/heads/land/'))) && github.token || '' }}
           NIKATRU_TIER: ${{ inputs.nikatru_tier }}
         run: |
           NIKATRU_QUIET="$(mktemp "${RUNNER_TEMP:-/tmp}/nikatru-step.XXXXXX")"
@@ -277,22 +278,28 @@ jobs:
           NIKATRU_SHELL="${BASH:-bash}"; if command -v cygpath >/dev/null 2>&1; then NIKATRU_SHELL="$(cygpath -w "$NIKATRU_SHELL")"; fi
           node "$GITHUB_WORKSPACE/../.nikatru-shell/quiet-step.mjs" --name lane-workers.worker.5 -- "$NIKATRU_SHELL" -e "$NIKATRU_QUIET"
         if: ${{ success() || (!cancelled() && (github.event.client_payload.event == 'pull_request' && startsWith(github.event.client_payload.ref, 'refs/heads/rehearsal/')) && steps.nikatru-setup-ok.outcome == 'success') }}
-      - run: |
+      - name: Wrangler dry run and its upload size
+        if: ${{ success() || (!cancelled() && (github.event.client_payload.event == 'pull_request' && startsWith(github.event.client_payload.ref, 'refs/heads/rehearsal/')) && steps.nikatru-setup-ok.outcome == 'success') }}
+        run: |
           NIKATRU_QUIET="$(mktemp "${RUNNER_TEMP:-/tmp}/nikatru-step.XXXXXX")"
           cat > "$NIKATRU_QUIET" <<'NIKATRU_QUIET_EOF'
-          npx wrangler deploy --dry-run
+          set -o pipefail
+          npx wrangler deploy --dry-run 2>&1 | tee "$RUNNER_TEMP/wrangler-dry-run.log"
+          node "$GITHUB_WORKSPACE/tooling/ci/worker-upload-size.mjs" --log "$RUNNER_TEMP/wrangler-dry-run.log"
           NIKATRU_QUIET_EOF
           NIKATRU_SHELL="${BASH:-bash}"; if command -v cygpath >/dev/null 2>&1; then NIKATRU_SHELL="$(cygpath -w "$NIKATRU_SHELL")"; fi
           node "$GITHUB_WORKSPACE/../.nikatru-shell/quiet-step.mjs" --name lane-workers.worker.6 -- "$NIKATRU_SHELL" -e "$NIKATRU_QUIET"
+      - name: Wrangler dry run (sandbox) and its upload size
         if: ${{ success() || (!cancelled() && (github.event.client_payload.event == 'pull_request' && startsWith(github.event.client_payload.ref, 'refs/heads/rehearsal/')) && steps.nikatru-setup-ok.outcome == 'success') }}
-      - run: |
+        run: |
           NIKATRU_QUIET="$(mktemp "${RUNNER_TEMP:-/tmp}/nikatru-step.XXXXXX")"
           cat > "$NIKATRU_QUIET" <<'NIKATRU_QUIET_EOF'
-          npx wrangler deploy --env sandbox --dry-run
+          set -o pipefail
+          npx wrangler deploy --env sandbox --dry-run 2>&1 | tee "$RUNNER_TEMP/wrangler-dry-run-sandbox.log"
+          node "$GITHUB_WORKSPACE/tooling/ci/worker-upload-size.mjs" --log "$RUNNER_TEMP/wrangler-dry-run-sandbox.log"
           NIKATRU_QUIET_EOF
           NIKATRU_SHELL="${BASH:-bash}"; if command -v cygpath >/dev/null 2>&1; then NIKATRU_SHELL="$(cygpath -w "$NIKATRU_SHELL")"; fi
           node "$GITHUB_WORKSPACE/../.nikatru-shell/quiet-step.mjs" --name lane-workers.worker.7 -- "$NIKATRU_SHELL" -e "$NIKATRU_QUIET"
-        if: ${{ success() || (!cancelled() && (github.event.client_payload.event == 'pull_request' && startsWith(github.event.client_payload.ref, 'refs/heads/rehearsal/')) && steps.nikatru-setup-ok.outcome == 'success') }}
       - name: Hand this job's red detail to the report job, sealed (generated)
         id: nikatru-handoff
         if: always()
@@ -409,6 +416,24 @@ jobs:
           NIKATRU_QUIET_EOF
           NIKATRU_SHELL="${BASH:-bash}"; if command -v cygpath >/dev/null 2>&1; then NIKATRU_SHELL="$(cygpath -w "$NIKATRU_SHELL")"; fi
           node "$GITHUB_WORKSPACE/../.nikatru-shell/quiet-step.mjs" --name lane-workers.lane-verdict.3 -- "$NIKATRU_SHELL" -e "$NIKATRU_QUIET"
+      - name: Worker code hashes and encodes through one crypto home (a per-file ratchet that only falls)
+        if: ${{ !cancelled() }}
+        run: |
+          NIKATRU_QUIET="$(mktemp "${RUNNER_TEMP:-/tmp}/nikatru-step.XXXXXX")"
+          cat > "$NIKATRU_QUIET" <<'NIKATRU_QUIET_EOF'
+          node tooling/ci/assert-crypto-one-home.mjs
+          NIKATRU_QUIET_EOF
+          NIKATRU_SHELL="${BASH:-bash}"; if command -v cygpath >/dev/null 2>&1; then NIKATRU_SHELL="$(cygpath -w "$NIKATRU_SHELL")"; fi
+          node "$GITHUB_WORKSPACE/../.nikatru-shell/quiet-step.mjs" --name lane-workers.lane-verdict.4 -- "$NIKATRU_SHELL" -e "$NIKATRU_QUIET"
+      - name: Every outbound Worker fetch carries a signal at the call, or is a reviewed row
+        if: ${{ !cancelled() }}
+        run: |
+          NIKATRU_QUIET="$(mktemp "${RUNNER_TEMP:-/tmp}/nikatru-step.XXXXXX")"
+          cat > "$NIKATRU_QUIET" <<'NIKATRU_QUIET_EOF'
+          node tooling/ci/assert-fetch-bounded.mjs
+          NIKATRU_QUIET_EOF
+          NIKATRU_SHELL="${BASH:-bash}"; if command -v cygpath >/dev/null 2>&1; then NIKATRU_SHELL="$(cygpath -w "$NIKATRU_SHELL")"; fi
+          node "$GITHUB_WORKSPACE/../.nikatru-shell/quiet-step.mjs" --name lane-workers.lane-verdict.5 -- "$NIKATRU_SHELL" -e "$NIKATRU_QUIET"
       - name: Hand this job's red detail to the report job, sealed (generated)
         id: nikatru-handoff
         if: always()

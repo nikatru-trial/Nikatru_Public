@@ -5,7 +5,7 @@ env:
 
 name: Status page
 
-run-name: "Status page${{ inputs.gate_mode && format(' · gate {0}', inputs.gate_mode) || '' }}${{ inputs.worker_slot && format(' [worker slot {0}]', inputs.worker_slot) || '' }}"
+run-name: "[main] Status page${{ inputs.gate_mode && format(' · gate {0}', inputs.gate_mode) || '' }}${{ inputs.worker_slot && format(' [worker slot {0}]', inputs.worker_slot) || '' }}"
 
 on:
   workflow_dispatch:
@@ -305,6 +305,8 @@ jobs:
         id: build
         env:
           SITE_ORIGIN: ${{ steps.target.outputs.origin }}
+          CF_ACCESS_VAULT_CLIENT_ID: ${{ secrets.CF_ACCESS_VAULT_CLIENT_ID }}
+          CF_ACCESS_VAULT_CLIENT_SECRET: ${{ secrets.CF_ACCESS_VAULT_CLIENT_SECRET }}
         run: |
           set -uo pipefail
           set +e

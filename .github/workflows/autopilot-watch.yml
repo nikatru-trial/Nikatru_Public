@@ -5,7 +5,7 @@ env:
 
 name: Autopilot watch
 
-run-name: "Autopilot watch ${{ inputs.nikatru_relay_run != '' && format('after {0} {1} on {2}', inputs.nikatru_relay_name, inputs.nikatru_relay_conclusion, inputs.nikatru_relay_head_sha) || (github.event.client_payload.event || github.event_name) }}${{ inputs.worker_slot && format(' [worker slot {0}]', inputs.worker_slot) || '' }}"
+run-name: "[main] Autopilot watch ${{ inputs.nikatru_relay_run != '' && format('after {0} {1} on {2}', inputs.nikatru_relay_name, inputs.nikatru_relay_conclusion, inputs.nikatru_relay_head_sha) || (github.event.client_payload.event || github.event_name) }}${{ inputs.worker_slot && format(' [worker slot {0}]', inputs.worker_slot) || '' }}"
 
 on:
   workflow_dispatch:

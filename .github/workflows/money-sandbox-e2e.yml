@@ -304,6 +304,24 @@ jobs:
           NIKATRU_QUIET_EOF
           NIKATRU_SHELL="${BASH:-bash}"; if command -v cygpath >/dev/null 2>&1; then NIKATRU_SHELL="$(cygpath -w "$NIKATRU_SHELL")"; fi
           node "$GITHUB_WORKSPACE/../.nikatru-shell/quiet-step.mjs" --name money-sandbox-e2e.gate.4 -- "$NIKATRU_SHELL" -e "$NIKATRU_QUIET"
+      - name: Record the commit, tree and migration list this run walks
+        env:
+          REV: ${{ steps.verdict.outputs.sha }}
+          SHELL_DIGEST_FILE: ${{ github.workspace }}/../.nikatru-shell/shell-steps.sha256
+        run: |
+          NIKATRU_QUIET="$(mktemp "${RUNNER_TEMP:-/tmp}/nikatru-step.XXXXXX")"
+          cat > "$NIKATRU_QUIET" <<'NIKATRU_QUIET_EOF'
+          set -euo pipefail
+          tree="$(git rev-parse "${REV}^{tree}")"
+          migrations="$(git ls-tree -r "$REV" -- services | { grep -E $'\t"?services/[^/]+/migrations/' || true; } | sha256sum | cut -d' ' -f1)"
+          shellkey="$(if [ ! -s "$SHELL_DIGEST_FILE" ]; then echo none; elif t="$(tr -d '\r' < "$SHELL_DIGEST_FILE" | sed 's/[[:space:]]*$//' | grep -v '^#' | grep -v '^$' || true)"; [[ "$t" =~ ^[0-9a-f]{64}$ ]]; then echo "$t"; else printf '%s' "$t" | sha256sum | cut -d' ' -f1; fi)"
+          line="money-proof walks commit=${REV} tree=${tree} migrations=${migrations} shell=${shellkey}"
+          pub=""; if [ -n "${NIKATRU_SHA:-}" ]; then pub="::nikatru-public::"; fi
+          echo "${pub}::notice title=money-proof::${line}"
+          echo "${line}" >> "$GITHUB_STEP_SUMMARY"
+          NIKATRU_QUIET_EOF
+          NIKATRU_SHELL="${BASH:-bash}"; if command -v cygpath >/dev/null 2>&1; then NIKATRU_SHELL="$(cygpath -w "$NIKATRU_SHELL")"; fi
+          node "$GITHUB_WORKSPACE/../.nikatru-shell/quiet-step.mjs" --name money-sandbox-e2e.gate.5 --public -- "$NIKATRU_SHELL" -e "$NIKATRU_QUIET"
       - name: Store this job's red detail in the bridge's private home (generated)
         if: always()
         continue-on-error: true

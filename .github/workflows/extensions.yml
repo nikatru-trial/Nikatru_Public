@@ -2083,13 +2083,14 @@ jobs:
         env:
           GH_TOKEN: ${{ github.token }}
           TOOL: ${{ steps.tag.outputs.id }}
+          VERSION: ${{ steps.tag.outputs.version }}
         run: |
           set -euo pipefail
           # 🔴 AN ASSIGNMENT, NOT A `for` WORD LIST: `set -e` fails the step on the assignment's
           # exit and never on a word list's (O-APP-RELEASE-RECORDS-NO-DEPLOYMENT-SILENTLY).
           environments="$(node tooling/ci/release-manifest.mjs --emit-environments extensions/dist --app "$TOOL")"
           for environment in $environments; do
-            node tooling/ci/record-deployment.mjs "$environment" "$GITHUB_SERVER_URL/$GITHUB_REPOSITORY/releases/tag/$NIKATRU_REF_NAME" --state pending_manual_publish
+            node tooling/ci/record-deployment.mjs "$environment" "$GITHUB_SERVER_URL/$GITHUB_REPOSITORY/releases/tag/$NIKATRU_REF_NAME" --state pending_manual_publish --release-version "$VERSION"
           done
       - name: Store publication — what this job did and did not publish
         if: always()
@@ -2478,7 +2479,8 @@ jobs:
           TOOL: ${{ steps.tag.outputs.id }}
           LISTING_URL: ${{ steps.amo.outputs.listing_url }}
           RUN_NUMBER: ${{ github.run_number }}
-        run: node tooling/ci/record-deployment.mjs "$TOOL-amo" --state in_review --listing-url "$LISTING_URL" --mode production --artifact "release-assets/${TOOL}-firefox.zip" --build-number "$RUN_NUMBER"
+          VERSION: ${{ steps.tag.outputs.version }}
+        run: node tooling/ci/record-deployment.mjs "$TOOL-amo" --state in_review --listing-url "$LISTING_URL" --mode production --artifact "release-assets/${TOOL}-firefox.zip" --build-number "$RUN_NUMBER" --release-version "$VERSION"
       - name: Chrome Web Store — the listing title is cleared (PROVEN-FREE or HELD)
         if: inputs.confirm == 'SUBMIT-TO-CHROME-WEB-STORE'
         env:
@@ -2538,7 +2540,8 @@ jobs:
           GH_TOKEN: ${{ github.token }}
           TOOL: ${{ steps.tag.outputs.id }}
           LISTING_URL: ${{ steps.cws.outputs.listing_url }}
-        run: node tooling/ci/record-deployment.mjs "$TOOL-chrome-webstore" --state in_review --listing-url "$LISTING_URL"
+          VERSION: ${{ steps.tag.outputs.version }}
+        run: node tooling/ci/record-deployment.mjs "$TOOL-chrome-webstore" --state in_review --listing-url "$LISTING_URL" --release-version "$VERSION"
       - name: Edge Add-ons — the listing title is cleared (PROVEN-FREE or HELD)
         if: inputs.confirm == 'SUBMIT-TO-EDGE-ADDONS'
         env:
@@ -2598,7 +2601,8 @@ jobs:
           GH_TOKEN: ${{ github.token }}
           TOOL: ${{ steps.tag.outputs.id }}
           LISTING_URL: ${{ steps.edge.outputs.listing_url }}
-        run: node tooling/ci/record-deployment.mjs "$TOOL-edge-addons" --state in_review --listing-url "$LISTING_URL"
+          VERSION: ${{ steps.tag.outputs.version }}
+        run: node tooling/ci/record-deployment.mjs "$TOOL-edge-addons" --state in_review --listing-url "$LISTING_URL" --release-version "$VERSION"
       - name: Store publication — what this run did and did not publish
         if: always()
         shell: bash

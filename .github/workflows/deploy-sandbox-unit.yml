@@ -154,6 +154,7 @@ jobs:
           sparse-checkout: |
             services
             tooling/ci
+            tooling/ops
             tooling/store
             tooling/e2e
             tooling/app-yaml

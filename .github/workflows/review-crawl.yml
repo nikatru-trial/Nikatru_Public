@@ -1267,6 +1267,7 @@ jobs:
           NIKATRU_PATHS: ${{ runner.temp }}/review-crawl-bundles/part-1
           NIKATRU_ARTIFACT_NAME: review-crawl-${{ matrix.cell.id }}
           NIKATRU_IF_NO_FILES: warn
+          NIKATRU_RETENTION_CLASS: diag
           BRIDGE_ARTIFACT_SECRET: ${{ secrets.BRIDGE_ARTIFACT_SECRET }}
           NIKATRU_BRIDGE_ARTIFACT_URL: https://gh-bridge.nikatru.workers.dev/artifact
         run: node tooling/ops/bridge-artifact.mjs upload
@@ -1278,6 +1279,7 @@ jobs:
           NIKATRU_PATHS: ${{ runner.temp }}/review-crawl-bundles/part-2
           NIKATRU_ARTIFACT_NAME: review-crawl-${{ matrix.cell.id }}-part-2
           NIKATRU_IF_NO_FILES: ignore
+          NIKATRU_RETENTION_CLASS: diag
           BRIDGE_ARTIFACT_SECRET: ${{ secrets.BRIDGE_ARTIFACT_SECRET }}
           NIKATRU_BRIDGE_ARTIFACT_URL: https://gh-bridge.nikatru.workers.dev/artifact
         run: node tooling/ops/bridge-artifact.mjs upload
@@ -1289,6 +1291,7 @@ jobs:
           NIKATRU_PATHS: ${{ runner.temp }}/review-crawl-bundles/part-3
           NIKATRU_ARTIFACT_NAME: review-crawl-${{ matrix.cell.id }}-part-3
           NIKATRU_IF_NO_FILES: ignore
+          NIKATRU_RETENTION_CLASS: diag
           BRIDGE_ARTIFACT_SECRET: ${{ secrets.BRIDGE_ARTIFACT_SECRET }}
           NIKATRU_BRIDGE_ARTIFACT_URL: https://gh-bridge.nikatru.workers.dev/artifact
         run: node tooling/ops/bridge-artifact.mjs upload
@@ -1300,6 +1303,7 @@ jobs:
           NIKATRU_PATHS: ${{ runner.temp }}/review-crawl-bundles/part-4
           NIKATRU_ARTIFACT_NAME: review-crawl-${{ matrix.cell.id }}-part-4
           NIKATRU_IF_NO_FILES: ignore
+          NIKATRU_RETENTION_CLASS: diag
           BRIDGE_ARTIFACT_SECRET: ${{ secrets.BRIDGE_ARTIFACT_SECRET }}
           NIKATRU_BRIDGE_ARTIFACT_URL: https://gh-bridge.nikatru.workers.dev/artifact
         run: node tooling/ops/bridge-artifact.mjs upload
@@ -1326,6 +1330,7 @@ jobs:
           NIKATRU_PATHS: ${{ runner.temp }}/baseline/index.json
           NIKATRU_ARTIFACT_NAME: review-crawl-baseline-${{ matrix.cell.id }}
           NIKATRU_IF_NO_FILES: error
+          NIKATRU_RETENTION_CLASS: release
           BRIDGE_ARTIFACT_SECRET: ${{ secrets.BRIDGE_ARTIFACT_SECRET }}
           NIKATRU_BRIDGE_ARTIFACT_URL: https://gh-bridge.nikatru.workers.dev/artifact
         run: node tooling/ops/bridge-artifact.mjs upload
@@ -1513,6 +1518,7 @@ jobs:
           NIKATRU_PATHS: ${{ runner.temp }}/review-crawl-bundles/part-1
           NIKATRU_ARTIFACT_NAME: review-crawl-${{ matrix.cell.id }}
           NIKATRU_IF_NO_FILES: warn
+          NIKATRU_RETENTION_CLASS: diag
           BRIDGE_ARTIFACT_SECRET: ${{ secrets.BRIDGE_ARTIFACT_SECRET }}
           NIKATRU_BRIDGE_ARTIFACT_URL: https://gh-bridge.nikatru.workers.dev/artifact
         run: node tooling/ops/bridge-artifact.mjs upload
@@ -1524,6 +1530,7 @@ jobs:
           NIKATRU_PATHS: ${{ runner.temp }}/review-crawl-bundles/part-2
           NIKATRU_ARTIFACT_NAME: review-crawl-${{ matrix.cell.id }}-part-2
           NIKATRU_IF_NO_FILES: ignore
+          NIKATRU_RETENTION_CLASS: diag
           BRIDGE_ARTIFACT_SECRET: ${{ secrets.BRIDGE_ARTIFACT_SECRET }}
           NIKATRU_BRIDGE_ARTIFACT_URL: https://gh-bridge.nikatru.workers.dev/artifact
         run: node tooling/ops/bridge-artifact.mjs upload
@@ -1535,6 +1542,7 @@ jobs:
           NIKATRU_PATHS: ${{ runner.temp }}/review-crawl-bundles/part-3
           NIKATRU_ARTIFACT_NAME: review-crawl-${{ matrix.cell.id }}-part-3
           NIKATRU_IF_NO_FILES: ignore
+          NIKATRU_RETENTION_CLASS: diag
           BRIDGE_ARTIFACT_SECRET: ${{ secrets.BRIDGE_ARTIFACT_SECRET }}
           NIKATRU_BRIDGE_ARTIFACT_URL: https://gh-bridge.nikatru.workers.dev/artifact
         run: node tooling/ops/bridge-artifact.mjs upload
@@ -1546,6 +1554,7 @@ jobs:
           NIKATRU_PATHS: ${{ runner.temp }}/review-crawl-bundles/part-4
           NIKATRU_ARTIFACT_NAME: review-crawl-${{ matrix.cell.id }}-part-4
           NIKATRU_IF_NO_FILES: ignore
+          NIKATRU_RETENTION_CLASS: diag
           BRIDGE_ARTIFACT_SECRET: ${{ secrets.BRIDGE_ARTIFACT_SECRET }}
           NIKATRU_BRIDGE_ARTIFACT_URL: https://gh-bridge.nikatru.workers.dev/artifact
         run: node tooling/ops/bridge-artifact.mjs upload
@@ -1572,6 +1581,7 @@ jobs:
           NIKATRU_PATHS: ${{ runner.temp }}/baseline/index.json
           NIKATRU_ARTIFACT_NAME: review-crawl-baseline-${{ matrix.cell.id }}
           NIKATRU_IF_NO_FILES: error
+          NIKATRU_RETENTION_CLASS: release
           BRIDGE_ARTIFACT_SECRET: ${{ secrets.BRIDGE_ARTIFACT_SECRET }}
           NIKATRU_BRIDGE_ARTIFACT_URL: https://gh-bridge.nikatru.workers.dev/artifact
         run: node tooling/ops/bridge-artifact.mjs upload

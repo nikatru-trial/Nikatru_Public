@@ -5,7 +5,7 @@ env:
 
 name: "Store submit: Google Play"
 
-run-name: "Store submit: Google Play · ${{ inputs.app }} · ${{ inputs.confirm }}${{ inputs.track && format(' · track {0}', inputs.track) || '' }}${{ inputs.release_status && format(' · status {0}', inputs.release_status) || '' }}${{ inputs.rollout_fraction && inputs.release_status == 'inProgress' && format(' · rollout {0}', inputs.rollout_fraction) || '' }}${{ inputs.promote && inputs.promote != 'none' && format(' · promote {0}', inputs.promote) || '' }}${{ inputs.server && inputs.server != 'production' && format(' · server {0}', inputs.server) || '' }}${{ inputs.worker_slot && format(' [worker slot {0}]', inputs.worker_slot) || '' }}"
+run-name: "Store submit: Google Play · ${{ inputs.app }} · ${{ inputs.confirm }}${{ inputs.track && format(' · track {0}', inputs.track) || '' }}${{ inputs.release_status && format(' · status {0}', inputs.release_status) || '' }}${{ inputs.rollout_fraction && inputs.release_status == 'inProgress' && format(' · rollout {0}', inputs.rollout_fraction) || '' }}${{ inputs.promote && inputs.promote != 'none' && format(' · promote {0}', inputs.promote) || '' }}${{ inputs.server && inputs.server != 'production' && format(' · server {0}', inputs.server) || '' }}${{ inputs.release_tag && format(' · tag {0}', inputs.release_tag) || '' }}${{ inputs.worker_slot && format(' [worker slot {0}]', inputs.worker_slot) || '' }}"
 
 on:
   workflow_dispatch:
@@ -52,6 +52,11 @@ on:
         default: 'production'
         type: choice
         options: [production, sandbox]
+      release_tag:
+        description: 'The release tag whose bytes the store receives, e.g. <app>-v1.2.3. REQUIRED with SUBMIT-TO-PLAY on server production (Play is tag-only); refused with server sandbox; ignored by the dry run.'
+        required: false
+        default: ''
+        type: string
       listing_url:
         description: 'The Play listing URL this submission will be recorded against, e.g. https://play.google.com/store/apps/details?id=<applicationId>. Required for a real upload; ignored by the dry run.'
         required: false
@@ -307,6 +312,22 @@ jobs:
           NIKATRU_QUIET_EOF
           NIKATRU_SHELL="${BASH:-bash}"; if command -v cygpath >/dev/null 2>&1; then NIKATRU_SHELL="$(cygpath -w "$NIKATRU_SHELL")"; fi
           node "$GITHUB_WORKSPACE/../.nikatru-shell/quiet-step.mjs" --name submit-play.gate.5 -- "$NIKATRU_SHELL" -e "$NIKATRU_QUIET"
+      - name: A production upload names its release tag; a sandbox upload names none (TAG-ONLY)
+        env:
+          CONFIRM: ${{ inputs.confirm }}
+          SERVER: ${{ steps.server.outputs.server }}
+          RELEASE_TAG: ${{ inputs.release_tag }}
+        run: |
+          NIKATRU_QUIET="$(mktemp "${RUNNER_TEMP:-/tmp}/nikatru-step.XXXXXX")"
+          cat > "$NIKATRU_QUIET" <<'NIKATRU_QUIET_EOF'
+          set -euo pipefail
+          if [ "$CONFIRM" != "SUBMIT-TO-PLAY" ]; then echo "ok   not an upload (confirm is not SUBMIT-TO-PLAY): release_tag is not read"; exit 0; fi
+          if [ "$SERVER" = "sandbox" ] && [ -n "$RELEASE_TAG" ]; then echo "::error title=TAG-ONLY::server sandbox uploads this run's sandbox-pointed rebuild; a tag's .aab is production-pointed. Dispatch again with release_tag empty."; exit 1; fi
+          if [ "$SERVER" != "sandbox" ] && [ -z "$RELEASE_TAG" ]; then echo "::error title=TAG-ONLY::SUBMIT-TO-PLAY needs release_tag=<app>-v<version>: Play takes a tag's bytes only (docs/ci/submit-play.md §TAG-ONLY)."; exit 1; fi
+          echo "ok   server ${SERVER}, release_tag '${RELEASE_TAG}'"
+          NIKATRU_QUIET_EOF
+          NIKATRU_SHELL="${BASH:-bash}"; if command -v cygpath >/dev/null 2>&1; then NIKATRU_SHELL="$(cygpath -w "$NIKATRU_SHELL")"; fi
+          node "$GITHUB_WORKSPACE/../.nikatru-shell/quiet-step.mjs" --name submit-play.gate.6 -- "$NIKATRU_SHELL" -e "$NIKATRU_QUIET"
       - name: Store this job's red detail in the bridge's private home (generated)
         if: always()
         continue-on-error: true
@@ -454,6 +475,8 @@ jobs:
           node "$GITHUB_WORKSPACE/../.nikatru-shell/quiet-step.mjs" --name submit-play.dry-run.6 -- "$NIKATRU_SHELL" -e "$NIKATRU_QUIET"
       - name: "Derive the versionCode: the run number plus the register's offset"
         id: code
+        env:
+          RELEASE_LINE: ${{ steps.ver.outputs.release_line }}
         run: |
           NIKATRU_QUIET="$(mktemp "${RUNNER_TEMP:-/tmp}/nikatru-step.XXXXXX")"
           cat > "$NIKATRU_QUIET" <<'NIKATRU_QUIET_EOF'
@@ -471,7 +494,13 @@ jobs:
           cat > "$NIKATRU_QUIET" <<'NIKATRU_QUIET_EOF'
           set -euo pipefail
           RECORDED="$(node tooling/ci/read-ledger-version-code.mjs "${APP}-android-play")"
-          node tooling/ci/assert-app-versioning.mjs --play-floor "$RUN_NUMBER" --app "$APP" --recorded-upload "$RECORDED"
+          rc=0
+          node tooling/ci/assert-app-versioning.mjs --play-floor "$RUN_NUMBER" --app "$APP" --recorded-upload "$RECORDED" || rc=$?
+          case "$rc" in
+            0) ;;
+            1) echo "::notice title=Play floor (information)::this dry run's rebuild is at or below what Play consumed; it is never uploaded (TAG-ONLY): the upload job grades the TAG's versionCode." ;;
+            *) exit "$rc" ;;
+          esac
           NIKATRU_QUIET_EOF
           NIKATRU_SHELL="${BASH:-bash}"; if command -v cygpath >/dev/null 2>&1; then NIKATRU_SHELL="$(cygpath -w "$NIKATRU_SHELL")"; fi
           node "$GITHUB_WORKSPACE/../.nikatru-shell/quiet-step.mjs" --name submit-play.dry-run.8 -- "$NIKATRU_SHELL" -e "$NIKATRU_QUIET"
@@ -859,7 +888,7 @@ jobs:
           PLAY_TRACK: ${{ inputs.track || 'internal' }}
         run: node tooling/ci/assert-reviewer-access.mjs --for-submission=android-play --app "$APP" --real-submission
       - name: A pending in-app purchase declaration is not submitted (android-play)
-        run: node tooling/ci/assert-app-yaml.mjs --for-submission=android-play --app "$APP"
+        run: node tooling/ci/assert-app-yaml.mjs --for-submission=android-play --app "$APP" --real-submission
       - name: A build that cannot sign in reaches no public track (android-play)
         env:
           PLAY_TRACK: ${{ inputs.track || 'internal' }}
@@ -872,15 +901,15 @@ jobs:
         run: node tooling/ci/assert-native-auth-proof-at-sha.mjs --sha "$RELEASE_SHA" --target android --track "$PLAY_TRACK"
       - name: Every target this channel ships to has its golden-path legs graded (android-play)
         run: node tooling/ci/assert-e2e-legs.mjs --for-submission=android-play
-      - name: The versionCode lies above what Play consumed
+      - name: The ledger's last recorded Play upload (the floor the tag's versionCode must clear)
+        id: ledger
         env:
-          RUN_NUMBER: ${{ github.run_number }}
           GH_TOKEN: ${{ github.token }}
           GITHUB_REPOSITORY: ${{ github.repository }}
         run: |
           set -euo pipefail
           RECORDED="$(node tooling/ci/read-ledger-version-code.mjs "${APP}-android-play")"
-          node tooling/ci/assert-app-versioning.mjs --play-floor "$RUN_NUMBER" --app "$APP" --recorded-upload "$RECORDED"
+          echo "recorded=${RECORDED}" >> "$GITHUB_OUTPUT"
       - name: Restore the ${{ needs.dry-run.outputs.artifact }} hand-off from this run (generated)
         id: nikatru-restore-3
         timeout-minutes: 6
@@ -989,19 +1018,27 @@ jobs:
           ROLLOUT_CONFIRM: ${{ inputs.rollout_confirm }}
           CONFIRM: ${{ inputs.confirm }}
           GITHUB_TOKEN: ${{ github.token }}
+          RELEASE_TAG: ${{ inputs.release_tag }}
+          RECORDED_UPLOAD: ${{ steps.ledger.outputs.recorded }}
+          GH_TOKEN: ${{ github.token }}
+          GITHUB_REPOSITORY: ${{ github.repository }}
+          CLOUDFLARE_ACCOUNT_ID: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
+          R2_RELEASE_ACCESS_KEY_ID: ${{ secrets.R2_RELEASE_ACCESS_KEY_ID }}
+          R2_RELEASE_SECRET_ACCESS_KEY: ${{ secrets.R2_RELEASE_SECRET_ACCESS_KEY }}
         run: >
           node tooling/release/submit-play.mjs --submit --app "$APP" --server "$SERVER"
-          --confirm "$CONFIRM" --status "$RELEASE_STATUS"
+          --confirm "$CONFIRM" --require-release-tag --release-tag "$RELEASE_TAG" --recorded-upload "$RECORDED_UPLOAD"
+          --status "$RELEASE_STATUS"
           --rollout-fraction "$ROLLOUT_FRACTION" --rollout-confirm "$ROLLOUT_CONFIRM"
       - name: The Play track must carry the bundle this job just uploaded
         env:
           PLAY_SERVICE_ACCOUNT_JSON: ${{ secrets.PLAY_SERVICE_ACCOUNT_JSON }}
-          VERSION_CODE: ${{ needs.dry-run.outputs.version_code }}
+          VERSION_CODE: ${{ steps.upload.outputs.version_code }}
         run: |
           set -euo pipefail
           case "${VERSION_CODE}" in
             ''|*[!0-9]*)
-              echo "FAIL the dry-run job's version_code is '${VERSION_CODE}', not a positive integer; the versionCode" >&2
+              echo "FAIL the upload step's version_code is '${VERSION_CODE}', not a positive integer; the versionCode" >&2
               echo "     this job uploaded cannot be known, so the probe refuses to guess." >&2
               exit 1
               ;;
@@ -1024,18 +1061,19 @@ jobs:
           GH_TOKEN: ${{ github.token }}
           GITHUB_REPOSITORY: ${{ github.repository }}
           LISTING_URL: ${{ inputs.listing_url }}
-          VERSION_CODE: ${{ needs.dry-run.outputs.version_code }}
+          VERSION_CODE: ${{ steps.upload.outputs.version_code }}
+          VERSION_NAME: ${{ steps.upload.outputs.version_name }}
           RELEASE_STATUS: ${{ inputs.release_status }}
           PLAY_TRACK: ${{ inputs.track || 'internal' }}
           AAB: apps/${{ needs.gate.outputs.app }}/build/app/outputs/bundle/release/app-release.aab
         run: |
           set -euo pipefail
           if [ "$RELEASE_STATUS" = draft ]; then
-            node tooling/ci/record-deployment.mjs "${APP}-android-play" --state draft_staged --listing-url "$LISTING_URL" --version-code "$VERSION_CODE" --mode production --artifact "$AAB" --build-number "$VERSION_CODE" --symbols-record "${RUNNER_TEMP}/symbols-record.json"
+            node tooling/ci/record-deployment.mjs "${APP}-android-play" --state draft_staged --listing-url "$LISTING_URL" --version-code "$VERSION_CODE" --release-version "$VERSION_NAME" --mode production --artifact "$AAB" --build-number "$VERSION_CODE" --symbols-record "${RUNNER_TEMP}/symbols-record.json"
           elif [ "$PLAY_TRACK" = internal ] || [ "$PLAY_TRACK" = qa ]; then
-            node tooling/ci/record-deployment.mjs "${APP}-android-play" --state testing_live --listing-url "$LISTING_URL" --version-code "$VERSION_CODE" --mode production --artifact "$AAB" --build-number "$VERSION_CODE" --symbols-record "${RUNNER_TEMP}/symbols-record.json"
+            node tooling/ci/record-deployment.mjs "${APP}-android-play" --state testing_live --listing-url "$LISTING_URL" --version-code "$VERSION_CODE" --release-version "$VERSION_NAME" --mode production --artifact "$AAB" --build-number "$VERSION_CODE" --symbols-record "${RUNNER_TEMP}/symbols-record.json"
           else
-            node tooling/ci/record-deployment.mjs "${APP}-android-play" --state in_review --listing-url "$LISTING_URL" --version-code "$VERSION_CODE" --mode production --artifact "$AAB" --build-number "$VERSION_CODE" --symbols-record "${RUNNER_TEMP}/symbols-record.json"
+            node tooling/ci/record-deployment.mjs "${APP}-android-play" --state in_review --listing-url "$LISTING_URL" --version-code "$VERSION_CODE" --release-version "$VERSION_NAME" --mode production --artifact "$AAB" --build-number "$VERSION_CODE" --symbols-record "${RUNNER_TEMP}/symbols-record.json"
           fi
       - name: Write the consumed mark this upload proved
         id: mark
@@ -1043,7 +1081,7 @@ jobs:
         env:
           GH_TOKEN: ${{ github.token }}
           GITHUB_REPOSITORY: ${{ github.repository }}
-          VERSION_CODE: ${{ needs.dry-run.outputs.version_code }}
+          VERSION_CODE: ${{ steps.upload.outputs.version_code }}
         run: |
           set -euo pipefail
           LEDGER="$(node tooling/ci/read-ledger-version-code.mjs --deployment-of-run "$GITHUB_RUN_ID" "${APP}-android-play")"
@@ -1069,9 +1107,9 @@ jobs:
           NIKATRU_PROPOSE_PATHS: ${{ steps.mark.outputs.paths }}
           NIKATRU_PROPOSE_BRANCH: chore/play-mark-${{ github.run_id }}
           NIKATRU_PROPOSE_BASE: main
-          NIKATRU_PROPOSE_TITLE: 'chore(play): record versionCode ${{ needs.dry-run.outputs.version_code }} as consumed (${{ needs.gate.outputs.app }})'
+          NIKATRU_PROPOSE_TITLE: 'chore(play): record versionCode ${{ steps.upload.outputs.version_code }} as consumed (${{ needs.gate.outputs.app }})'
           NIKATRU_PROPOSE_MESSAGE: |
-            chore(play): record versionCode ${{ needs.dry-run.outputs.version_code }} as consumed (${{ needs.gate.outputs.app }})
+            chore(play): record versionCode ${{ steps.upload.outputs.version_code }} as consumed (${{ needs.gate.outputs.app }})
 
             Written by .github/workflows/submit-play.yml's upload job (run ${{ github.run_id }}),
             from the ledger Deployment ${{ steps.mark.outputs.deployment }} it recorded, with

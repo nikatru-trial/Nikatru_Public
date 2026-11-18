@@ -5,7 +5,7 @@ env:
 
 name: Regenerate Gradle verification
 
-run-name: "Regenerate Gradle verification · ${{ inputs.app }}"
+run-name: "Regenerate Gradle verification · ${{ inputs.app }}${{ inputs.private_ref && format(' — branch proof {0}', inputs.private_ref) || '' }}"
 
 on:
   workflow_dispatch:
@@ -923,6 +923,7 @@ jobs:
           NIKATRU_PATHS: ${{ runner.temp }}/regen-gradle-verify-store/
           NIKATRU_ARTIFACT_NAME: verification-metadata-${{ needs.gate.outputs.app }}-${{ steps.check.outputs.sha8 }}
           NIKATRU_IF_NO_FILES: error
+          NIKATRU_RETENTION_CLASS: diag
           BRIDGE_ARTIFACT_SECRET: ${{ secrets.BRIDGE_ARTIFACT_SECRET }}
           NIKATRU_BRIDGE_ARTIFACT_URL: https://gh-bridge.nikatru.workers.dev/artifact
         run: node tooling/ops/bridge-artifact.mjs upload

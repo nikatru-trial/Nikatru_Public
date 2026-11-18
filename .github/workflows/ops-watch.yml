@@ -6,7 +6,7 @@ env:
 
 name: Ops watch
 
-run-name: "Ops watch${{ inputs.failure_ledger && ' · failure ledger' || '' }}${{ inputs.renovate_backlog && ' · Renovate backlog' || '' }}${{ inputs.code_scanning_age && ' · code-scanning age' || '' }}${{ inputs.tech_currency && ' · tech currency' || '' }}${{ inputs.dependency_advisories && ' · dependency advisories' || '' }}${{ inputs.self_review && ' · self-review' || '' }}${{ inputs.unattended && ' · unattended' || '' }}${{ inputs.digest && ' · digest' || '' }}${{ inputs.prune_trains && ' · prune trains' || '' }}${{ inputs.worker_slot && format(' [worker slot {0}]', inputs.worker_slot) || '' }}"
+run-name: "Ops watch${{ inputs.failure_ledger && ' · failure ledger' || '' }}${{ inputs.renovate_backlog && ' · Renovate backlog' || '' }}${{ inputs.code_scanning_age && ' · code-scanning age' || '' }}${{ inputs.tech_currency && ' · tech currency' || '' }}${{ inputs.dependency_advisories && ' · dependency advisories' || '' }}${{ inputs.self_review && ' · self-review' || '' }}${{ inputs.unattended && ' · unattended' || '' }}${{ inputs.digest && ' · digest' || '' }}${{ inputs.prune_trains && ' · prune trains' || '' }}${{ inputs.drill_private_checkout_unreachable && ' · private-checkout drill' || '' }}${{ inputs.worker_slot && format(' [worker slot {0}]', inputs.worker_slot) || '' }}"
 
 on:
   workflow_dispatch:
@@ -52,6 +52,10 @@ on:
         description: 'The owner only (R49): also DELETE the train/* branches the bridge judges merged (their pull requests and bodies stay). Off on every other run.'
         type: boolean
         default: false
+      drill_private_checkout_unreachable:
+        description: 'A drill (the lead only): the private checkout fails on purpose, every pinned job fails behind it, and the alert must still file and page green without it. Off on every other run.'
+        type: boolean
+        default: false
       red_drill:
         description: 'A drill: the quiet step of this exact name (e.g. build-platforms.gate.2) goes red after it runs green, so its red detail must reach the private home. Empty: no drill.'
         required: false
@@ -84,7 +88,7 @@ jobs:
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
         with:
           repository: ${{ env.NIKATRU_PRIVATE_REPO }}
-          ref: ${{ (github.event.client_payload.event == 'pull_request' && github.event.client_payload.bridge.merge_state == 'ready' && github.event.client_payload.bridge.merge_sha) || (github.event.client_payload.event == 'pull_request' && format('refs/pull/{0}/merge', github.event.client_payload.pr) || github.event.client_payload.sha || 'main') }}
+          ref: ${{ inputs.drill_private_checkout_unreachable && 'nikatru-drill-private-checkout-unreachable..' || ((github.event.client_payload.event == 'pull_request' && github.event.client_payload.bridge.merge_state == 'ready' && github.event.client_payload.bridge.merge_sha) || (github.event.client_payload.event == 'pull_request' && format('refs/pull/{0}/merge', github.event.client_payload.pr) || github.event.client_payload.sha || 'main')) }}
           sparse-checkout: .github/ISSUE_TEMPLATE
           ssh-key: ${{ secrets.PRIVATE_DEPLOY_KEY }}
           persist-credentials: false
@@ -168,7 +172,7 @@ jobs:
     needs: [nikatru-pin, status, supabase-drift, prod-provenance, pages-deployments, worker-source-drift, runner-budget, shell-barriers, store-vitals-state, store-vitals, glitchtip, config-drift, edge-shield, failure-ledger, renovate-backlog, code-scanning-age, tech-currency, self-review, digest]
     if: ${{ !cancelled() }}
     runs-on: ubuntu-24.04
-    timeout-minutes: 31
+    timeout-minutes: 34
     permissions:
       contents: read
       id-token: write
@@ -287,7 +291,7 @@ jobs:
       - name: Propose the duties' last green into main (pull request)
         if: ${{ !cancelled() && (github.event.client_payload.ref || 'refs/heads/main') == 'refs/heads/main' && steps.duty-last-green.outcome == 'success' }}
         env:
-          NIKATRU_PROPOSE_PATHS: tooling/ops/register.json
+          NIKATRU_PROPOSE_PATHS: tooling/ops/duty-last-green.json
           NIKATRU_PROPOSE_BRANCH: chore/duty-last-green-${{ github.run_id }}
           NIKATRU_PROPOSE_BASE: main
           NIKATRU_PROPOSE_TITLE: 'ops: the duties last green runs, written by ops-watch'
@@ -819,6 +823,28 @@ jobs:
           NIKATRU_QUIET_EOF
           NIKATRU_SHELL="${BASH:-bash}"; if command -v cygpath >/dev/null 2>&1; then NIKATRU_SHELL="$(cygpath -w "$NIKATRU_SHELL")"; fi
           node "$GITHUB_WORKSPACE/../.nikatru-shell/quiet-step.mjs" --name ops-watch.heartbeats.38 -- "$NIKATRU_SHELL" -e "$NIKATRU_QUIET"
+      - name: The expiry GitHub states for each recorded token is the one the register declares
+        if: ${{ !cancelled() }}
+        env:
+          CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_READ_TOKEN }}
+          CLOUDFLARE_ACCOUNT_ID: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
+        run: |
+          NIKATRU_QUIET="$(mktemp "${RUNNER_TEMP:-/tmp}/nikatru-step.XXXXXX")"
+          cat > "$NIKATRU_QUIET" <<'NIKATRU_QUIET_EOF'
+          set +e
+          node tooling/ops/token-expiry-recorded.mjs
+          code=$?
+          set -e
+          if [ "$code" -eq 2 ]; then
+            # NO BACKTICKS ANYWHERE IN THESE STRINGS: they are double-quoted (the D1 statement step's note).
+            echo "::error title=Token expiry is UNKNOWN - nothing was compared::The heartbeat table could not be read, no row recorded the token's live expiry, the newest row carries no expires fragment (a platform Worker older than the recording), or GitHub's header could not be parsed. NOTHING was judged; the step log names which."
+          elif [ "$code" -eq 1 ]; then
+            echo "::error title=A token's live expiry differs from the register::GitHub states an expiry for a token that is not the date tooling/ops/register.json declares for it, or states none where the register declares one. Re-date the row from the token page, or re-mint the token. The step log names the row and both dates."
+          fi
+          exit "$code"
+          NIKATRU_QUIET_EOF
+          NIKATRU_SHELL="${BASH:-bash}"; if command -v cygpath >/dev/null 2>&1; then NIKATRU_SHELL="$(cygpath -w "$NIKATRU_SHELL")"; fi
+          node "$GITHUB_WORKSPACE/../.nikatru-shell/quiet-step.mjs" --name ops-watch.heartbeats.39 -- "$NIKATRU_SHELL" -e "$NIKATRU_QUIET"
       - name: Hand this job's red detail to the report job, sealed (generated)
         id: nikatru-handoff
         if: always()
@@ -931,6 +957,9 @@ jobs:
           NIKATRU_EVENT_NAME: ${{ github.event.client_payload.event || github.event_name }}
           NIKATRU_PR: ${{ github.event.client_payload.pr }}
       - name: Probe every surface the register enumerates
+        env:
+          CF_ACCESS_VAULT_CLIENT_ID: ${{ secrets.CF_ACCESS_VAULT_CLIENT_ID }}
+          CF_ACCESS_VAULT_CLIENT_SECRET: ${{ secrets.CF_ACCESS_VAULT_CLIENT_SECRET }}
         run: |
           NIKATRU_QUIET="$(mktemp "${RUNNER_TEMP:-/tmp}/nikatru-step.XXXXXX")"
           cat > "$NIKATRU_QUIET" <<'NIKATRU_QUIET_EOF'
@@ -1783,6 +1812,31 @@ jobs:
           NIKATRU_QUIET_EOF
           NIKATRU_SHELL="${BASH:-bash}"; if command -v cygpath >/dev/null 2>&1; then NIKATRU_SHELL="$(cygpath -w "$NIKATRU_SHELL")"; fi
           node "$GITHUB_WORKSPACE/../.nikatru-shell/quiet-step.mjs" --name ops-watch.runner-budget.8 -- "$NIKATRU_SHELL" -e "$NIKATRU_QUIET"
+      - name: The CI-capacity rows graded from the last three main runs (shard times, a reading)
+        if: ${{ !cancelled() }}
+        timeout-minutes: 3
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          NIKATRU_QUIET="$(mktemp "${RUNNER_TEMP:-/tmp}/nikatru-step.XXXXXX")"
+          cat > "$NIKATRU_QUIET" <<'NIKATRU_QUIET_EOF'
+          out="${RUNNER_TEMP}/shard-times.txt"
+          set +e
+          node tooling/ops/shard-times.mjs > "$out" 2>&1
+          code=$?
+          set -e
+          sed 's/^/::nikatru-public::/' "$out"
+          { echo '### CI-capacity rows (tooling/ops/shard-times.mjs)'; echo '```'; cat "$out"; echo '```'; } >> "$GITHUB_STEP_SUMMARY"
+          if [ "$code" -eq 1 ]; then
+            echo "::nikatru-public::::notice title=A CI-capacity row is still over its bar::Read the FAIL line(s) above: the job, its minutes and the run id. The row stays open until three main runs pass."
+          elif [ "$code" -eq 2 ]; then
+            echo "::nikatru-public::::warning title=CI-capacity rows UNKNOWN::shard-times.mjs could not grade every row (a LOST line above names it): UNKNOWN, never a pass."
+          elif [ "$code" -ne 0 ]; then
+            exit "$code"
+          fi
+          NIKATRU_QUIET_EOF
+          NIKATRU_SHELL="${BASH:-bash}"; if command -v cygpath >/dev/null 2>&1; then NIKATRU_SHELL="$(cygpath -w "$NIKATRU_SHELL")"; fi
+          node "$GITHUB_WORKSPACE/../.nikatru-shell/quiet-step.mjs" --name ops-watch.runner-budget.9 --public -- "$NIKATRU_SHELL" -e "$NIKATRU_QUIET"
       - name: Hand this job's red detail to the report job, sealed (generated)
         id: nikatru-handoff
         if: always()
@@ -1809,7 +1863,7 @@ jobs:
     needs: [nikatru-pin, status]
     if: ${{ !cancelled() }}
     runs-on: ubuntu-24.04
-    timeout-minutes: 8
+    timeout-minutes: 10
     permissions:
       contents: read
       id-token: write
@@ -1890,7 +1944,7 @@ jobs:
           NIKATRU_EVENT_NAME: ${{ github.event.client_payload.event || github.event_name }}
           NIKATRU_PR: ${{ github.event.client_payload.pr }}
       - name: Hold the shell barriers — fork approval through the bridge, environments, variables, signing
-        timeout-minutes: 5
+        timeout-minutes: 8
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
           NIKATRU_VAR_SET_TURNSTILE_SITE_KEY: ${{ vars.TURNSTILE_SITE_KEY != '' }}
@@ -2294,9 +2348,6 @@ jobs:
           APP_STORE_CONNECT_ISSUER_ID: ${{ secrets.APP_STORE_CONNECT_READ_ISSUER_ID }}
           APP_STORE_CONNECT_PRIVATE_KEY: ${{ secrets.APP_STORE_CONNECT_READ_PRIVATE_KEY }}
           PLAY_SERVICE_ACCOUNT_JSON: ${{ secrets.PLAY_READ_SERVICE_ACCOUNT_JSON }}
-          MS_STORE_TENANT_ID: ${{ secrets.MS_STORE_READ_TENANT_ID }}
-          MS_STORE_CLIENT_ID: ${{ secrets.MS_STORE_READ_CLIENT_ID }}
-          MS_STORE_CLIENT_SECRET: ${{ secrets.MS_STORE_READ_CLIENT_SECRET }}
           GITHUB_TOKEN: ${{ github.token }}
         run: |
           NIKATRU_QUIET="$(mktemp "${RUNNER_TEMP:-/tmp}/nikatru-step.XXXXXX")"
@@ -2768,6 +2819,9 @@ jobs:
           NIKATRU_EVENT_NAME: ${{ github.event.client_payload.event || github.event_name }}
           NIKATRU_PR: ${{ github.event.client_payload.pr }}
       - name: The edge shield is still in front of Box B and Box C
+        env:
+          CF_ACCESS_VAULT_CLIENT_ID: ${{ secrets.CF_ACCESS_VAULT_CLIENT_ID }}
+          CF_ACCESS_VAULT_CLIENT_SECRET: ${{ secrets.CF_ACCESS_VAULT_CLIENT_SECRET }}
         run: |
           NIKATRU_QUIET="$(mktemp "${RUNNER_TEMP:-/tmp}/nikatru-step.XXXXXX")"
           cat > "$NIKATRU_QUIET" <<'NIKATRU_QUIET_EOF'
@@ -2865,6 +2919,27 @@ jobs:
           NIKATRU_QUIET_EOF
           NIKATRU_SHELL="${BASH:-bash}"; if command -v cygpath >/dev/null 2>&1; then NIKATRU_SHELL="$(cygpath -w "$NIKATRU_SHELL")"; fi
           node "$GITHUB_WORKSPACE/../.nikatru-shell/quiet-step.mjs" --name ops-watch.edge-shield.7 -- "$NIKATRU_SHELL" -e "$NIKATRU_QUIET"
+      - name: The edge shield refused no request because its abuse ledger could not count
+        if: always()
+        env:
+          CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_READ_TOKEN }}
+          CLOUDFLARE_ACCOUNT_ID: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
+        run: |
+          NIKATRU_QUIET="$(mktemp "${RUNNER_TEMP:-/tmp}/nikatru-step.XXXXXX")"
+          cat > "$NIKATRU_QUIET" <<'NIKATRU_QUIET_EOF'
+          set +e
+          node tooling/ops/check-shield-fail-closed.mjs
+          code=$?
+          set -e
+          if [ "$code" -eq 2 ]; then
+            echo "::error title=Edge-shield fail-closed refusals are UNKNOWN::Workers Logs could not be read (no token, no account id, or a token without Workers Observability Read), so nothing is known about sign-ins the shield refused when its abuse ledger faulted. That is never a pass. The step log names the reason."
+          elif [ "$code" -eq 1 ]; then
+            echo "::error title=The edge shield refused requests because its abuse ledger could not count::Each one is a 503 unexpected_failure, a magic-link sign-in refused after the ledger's one retry. The step log names each rule, its count and the newest reason. Read the edge-shield Worker's logs and the AbuseLedger Durable Object's errors for that time."
+          fi
+          exit "$code"
+          NIKATRU_QUIET_EOF
+          NIKATRU_SHELL="${BASH:-bash}"; if command -v cygpath >/dev/null 2>&1; then NIKATRU_SHELL="$(cygpath -w "$NIKATRU_SHELL")"; fi
+          node "$GITHUB_WORKSPACE/../.nikatru-shell/quiet-step.mjs" --name ops-watch.edge-shield.8 -- "$NIKATRU_SHELL" -e "$NIKATRU_QUIET"
       - name: Both sites' edge traffic is read and no Web Analytics beacon is injected
         if: always()
         env:
@@ -2885,7 +2960,7 @@ jobs:
           exit "$code"
           NIKATRU_QUIET_EOF
           NIKATRU_SHELL="${BASH:-bash}"; if command -v cygpath >/dev/null 2>&1; then NIKATRU_SHELL="$(cygpath -w "$NIKATRU_SHELL")"; fi
-          node "$GITHUB_WORKSPACE/../.nikatru-shell/quiet-step.mjs" --name ops-watch.edge-shield.8 -- "$NIKATRU_SHELL" -e "$NIKATRU_QUIET"
+          node "$GITHUB_WORKSPACE/../.nikatru-shell/quiet-step.mjs" --name ops-watch.edge-shield.9 -- "$NIKATRU_SHELL" -e "$NIKATRU_QUIET"
       - name: Hand this job's red detail to the report job, sealed (generated)
         id: nikatru-handoff
         if: always()
@@ -3606,6 +3681,7 @@ jobs:
           NIKATRU_PATHS: ${{ runner.temp }}/self-review
           NIKATRU_ARTIFACT_NAME: self-review
           NIKATRU_IF_NO_FILES: ignore
+          NIKATRU_RETENTION_CLASS: release
           BRIDGE_ARTIFACT_SECRET: ${{ secrets.BRIDGE_ARTIFACT_SECRET }}
           NIKATRU_BRIDGE_ARTIFACT_URL: https://gh-bridge.nikatru.workers.dev/artifact
         run: node tooling/ops/bridge-artifact.mjs upload
@@ -3665,7 +3741,7 @@ jobs:
   alert:
     name: Open or refresh the ops-watch issue
     needs: [heartbeats, status, supabase-drift, prod-provenance, pages-deployments, worker-source-drift, runner-budget, shell-barriers, store-vitals-state, store-vitals, glitchtip, config-drift, edge-shield, failure-ledger, renovate-backlog, code-scanning-age, tech-currency, self-review]
-    if: failure() && (((github.event.client_payload.event || github.event_name) == 'schedule' || inputs.worker_slot != '') || ((github.event.client_payload.event || github.event_name) == 'workflow_dispatch' && inputs.unattended)) || contains(needs.*.result, 'cancelled') && (((github.event.client_payload.event || github.event_name) == 'schedule' || inputs.worker_slot != '') || ((github.event.client_payload.event || github.event_name) == 'workflow_dispatch' && inputs.unattended))
+    if: failure() && (((github.event.client_payload.event || github.event_name) == 'schedule' || inputs.worker_slot != '') || ((github.event.client_payload.event || github.event_name) == 'workflow_dispatch' && inputs.unattended) || ((github.event.client_payload.event || github.event_name) == 'workflow_dispatch' && inputs.drill_private_checkout_unreachable)) || contains(needs.*.result, 'cancelled') && (((github.event.client_payload.event || github.event_name) == 'schedule' || inputs.worker_slot != '') || ((github.event.client_payload.event || github.event_name) == 'workflow_dispatch' && inputs.unattended) || ((github.event.client_payload.event || github.event_name) == 'workflow_dispatch' && inputs.drill_private_checkout_unreachable))
     runs-on: ubuntu-24.04
     timeout-minutes: 5
     permissions:
@@ -3847,6 +3923,8 @@ jobs:
           LEDGER_RESULT: ${{ needs.failure-ledger.result }}
           LEDGER_EXIT: ${{ needs.failure-ledger.outputs.exit }}
           LEDGER_UNEXPLAINED: ${{ needs.failure-ledger.outputs.unexplained }}
+          CF_ACCESS_VAULT_CLIENT_ID: ${{ secrets.CF_ACCESS_VAULT_CLIENT_ID }}
+          CF_ACCESS_VAULT_CLIENT_SECRET: ${{ secrets.CF_ACCESS_VAULT_CLIENT_SECRET }}
         run: |
           NIKATRU_QUIET="$(mktemp "${RUNNER_TEMP:-/tmp}/nikatru-step.XXXXXX")"
           cat > "$NIKATRU_QUIET" <<'NIKATRU_QUIET_EOF'

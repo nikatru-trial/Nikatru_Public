@@ -39,6 +39,7 @@ import { dirname, join, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { parseArgs } from 'node:util';
 import { judge, liveAnswer, validateProbes } from './live-probe.mjs';
+import { nap } from './bounded-retry.mjs';
 
 const HERE = dirname(fileURLToPath(import.meta.url));
 export const PROBES_FILE = join(HERE, 'live-probes.json');
@@ -134,7 +135,7 @@ export async function main(argv = process.argv.slice(2), deps = {}) {
     beat: beatImpl = beat,
     now = () => new Date(),
     log = (line) => process.stdout.write(`${line}\n`),
-    sleep = (ms) => new Promise((r) => setTimeout(r, ms)),
+    sleep = nap,
   } = deps;
   // Every flag is declared: an undeclared one (a mistyped --dry-run above all) is refused before any probe, page or
   // heartbeat, so a typo can never run the real thing.

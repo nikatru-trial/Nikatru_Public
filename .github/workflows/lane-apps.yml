@@ -46,6 +46,7 @@ jobs:
           repository: ${{ env.NIKATRU_PRIVATE_REPO }}
           ref: ${{ inputs.nikatru_sha || (github.event.client_payload.event == 'pull_request' && format('refs/pull/{0}/merge', github.event.client_payload.pr) || github.event.client_payload.sha || 'main') }}
           fetch-depth: 0
+          filter: blob:none
           ssh-key: ${{ secrets.PRIVATE_DEPLOY_KEY }}
           persist-credentials: false
       - name: Name the private commit (generated)
@@ -119,7 +120,7 @@ jobs:
       - id: detect
         name: Does this change touch the apps lane
         env:
-          GH_TOKEN: ${{ ((env.NIKATRU_REF || (github.event.client_payload.ref || 'refs/heads/main')) == 'refs/heads/main' && (env.NIKATRU_EVENT_NAME || (github.event.client_payload.event || github.event_name)) == 'push' && !env.NIKATRU_PR) && github.token || '' }}
+          GH_TOKEN: ${{ (((env.NIKATRU_REF || (github.event.client_payload.ref || 'refs/heads/main')) == 'refs/heads/main' && (env.NIKATRU_EVENT_NAME || (github.event.client_payload.event || github.event_name)) == 'push' && !env.NIKATRU_PR) || ((env.NIKATRU_EVENT_NAME || (github.event.client_payload.event || github.event_name)) == 'pull_request' && startsWith(env.NIKATRU_REF || (github.event.client_payload.ref || 'refs/heads/main'), 'refs/heads/land/'))) && github.token || '' }}
           NIKATRU_TIER: ${{ inputs.nikatru_tier }}
         run: |
           NIKATRU_QUIET="$(mktemp "${RUNNER_TEMP:-/tmp}/nikatru-step.XXXXXX")"
@@ -272,6 +273,24 @@ jobs:
           NIKATRU_QUIET_EOF
           NIKATRU_SHELL="${BASH:-bash}"; if command -v cygpath >/dev/null 2>&1; then NIKATRU_SHELL="$(cygpath -w "$NIKATRU_SHELL")"; fi
           node "$GITHUB_WORKSPACE/../.nikatru-shell/quiet-step.mjs" --name lane-apps.app-brick.5 -- "$NIKATRU_SHELL" -e "$NIKATRU_QUIET"
+      - name: Every Dart platform wire name comes from the one generated core function
+        if: ${{ success() || (!cancelled() && (github.event.client_payload.event == 'pull_request' && startsWith(github.event.client_payload.ref, 'refs/heads/rehearsal/')) && steps.nikatru-setup-ok.outcome == 'success') }}
+        run: |
+          NIKATRU_QUIET="$(mktemp "${RUNNER_TEMP:-/tmp}/nikatru-step.XXXXXX")"
+          cat > "$NIKATRU_QUIET" <<'NIKATRU_QUIET_EOF'
+          node tooling/ci/assert-platform-wire-name.mjs
+          NIKATRU_QUIET_EOF
+          NIKATRU_SHELL="${BASH:-bash}"; if command -v cygpath >/dev/null 2>&1; then NIKATRU_SHELL="$(cygpath -w "$NIKATRU_SHELL")"; fi
+          node "$GITHUB_WORKSPACE/../.nikatru-shell/quiet-step.mjs" --name lane-apps.app-brick.6 -- "$NIKATRU_SHELL" -e "$NIKATRU_QUIET"
+      - name: A Retry-After header is read only through its runtime's one parser
+        if: ${{ success() || (!cancelled() && (github.event.client_payload.event == 'pull_request' && startsWith(github.event.client_payload.ref, 'refs/heads/rehearsal/')) && steps.nikatru-setup-ok.outcome == 'success') }}
+        run: |
+          NIKATRU_QUIET="$(mktemp "${RUNNER_TEMP:-/tmp}/nikatru-step.XXXXXX")"
+          cat > "$NIKATRU_QUIET" <<'NIKATRU_QUIET_EOF'
+          node tooling/ci/assert-one-retry-after-parser.mjs
+          NIKATRU_QUIET_EOF
+          NIKATRU_SHELL="${BASH:-bash}"; if command -v cygpath >/dev/null 2>&1; then NIKATRU_SHELL="$(cygpath -w "$NIKATRU_SHELL")"; fi
+          node "$GITHUB_WORKSPACE/../.nikatru-shell/quiet-step.mjs" --name lane-apps.app-brick.7 -- "$NIKATRU_SHELL" -e "$NIKATRU_QUIET"
       - name: Stamp the default (client-only) app
         if: ${{ success() || (!cancelled() && (github.event.client_payload.event == 'pull_request' && startsWith(github.event.client_payload.ref, 'refs/heads/rehearsal/')) && steps.nikatru-setup-ok.outcome == 'success') }}
         run: |
@@ -281,7 +300,7 @@ jobs:
           node tooling/kit/stamp-app.mjs --vars tooling/bricks/app/_probe_vars.json --overwrite
           NIKATRU_QUIET_EOF
           NIKATRU_SHELL="${BASH:-bash}"; if command -v cygpath >/dev/null 2>&1; then NIKATRU_SHELL="$(cygpath -w "$NIKATRU_SHELL")"; fi
-          node "$GITHUB_WORKSPACE/../.nikatru-shell/quiet-step.mjs" --name lane-apps.app-brick.6 -- "$NIKATRU_SHELL" -e "$NIKATRU_QUIET"
+          node "$GITHUB_WORKSPACE/../.nikatru-shell/quiet-step.mjs" --name lane-apps.app-brick.8 -- "$NIKATRU_SHELL" -e "$NIKATRU_QUIET"
       - name: Stamped app carries ITS brand assets, not Flutter's
         if: ${{ success() || (!cancelled() && (github.event.client_payload.event == 'pull_request' && startsWith(github.event.client_payload.ref, 'refs/heads/rehearsal/')) && steps.nikatru-setup-ok.outcome == 'success') }}
         run: |
@@ -291,7 +310,7 @@ jobs:
           node --single-threaded tooling/ci/assert-stamp-brand-assets.mjs apps/probe --seed "$SEED"
           NIKATRU_QUIET_EOF
           NIKATRU_SHELL="${BASH:-bash}"; if command -v cygpath >/dev/null 2>&1; then NIKATRU_SHELL="$(cygpath -w "$NIKATRU_SHELL")"; fi
-          node "$GITHUB_WORKSPACE/../.nikatru-shell/quiet-step.mjs" --name lane-apps.app-brick.7 -- "$NIKATRU_SHELL" -e "$NIKATRU_QUIET"
+          node "$GITHUB_WORKSPACE/../.nikatru-shell/quiet-step.mjs" --name lane-apps.app-brick.9 -- "$NIKATRU_SHELL" -e "$NIKATRU_QUIET"
       - name: The stamped probe's native platforms carry ITS icons and splash, not Flutter's
         if: ${{ success() || (!cancelled() && (github.event.client_payload.event == 'pull_request' && startsWith(github.event.client_payload.ref, 'refs/heads/rehearsal/')) && steps.nikatru-setup-ok.outcome == 'success') }}
         run: |
@@ -307,7 +326,7 @@ jobs:
           if ! grep -qF '2 app(s) ship a platform with a launch screen' "$RUNNER_TEMP/launcher-stamped.log"; then echo "::error::limb 8 did not grade the stamped probe's splash beside app #1's"; exit 1; fi
           NIKATRU_QUIET_EOF
           NIKATRU_SHELL="${BASH:-bash}"; if command -v cygpath >/dev/null 2>&1; then NIKATRU_SHELL="$(cygpath -w "$NIKATRU_SHELL")"; fi
-          node "$GITHUB_WORKSPACE/../.nikatru-shell/quiet-step.mjs" --name lane-apps.app-brick.8 -- "$NIKATRU_SHELL" -e "$NIKATRU_QUIET"
+          node "$GITHUB_WORKSPACE/../.nikatru-shell/quiet-step.mjs" --name lane-apps.app-brick.10 -- "$NIKATRU_SHELL" -e "$NIKATRU_QUIET"
       - name: A stamp leaves the site surface and the tag filter clean
         if: ${{ success() || (!cancelled() && (github.event.client_payload.event == 'pull_request' && startsWith(github.event.client_payload.ref, 'refs/heads/rehearsal/')) && steps.nikatru-setup-ok.outcome == 'success') }}
         run: |
@@ -344,7 +363,7 @@ jobs:
           git reset -q
           NIKATRU_QUIET_EOF
           NIKATRU_SHELL="${BASH:-bash}"; if command -v cygpath >/dev/null 2>&1; then NIKATRU_SHELL="$(cygpath -w "$NIKATRU_SHELL")"; fi
-          node "$GITHUB_WORKSPACE/../.nikatru-shell/quiet-step.mjs" --name lane-apps.app-brick.9 -- "$NIKATRU_SHELL" -e "$NIKATRU_QUIET"
+          node "$GITHUB_WORKSPACE/../.nikatru-shell/quiet-step.mjs" --name lane-apps.app-brick.11 -- "$NIKATRU_SHELL" -e "$NIKATRU_QUIET"
       - name: The register guards grade the stamped probe before its reverts (apps=2), and a deleted derived row is red
         if: ${{ success() || (!cancelled() && (github.event.client_payload.event == 'pull_request' && startsWith(github.event.client_payload.ref, 'refs/heads/rehearsal/')) && steps.nikatru-setup-ok.outcome == 'success') }}
         run: |
@@ -388,7 +407,7 @@ jobs:
           node tooling/app-yaml/render.mjs --check
           NIKATRU_QUIET_EOF
           NIKATRU_SHELL="${BASH:-bash}"; if command -v cygpath >/dev/null 2>&1; then NIKATRU_SHELL="$(cygpath -w "$NIKATRU_SHELL")"; fi
-          node "$GITHUB_WORKSPACE/../.nikatru-shell/quiet-step.mjs" --name lane-apps.app-brick.10 -- "$NIKATRU_SHELL" -e "$NIKATRU_QUIET"
+          node "$GITHUB_WORKSPACE/../.nikatru-shell/quiet-step.mjs" --name lane-apps.app-brick.12 -- "$NIKATRU_SHELL" -e "$NIKATRU_QUIET"
       - name: Stamped text is the spec's, its release id is its own, and blank hosts were DERIVED
         if: ${{ success() || (!cancelled() && (github.event.client_payload.event == 'pull_request' && startsWith(github.event.client_payload.ref, 'refs/heads/rehearsal/')) && steps.nikatru-setup-ok.outcome == 'success') }}
         run: |
@@ -397,7 +416,7 @@ jobs:
           node tooling/ci/assert-stamp-text-fidelity.mjs --vars tooling/bricks/app/_probe_vars.json
           NIKATRU_QUIET_EOF
           NIKATRU_SHELL="${BASH:-bash}"; if command -v cygpath >/dev/null 2>&1; then NIKATRU_SHELL="$(cygpath -w "$NIKATRU_SHELL")"; fi
-          node "$GITHUB_WORKSPACE/../.nikatru-shell/quiet-step.mjs" --name lane-apps.app-brick.11 -- "$NIKATRU_SHELL" -e "$NIKATRU_QUIET"
+          node "$GITHUB_WORKSPACE/../.nikatru-shell/quiet-step.mjs" --name lane-apps.app-brick.13 -- "$NIKATRU_SHELL" -e "$NIKATRU_QUIET"
       - name: A freshly stamped app carries a COMPLETE, spec-derived store listing
         if: ${{ success() || (!cancelled() && (github.event.client_payload.event == 'pull_request' && startsWith(github.event.client_payload.ref, 'refs/heads/rehearsal/')) && steps.nikatru-setup-ok.outcome == 'success') }}
         run: |
@@ -406,7 +425,7 @@ jobs:
           node tooling/ci/assert-store-metadata.mjs
           NIKATRU_QUIET_EOF
           NIKATRU_SHELL="${BASH:-bash}"; if command -v cygpath >/dev/null 2>&1; then NIKATRU_SHELL="$(cygpath -w "$NIKATRU_SHELL")"; fi
-          node "$GITHUB_WORKSPACE/../.nikatru-shell/quiet-step.mjs" --name lane-apps.app-brick.12 -- "$NIKATRU_SHELL" -e "$NIKATRU_QUIET"
+          node "$GITHUB_WORKSPACE/../.nikatru-shell/quiet-step.mjs" --name lane-apps.app-brick.14 -- "$NIKATRU_SHELL" -e "$NIKATRU_QUIET"
       - name: Every client constant that mirrors a server bound is held by a parity test
         if: ${{ success() || (!cancelled() && (github.event.client_payload.event == 'pull_request' && startsWith(github.event.client_payload.ref, 'refs/heads/rehearsal/')) && steps.nikatru-setup-ok.outcome == 'success') }}
         run: |
@@ -415,7 +434,7 @@ jobs:
           node tooling/ci/assert-mirrored-bounds.mjs
           NIKATRU_QUIET_EOF
           NIKATRU_SHELL="${BASH:-bash}"; if command -v cygpath >/dev/null 2>&1; then NIKATRU_SHELL="$(cygpath -w "$NIKATRU_SHELL")"; fi
-          node "$GITHUB_WORKSPACE/../.nikatru-shell/quiet-step.mjs" --name lane-apps.app-brick.13 -- "$NIKATRU_SHELL" -e "$NIKATRU_QUIET"
+          node "$GITHUB_WORKSPACE/../.nikatru-shell/quiet-step.mjs" --name lane-apps.app-brick.15 -- "$NIKATRU_SHELL" -e "$NIKATRU_QUIET"
       - name: Every app declares privacy, the stamped probe as pending
         if: ${{ success() || (!cancelled() && (github.event.client_payload.event == 'pull_request' && startsWith(github.event.client_payload.ref, 'refs/heads/rehearsal/')) && steps.nikatru-setup-ok.outcome == 'success') }}
         run: |
@@ -424,7 +443,7 @@ jobs:
           node tooling/ci/assert-app-yaml.mjs
           NIKATRU_QUIET_EOF
           NIKATRU_SHELL="${BASH:-bash}"; if command -v cygpath >/dev/null 2>&1; then NIKATRU_SHELL="$(cygpath -w "$NIKATRU_SHELL")"; fi
-          node "$GITHUB_WORKSPACE/../.nikatru-shell/quiet-step.mjs" --name lane-apps.app-brick.14 -- "$NIKATRU_SHELL" -e "$NIKATRU_QUIET"
+          node "$GITHUB_WORKSPACE/../.nikatru-shell/quiet-step.mjs" --name lane-apps.app-brick.16 -- "$NIKATRU_SHELL" -e "$NIKATRU_QUIET"
       - name: RED CONTROL — the probe without its privacy.yaml is refused, naming it
         if: ${{ success() || (!cancelled() && (github.event.client_payload.event == 'pull_request' && startsWith(github.event.client_payload.ref, 'refs/heads/rehearsal/')) && steps.nikatru-setup-ok.outcome == 'success') }}
         run: |
@@ -444,7 +463,7 @@ jobs:
           node tooling/ci/assert-app-yaml.mjs
           NIKATRU_QUIET_EOF
           NIKATRU_SHELL="${BASH:-bash}"; if command -v cygpath >/dev/null 2>&1; then NIKATRU_SHELL="$(cygpath -w "$NIKATRU_SHELL")"; fi
-          node "$GITHUB_WORKSPACE/../.nikatru-shell/quiet-step.mjs" --name lane-apps.app-brick.15 -- "$NIKATRU_SHELL" -e "$NIKATRU_QUIET"
+          node "$GITHUB_WORKSPACE/../.nikatru-shell/quiet-step.mjs" --name lane-apps.app-brick.17 -- "$NIKATRU_SHELL" -e "$NIKATRU_QUIET"
       - name: The stamped probe's sworn declarations are graded as preview, app #1's as sworn
         if: ${{ success() || (!cancelled() && (github.event.client_payload.event == 'pull_request' && startsWith(github.event.client_payload.ref, 'refs/heads/rehearsal/')) && steps.nikatru-setup-ok.outcome == 'success') }}
         run: |
@@ -453,7 +472,7 @@ jobs:
           node tooling/ci/assert-sworn-store-files.mjs
           NIKATRU_QUIET_EOF
           NIKATRU_SHELL="${BASH:-bash}"; if command -v cygpath >/dev/null 2>&1; then NIKATRU_SHELL="$(cygpath -w "$NIKATRU_SHELL")"; fi
-          node "$GITHUB_WORKSPACE/../.nikatru-shell/quiet-step.mjs" --name lane-apps.app-brick.16 -- "$NIKATRU_SHELL" -e "$NIKATRU_QUIET"
+          node "$GITHUB_WORKSPACE/../.nikatru-shell/quiet-step.mjs" --name lane-apps.app-brick.18 -- "$NIKATRU_SHELL" -e "$NIKATRU_QUIET"
       - name: Every store declaration says what the shipped build does
         if: ${{ success() || (!cancelled() && (github.event.client_payload.event == 'pull_request' && startsWith(github.event.client_payload.ref, 'refs/heads/rehearsal/')) && steps.nikatru-setup-ok.outcome == 'success') }}
         run: |
@@ -462,7 +481,7 @@ jobs:
           node tooling/ci/assert-store-declarations.mjs
           NIKATRU_QUIET_EOF
           NIKATRU_SHELL="${BASH:-bash}"; if command -v cygpath >/dev/null 2>&1; then NIKATRU_SHELL="$(cygpath -w "$NIKATRU_SHELL")"; fi
-          node "$GITHUB_WORKSPACE/../.nikatru-shell/quiet-step.mjs" --name lane-apps.app-brick.17 -- "$NIKATRU_SHELL" -e "$NIKATRU_QUIET"
+          node "$GITHUB_WORKSPACE/../.nikatru-shell/quiet-step.mjs" --name lane-apps.app-brick.19 -- "$NIKATRU_SHELL" -e "$NIKATRU_QUIET"
       - name: RED CONTROL — the probe's data-safety.json sworn but unanswered is refused on the floor
         if: ${{ success() || (!cancelled() && (github.event.client_payload.event == 'pull_request' && startsWith(github.event.client_payload.ref, 'refs/heads/rehearsal/')) && steps.nikatru-setup-ok.outcome == 'success') }}
         run: |
@@ -483,7 +502,7 @@ jobs:
           node tooling/ci/assert-sworn-store-files.mjs
           NIKATRU_QUIET_EOF
           NIKATRU_SHELL="${BASH:-bash}"; if command -v cygpath >/dev/null 2>&1; then NIKATRU_SHELL="$(cygpath -w "$NIKATRU_SHELL")"; fi
-          node "$GITHUB_WORKSPACE/../.nikatru-shell/quiet-step.mjs" --name lane-apps.app-brick.18 -- "$NIKATRU_SHELL" -e "$NIKATRU_QUIET"
+          node "$GITHUB_WORKSPACE/../.nikatru-shell/quiet-step.mjs" --name lane-apps.app-brick.20 -- "$NIKATRU_SHELL" -e "$NIKATRU_QUIET"
       - name: The seven app-set guards grade the stamped probe (apps=2)
         if: ${{ success() || (!cancelled() && (github.event.client_payload.event == 'pull_request' && startsWith(github.event.client_payload.ref, 'refs/heads/rehearsal/')) && steps.nikatru-setup-ok.outcome == 'success') }}
         run: |
@@ -493,7 +512,7 @@ jobs:
           node "$RUNNER_TEMP/app-set-probe.mjs"
           NIKATRU_QUIET_EOF
           NIKATRU_SHELL="${BASH:-bash}"; if command -v cygpath >/dev/null 2>&1; then NIKATRU_SHELL="$(cygpath -w "$NIKATRU_SHELL")"; fi
-          node "$GITHUB_WORKSPACE/../.nikatru-shell/quiet-step.mjs" --name lane-apps.app-brick.19 -- "$NIKATRU_SHELL" -e "$NIKATRU_QUIET"
+          node "$GITHUB_WORKSPACE/../.nikatru-shell/quiet-step.mjs" --name lane-apps.app-brick.21 -- "$NIKATRU_SHELL" -e "$NIKATRU_QUIET"
       - name: RED CONTROL — the probe's tap observer that no longer logs is refused, naming apps/probe
         if: ${{ success() || (!cancelled() && (github.event.client_payload.event == 'pull_request' && startsWith(github.event.client_payload.ref, 'refs/heads/rehearsal/')) && steps.nikatru-setup-ok.outcome == 'success') }}
         run: |
@@ -523,7 +542,7 @@ jobs:
           node tooling/ci/assert-capability-register.mjs
           NIKATRU_QUIET_EOF
           NIKATRU_SHELL="${BASH:-bash}"; if command -v cygpath >/dev/null 2>&1; then NIKATRU_SHELL="$(cygpath -w "$NIKATRU_SHELL")"; fi
-          node "$GITHUB_WORKSPACE/../.nikatru-shell/quiet-step.mjs" --name lane-apps.app-brick.20 -- "$NIKATRU_SHELL" -e "$NIKATRU_QUIET"
+          node "$GITHUB_WORKSPACE/../.nikatru-shell/quiet-step.mjs" --name lane-apps.app-brick.22 -- "$NIKATRU_SHELL" -e "$NIKATRU_QUIET"
       - name: RED CONTROL — the probe without its review seam is COVERAGE LOST, naming apps/probe
         if: ${{ success() || (!cancelled() && (github.event.client_payload.event == 'pull_request' && startsWith(github.event.client_payload.ref, 'refs/heads/rehearsal/')) && steps.nikatru-setup-ok.outcome == 'success') }}
         run: |
@@ -546,7 +565,7 @@ jobs:
           node tooling/ci/assert-seams-wired.mjs
           NIKATRU_QUIET_EOF
           NIKATRU_SHELL="${BASH:-bash}"; if command -v cygpath >/dev/null 2>&1; then NIKATRU_SHELL="$(cygpath -w "$NIKATRU_SHELL")"; fi
-          node "$GITHUB_WORKSPACE/../.nikatru-shell/quiet-step.mjs" --name lane-apps.app-brick.21 -- "$NIKATRU_SHELL" -e "$NIKATRU_QUIET"
+          node "$GITHUB_WORKSPACE/../.nikatru-shell/quiet-step.mjs" --name lane-apps.app-brick.23 -- "$NIKATRU_SHELL" -e "$NIKATRU_QUIET"
       - name: RED CONTROL — the probe without its capture boards fails the capture precheck, naming the file
         if: ${{ success() || (!cancelled() && (github.event.client_payload.event == 'pull_request' && startsWith(github.event.client_payload.ref, 'refs/heads/rehearsal/')) && steps.nikatru-setup-ok.outcome == 'success') }}
         run: |
@@ -556,7 +575,7 @@ jobs:
           node "$RUNNER_TEMP/remove-and-restore.mjs" apps/probe/integration_test/store_screenshots_test.dart "$RUNNER_TEMP/probe-boards.dart" tooling/store/capture-precheck.mjs --app probe --channel android-play
           NIKATRU_QUIET_EOF
           NIKATRU_SHELL="${BASH:-bash}"; if command -v cygpath >/dev/null 2>&1; then NIKATRU_SHELL="$(cygpath -w "$NIKATRU_SHELL")"; fi
-          node "$GITHUB_WORKSPACE/../.nikatru-shell/quiet-step.mjs" --name lane-apps.app-brick.22 -- "$NIKATRU_SHELL" -e "$NIKATRU_QUIET"
+          node "$GITHUB_WORKSPACE/../.nikatru-shell/quiet-step.mjs" --name lane-apps.app-brick.24 -- "$NIKATRU_SHELL" -e "$NIKATRU_QUIET"
       - name: RED CONTROL — the probe without its e2e suite fails the leg guard, naming the file
         if: ${{ success() || (!cancelled() && (github.event.client_payload.event == 'pull_request' && startsWith(github.event.client_payload.ref, 'refs/heads/rehearsal/')) && steps.nikatru-setup-ok.outcome == 'success') }}
         run: |
@@ -566,7 +585,7 @@ jobs:
           node "$RUNNER_TEMP/remove-and-restore.mjs" apps/probe/integration_test/app_test.dart "$RUNNER_TEMP/probe-app-test.dart" tooling/ci/assert-e2e-legs.mjs
           NIKATRU_QUIET_EOF
           NIKATRU_SHELL="${BASH:-bash}"; if command -v cygpath >/dev/null 2>&1; then NIKATRU_SHELL="$(cygpath -w "$NIKATRU_SHELL")"; fi
-          node "$GITHUB_WORKSPACE/../.nikatru-shell/quiet-step.mjs" --name lane-apps.app-brick.23 -- "$NIKATRU_SHELL" -e "$NIKATRU_QUIET"
+          node "$GITHUB_WORKSPACE/../.nikatru-shell/quiet-step.mjs" --name lane-apps.app-brick.25 -- "$NIKATRU_SHELL" -e "$NIKATRU_QUIET"
       - name: The stamped probe declares mobile IAP pending and wires its store bridge
         if: ${{ success() || (!cancelled() && (github.event.client_payload.event == 'pull_request' && startsWith(github.event.client_payload.ref, 'refs/heads/rehearsal/')) && steps.nikatru-setup-ok.outcome == 'success') }}
         run: |
@@ -582,7 +601,7 @@ jobs:
           if ! grep -qF '2 app(s) declare mobile IAP (1 live, 1 pending), each wired through BillingStoreWiring (2 of 2)' "$RUNNER_TEMP/iap-green.log"; then echo "::error::limb 6 did not count app #1 live and the probe pending, both wired"; exit 1; fi
           NIKATRU_QUIET_EOF
           NIKATRU_SHELL="${BASH:-bash}"; if command -v cygpath >/dev/null 2>&1; then NIKATRU_SHELL="$(cygpath -w "$NIKATRU_SHELL")"; fi
-          node "$GITHUB_WORKSPACE/../.nikatru-shell/quiet-step.mjs" --name lane-apps.app-brick.24 -- "$NIKATRU_SHELL" -e "$NIKATRU_QUIET"
+          node "$GITHUB_WORKSPACE/../.nikatru-shell/quiet-step.mjs" --name lane-apps.app-brick.26 -- "$NIKATRU_SHELL" -e "$NIKATRU_QUIET"
       - name: RED CONTROL — the probe's store bridge set back to null is refused, naming the file
         if: ${{ success() || (!cancelled() && (github.event.client_payload.event == 'pull_request' && startsWith(github.event.client_payload.ref, 'refs/heads/rehearsal/')) && steps.nikatru-setup-ok.outcome == 'success') }}
         run: |
@@ -603,7 +622,7 @@ jobs:
           node tooling/ci/assert-app-yaml.mjs
           NIKATRU_QUIET_EOF
           NIKATRU_SHELL="${BASH:-bash}"; if command -v cygpath >/dev/null 2>&1; then NIKATRU_SHELL="$(cygpath -w "$NIKATRU_SHELL")"; fi
-          node "$GITHUB_WORKSPACE/../.nikatru-shell/quiet-step.mjs" --name lane-apps.app-brick.25 -- "$NIKATRU_SHELL" -e "$NIKATRU_QUIET"
+          node "$GITHUB_WORKSPACE/../.nikatru-shell/quiet-step.mjs" --name lane-apps.app-brick.27 -- "$NIKATRU_SHELL" -e "$NIKATRU_QUIET"
       - name: The new-product plan reads the stamped probe, and only its name clearance and price row are the agent's
         if: ${{ success() || (!cancelled() && (github.event.client_payload.event == 'pull_request' && startsWith(github.event.client_payload.ref, 'refs/heads/rehearsal/')) && steps.nikatru-setup-ok.outcome == 'success') }}
         run: |
@@ -612,7 +631,7 @@ jobs:
           node tooling/kit/new-product.mjs plan probe --check --expect-next "name clearance,price row"
           NIKATRU_QUIET_EOF
           NIKATRU_SHELL="${BASH:-bash}"; if command -v cygpath >/dev/null 2>&1; then NIKATRU_SHELL="$(cygpath -w "$NIKATRU_SHELL")"; fi
-          node "$GITHUB_WORKSPACE/../.nikatru-shell/quiet-step.mjs" --name lane-apps.app-brick.26 -- "$NIKATRU_SHELL" -e "$NIKATRU_QUIET"
+          node "$GITHUB_WORKSPACE/../.nikatru-shell/quiet-step.mjs" --name lane-apps.app-brick.28 -- "$NIKATRU_SHELL" -e "$NIKATRU_QUIET"
       - name: SHOW-1 — probe is in the catalogue, and a RE-STAMP changes nothing
         if: ${{ success() || (!cancelled() && (github.event.client_payload.event == 'pull_request' && startsWith(github.event.client_payload.ref, 'refs/heads/rehearsal/')) && steps.nikatru-setup-ok.outcome == 'success') }}
         run: |
@@ -630,7 +649,7 @@ jobs:
           git checkout -- catalog/apps.json sites/_shared/_data/apps.json
           NIKATRU_QUIET_EOF
           NIKATRU_SHELL="${BASH:-bash}"; if command -v cygpath >/dev/null 2>&1; then NIKATRU_SHELL="$(cygpath -w "$NIKATRU_SHELL")"; fi
-          node "$GITHUB_WORKSPACE/../.nikatru-shell/quiet-step.mjs" --name lane-apps.app-brick.27 -- "$NIKATRU_SHELL" -e "$NIKATRU_QUIET"
+          node "$GITHUB_WORKSPACE/../.nikatru-shell/quiet-step.mjs" --name lane-apps.app-brick.29 -- "$NIKATRU_SHELL" -e "$NIKATRU_QUIET"
       - name: Default stamp claims NO Worker, NO D1 and NO R2
         if: ${{ success() || (!cancelled() && (github.event.client_payload.event == 'pull_request' && startsWith(github.event.client_payload.ref, 'refs/heads/rehearsal/')) && steps.nikatru-setup-ok.outcome == 'success') }}
         run: |
@@ -639,7 +658,7 @@ jobs:
           node tooling/ci/assert-clone-contract.mjs --client probe
           NIKATRU_QUIET_EOF
           NIKATRU_SHELL="${BASH:-bash}"; if command -v cygpath >/dev/null 2>&1; then NIKATRU_SHELL="$(cygpath -w "$NIKATRU_SHELL")"; fi
-          node "$GITHUB_WORKSPACE/../.nikatru-shell/quiet-step.mjs" --name lane-apps.app-brick.28 -- "$NIKATRU_SHELL" -e "$NIKATRU_QUIET"
+          node "$GITHUB_WORKSPACE/../.nikatru-shell/quiet-step.mjs" --name lane-apps.app-brick.30 -- "$NIKATRU_SHELL" -e "$NIKATRU_QUIET"
       - name: Stamped app is dart format-clean
         if: ${{ success() || (!cancelled() && (github.event.client_payload.event == 'pull_request' && startsWith(github.event.client_payload.ref, 'refs/heads/rehearsal/')) && steps.nikatru-setup-ok.outcome == 'success') }}
         run: |
@@ -650,7 +669,7 @@ jobs:
           diff -ru "$RUNNER_TEMP/probe-as-stamped" apps/probe
           NIKATRU_QUIET_EOF
           NIKATRU_SHELL="${BASH:-bash}"; if command -v cygpath >/dev/null 2>&1; then NIKATRU_SHELL="$(cygpath -w "$NIKATRU_SHELL")"; fi
-          node "$GITHUB_WORKSPACE/../.nikatru-shell/quiet-step.mjs" --name lane-apps.app-brick.29 -- "$NIKATRU_SHELL" -e "$NIKATRU_QUIET"
+          node "$GITHUB_WORKSPACE/../.nikatru-shell/quiet-step.mjs" --name lane-apps.app-brick.31 -- "$NIKATRU_SHELL" -e "$NIKATRU_QUIET"
       - name: RED CONTROL — the stamped probe's desktop runners carry its identity (2 apps), and the flutter-create CompanyName is refused
         if: ${{ success() || (!cancelled() && (github.event.client_payload.event == 'pull_request' && startsWith(github.event.client_payload.ref, 'refs/heads/rehearsal/')) && steps.nikatru-setup-ok.outcome == 'success') }}
         run: |
@@ -679,7 +698,7 @@ jobs:
           node tooling/ci/assert-desktop-runner-identity.mjs
           NIKATRU_QUIET_EOF
           NIKATRU_SHELL="${BASH:-bash}"; if command -v cygpath >/dev/null 2>&1; then NIKATRU_SHELL="$(cygpath -w "$NIKATRU_SHELL")"; fi
-          node "$GITHUB_WORKSPACE/../.nikatru-shell/quiet-step.mjs" --name lane-apps.app-brick.30 -- "$NIKATRU_SHELL" -e "$NIKATRU_QUIET"
+          node "$GITHUB_WORKSPACE/../.nikatru-shell/quiet-step.mjs" --name lane-apps.app-brick.32 -- "$NIKATRU_SHELL" -e "$NIKATRU_QUIET"
       - name: RED CONTROL — the probe's android/app build file without the shared release script is refused, naming apps/probe
         if: ${{ success() || (!cancelled() && (github.event.client_payload.event == 'pull_request' && startsWith(github.event.client_payload.ref, 'refs/heads/rehearsal/')) && steps.nikatru-setup-ok.outcome == 'success') }}
         run: |
@@ -708,7 +727,7 @@ jobs:
           node tooling/ci/assert-stamp-platforms.mjs
           NIKATRU_QUIET_EOF
           NIKATRU_SHELL="${BASH:-bash}"; if command -v cygpath >/dev/null 2>&1; then NIKATRU_SHELL="$(cygpath -w "$NIKATRU_SHELL")"; fi
-          node "$GITHUB_WORKSPACE/../.nikatru-shell/quiet-step.mjs" --name lane-apps.app-brick.31 -- "$NIKATRU_SHELL" -e "$NIKATRU_QUIET"
+          node "$GITHUB_WORKSPACE/../.nikatru-shell/quiet-step.mjs" --name lane-apps.app-brick.33 -- "$NIKATRU_SHELL" -e "$NIKATRU_QUIET"
       - name: Stamp the opt-in backend app
         if: ${{ success() || (!cancelled() && (github.event.client_payload.event == 'pull_request' && startsWith(github.event.client_payload.ref, 'refs/heads/rehearsal/')) && steps.nikatru-setup-ok.outcome == 'success') }}
         run: |
@@ -718,7 +737,7 @@ jobs:
           node tooling/kit/stamp-app.mjs --vars tooling/bricks/app/_probe_backend_vars.json --overwrite
           NIKATRU_QUIET_EOF
           NIKATRU_SHELL="${BASH:-bash}"; if command -v cygpath >/dev/null 2>&1; then NIKATRU_SHELL="$(cygpath -w "$NIKATRU_SHELL")"; fi
-          node "$GITHUB_WORKSPACE/../.nikatru-shell/quiet-step.mjs" --name lane-apps.app-brick.32 -- "$NIKATRU_SHELL" -e "$NIKATRU_QUIET"
+          node "$GITHUB_WORKSPACE/../.nikatru-shell/quiet-step.mjs" --name lane-apps.app-brick.34 -- "$NIKATRU_SHELL" -e "$NIKATRU_QUIET"
       - name: The new-product plan reads the stamped backend probe, and only its provision steps are added
         if: ${{ success() || (!cancelled() && (github.event.client_payload.event == 'pull_request' && startsWith(github.event.client_payload.ref, 'refs/heads/rehearsal/')) && steps.nikatru-setup-ok.outcome == 'success') }}
         run: |
@@ -727,7 +746,7 @@ jobs:
           node tooling/kit/new-product.mjs plan probeapi --check --expect-next "name clearance,backend,crash sink,price row"
           NIKATRU_QUIET_EOF
           NIKATRU_SHELL="${BASH:-bash}"; if command -v cygpath >/dev/null 2>&1; then NIKATRU_SHELL="$(cygpath -w "$NIKATRU_SHELL")"; fi
-          node "$GITHUB_WORKSPACE/../.nikatru-shell/quiet-step.mjs" --name lane-apps.app-brick.33 -- "$NIKATRU_SHELL" -e "$NIKATRU_QUIET"
+          node "$GITHUB_WORKSPACE/../.nikatru-shell/quiet-step.mjs" --name lane-apps.app-brick.35 -- "$NIKATRU_SHELL" -e "$NIKATRU_QUIET"
       - name: A scratch service stamps from the Worker template, and the plan reads it as a service
         if: ${{ success() || (!cancelled() && (github.event.client_payload.event == 'pull_request' && startsWith(github.event.client_payload.ref, 'refs/heads/rehearsal/')) && steps.nikatru-setup-ok.outcome == 'success') }}
         run: |
@@ -738,7 +757,7 @@ jobs:
           node tooling/kit/new-product.mjs plan probesvc --check --expect-next "register row,backend,crash sink,monitor row"
           NIKATRU_QUIET_EOF
           NIKATRU_SHELL="${BASH:-bash}"; if command -v cygpath >/dev/null 2>&1; then NIKATRU_SHELL="$(cygpath -w "$NIKATRU_SHELL")"; fi
-          node "$GITHUB_WORKSPACE/../.nikatru-shell/quiet-step.mjs" --name lane-apps.app-brick.34 -- "$NIKATRU_SHELL" -e "$NIKATRU_QUIET"
+          node "$GITHUB_WORKSPACE/../.nikatru-shell/quiet-step.mjs" --name lane-apps.app-brick.36 -- "$NIKATRU_SHELL" -e "$NIKATRU_QUIET"
       - name: Stamped backend app is dart format-clean
         if: ${{ success() || (!cancelled() && (github.event.client_payload.event == 'pull_request' && startsWith(github.event.client_payload.ref, 'refs/heads/rehearsal/')) && steps.nikatru-setup-ok.outcome == 'success') }}
         run: |
@@ -749,7 +768,7 @@ jobs:
           diff -ru "$RUNNER_TEMP/probeapi-as-stamped" apps/probeapi
           NIKATRU_QUIET_EOF
           NIKATRU_SHELL="${BASH:-bash}"; if command -v cygpath >/dev/null 2>&1; then NIKATRU_SHELL="$(cygpath -w "$NIKATRU_SHELL")"; fi
-          node "$GITHUB_WORKSPACE/../.nikatru-shell/quiet-step.mjs" --name lane-apps.app-brick.35 -- "$NIKATRU_SHELL" -e "$NIKATRU_QUIET"
+          node "$GITHUB_WORKSPACE/../.nikatru-shell/quiet-step.mjs" --name lane-apps.app-brick.37 -- "$NIKATRU_SHELL" -e "$NIKATRU_QUIET"
       - name: The analytics contract grades the stamped backend Worker's health route (apps=3)
         if: ${{ success() || (!cancelled() && (github.event.client_payload.event == 'pull_request' && startsWith(github.event.client_payload.ref, 'refs/heads/rehearsal/')) && steps.nikatru-setup-ok.outcome == 'success') }}
         run: |
@@ -767,7 +786,7 @@ jobs:
           if ! grep -qE 'ok apps=3([^0-9]|$)' "$RUNNER_TEMP/analytics-backend.log"; then echo "::error::assert-analytics-contract exited 0 without an apps=3 line; the stamped backend was not in its subject"; exit 1; fi
           NIKATRU_QUIET_EOF
           NIKATRU_SHELL="${BASH:-bash}"; if command -v cygpath >/dev/null 2>&1; then NIKATRU_SHELL="$(cygpath -w "$NIKATRU_SHELL")"; fi
-          node "$GITHUB_WORKSPACE/../.nikatru-shell/quiet-step.mjs" --name lane-apps.app-brick.36 -- "$NIKATRU_SHELL" -e "$NIKATRU_QUIET"
+          node "$GITHUB_WORKSPACE/../.nikatru-shell/quiet-step.mjs" --name lane-apps.app-brick.38 -- "$NIKATRU_SHELL" -e "$NIKATRU_QUIET"
       - name: A bad app id is refused before anything is written
         if: ${{ success() || (!cancelled() && (github.event.client_payload.event == 'pull_request' && startsWith(github.event.client_payload.ref, 'refs/heads/rehearsal/')) && steps.nikatru-setup-ok.outcome == 'success') }}
         run: |
@@ -787,9 +806,9 @@ jobs:
           if [ -e apps/habit_tracker ]; then echo "::error::apps/habit_tracker exists after a refused stamp"; exit 1; fi
           NIKATRU_QUIET_EOF
           NIKATRU_SHELL="${BASH:-bash}"; if command -v cygpath >/dev/null 2>&1; then NIKATRU_SHELL="$(cygpath -w "$NIKATRU_SHELL")"; fi
-          node "$GITHUB_WORKSPACE/../.nikatru-shell/quiet-step.mjs" --name lane-apps.app-brick.37 -- "$NIKATRU_SHELL" -e "$NIKATRU_QUIET"
+          node "$GITHUB_WORKSPACE/../.nikatru-shell/quiet-step.mjs" --name lane-apps.app-brick.39 -- "$NIKATRU_SHELL" -e "$NIKATRU_QUIET"
       - name: A stamped Worker typechecks and passes the suite it inherits
-        id: nikatru-setup-38
+        id: nikatru-setup-40
         if: ${{ success() || (!cancelled() && (github.event.client_payload.event == 'pull_request' && startsWith(github.event.client_payload.ref, 'refs/heads/rehearsal/')) && steps.nikatru-setup-ok.outcome == 'success') }}
         working-directory: services/probeapi-api
         run: |
@@ -800,36 +819,36 @@ jobs:
           npm test
           NIKATRU_QUIET_EOF
           NIKATRU_SHELL="${BASH:-bash}"; if command -v cygpath >/dev/null 2>&1; then NIKATRU_SHELL="$(cygpath -w "$NIKATRU_SHELL")"; fi
-          node "$GITHUB_WORKSPACE/../.nikatru-shell/quiet-step.mjs" --name lane-apps.app-brick.38 -- "$NIKATRU_SHELL" -e "$NIKATRU_QUIET"
+          node "$GITHUB_WORKSPACE/../.nikatru-shell/quiet-step.mjs" --name lane-apps.app-brick.40 -- "$NIKATRU_SHELL" -e "$NIKATRU_QUIET"
       - name: The stamped Worker is not an identity deleter
-        if: ${{ success() || (!cancelled() && (github.event.client_payload.event == 'pull_request' && startsWith(github.event.client_payload.ref, 'refs/heads/rehearsal/')) && steps.nikatru-setup-ok.outcome == 'success' && steps.nikatru-setup-38.outcome == 'success') }}
+        if: ${{ success() || (!cancelled() && (github.event.client_payload.event == 'pull_request' && startsWith(github.event.client_payload.ref, 'refs/heads/rehearsal/')) && steps.nikatru-setup-ok.outcome == 'success' && steps.nikatru-setup-40.outcome == 'success') }}
         run: |
           NIKATRU_QUIET="$(mktemp "${RUNNER_TEMP:-/tmp}/nikatru-step.XXXXXX")"
           cat > "$NIKATRU_QUIET" <<'NIKATRU_QUIET_EOF'
           node tooling/ci/assert-erasure-reach.mjs --stamped services/probeapi-api
           NIKATRU_QUIET_EOF
           NIKATRU_SHELL="${BASH:-bash}"; if command -v cygpath >/dev/null 2>&1; then NIKATRU_SHELL="$(cygpath -w "$NIKATRU_SHELL")"; fi
-          node "$GITHUB_WORKSPACE/../.nikatru-shell/quiet-step.mjs" --name lane-apps.app-brick.39 -- "$NIKATRU_SHELL" -e "$NIKATRU_QUIET"
+          node "$GITHUB_WORKSPACE/../.nikatru-shell/quiet-step.mjs" --name lane-apps.app-brick.41 -- "$NIKATRU_SHELL" -e "$NIKATRU_QUIET"
       - name: The app spec is one validated input contract
-        if: ${{ success() || (!cancelled() && (github.event.client_payload.event == 'pull_request' && startsWith(github.event.client_payload.ref, 'refs/heads/rehearsal/')) && steps.nikatru-setup-ok.outcome == 'success' && steps.nikatru-setup-38.outcome == 'success') }}
+        if: ${{ success() || (!cancelled() && (github.event.client_payload.event == 'pull_request' && startsWith(github.event.client_payload.ref, 'refs/heads/rehearsal/')) && steps.nikatru-setup-ok.outcome == 'success' && steps.nikatru-setup-40.outcome == 'success') }}
         run: |
           NIKATRU_QUIET="$(mktemp "${RUNNER_TEMP:-/tmp}/nikatru-step.XXXXXX")"
           cat > "$NIKATRU_QUIET" <<'NIKATRU_QUIET_EOF'
           node tooling/ci/assert-input-contract.mjs
           NIKATRU_QUIET_EOF
           NIKATRU_SHELL="${BASH:-bash}"; if command -v cygpath >/dev/null 2>&1; then NIKATRU_SHELL="$(cygpath -w "$NIKATRU_SHELL")"; fi
-          node "$GITHUB_WORKSPACE/../.nikatru-shell/quiet-step.mjs" --name lane-apps.app-brick.40 -- "$NIKATRU_SHELL" -e "$NIKATRU_QUIET"
+          node "$GITHUB_WORKSPACE/../.nikatru-shell/quiet-step.mjs" --name lane-apps.app-brick.42 -- "$NIKATRU_SHELL" -e "$NIKATRU_QUIET"
       - name: A stamped app claims only platforms it is built for
-        if: ${{ success() || (!cancelled() && (github.event.client_payload.event == 'pull_request' && startsWith(github.event.client_payload.ref, 'refs/heads/rehearsal/')) && steps.nikatru-setup-ok.outcome == 'success' && steps.nikatru-setup-38.outcome == 'success') }}
+        if: ${{ success() || (!cancelled() && (github.event.client_payload.event == 'pull_request' && startsWith(github.event.client_payload.ref, 'refs/heads/rehearsal/')) && steps.nikatru-setup-ok.outcome == 'success' && steps.nikatru-setup-40.outcome == 'success') }}
         run: |
           NIKATRU_QUIET="$(mktemp "${RUNNER_TEMP:-/tmp}/nikatru-step.XXXXXX")"
           cat > "$NIKATRU_QUIET" <<'NIKATRU_QUIET_EOF'
           node tooling/ci/assert-stamp-platforms.mjs
           NIKATRU_QUIET_EOF
           NIKATRU_SHELL="${BASH:-bash}"; if command -v cygpath >/dev/null 2>&1; then NIKATRU_SHELL="$(cygpath -w "$NIKATRU_SHELL")"; fi
-          node "$GITHUB_WORKSPACE/../.nikatru-shell/quiet-step.mjs" --name lane-apps.app-brick.41 -- "$NIKATRU_SHELL" -e "$NIKATRU_QUIET"
+          node "$GITHUB_WORKSPACE/../.nikatru-shell/quiet-step.mjs" --name lane-apps.app-brick.43 -- "$NIKATRU_SHELL" -e "$NIKATRU_QUIET"
       - name: RED CONTROL — the probe without its linux/ folder is refused, naming apps/probe
-        if: ${{ success() || (!cancelled() && (github.event.client_payload.event == 'pull_request' && startsWith(github.event.client_payload.ref, 'refs/heads/rehearsal/')) && steps.nikatru-setup-ok.outcome == 'success' && steps.nikatru-setup-38.outcome == 'success') }}
+        if: ${{ success() || (!cancelled() && (github.event.client_payload.event == 'pull_request' && startsWith(github.event.client_payload.ref, 'refs/heads/rehearsal/')) && steps.nikatru-setup-ok.outcome == 'success' && steps.nikatru-setup-40.outcome == 'success') }}
         run: |
           NIKATRU_QUIET="$(mktemp "${RUNNER_TEMP:-/tmp}/nikatru-step.XXXXXX")"
           cat > "$NIKATRU_QUIET" <<'NIKATRU_QUIET_EOF'
@@ -846,101 +865,101 @@ jobs:
           node tooling/ci/assert-stamp-platforms.mjs
           NIKATRU_QUIET_EOF
           NIKATRU_SHELL="${BASH:-bash}"; if command -v cygpath >/dev/null 2>&1; then NIKATRU_SHELL="$(cygpath -w "$NIKATRU_SHELL")"; fi
-          node "$GITHUB_WORKSPACE/../.nikatru-shell/quiet-step.mjs" --name lane-apps.app-brick.42 -- "$NIKATRU_SHELL" -e "$NIKATRU_QUIET"
+          node "$GITHUB_WORKSPACE/../.nikatru-shell/quiet-step.mjs" --name lane-apps.app-brick.44 -- "$NIKATRU_SHELL" -e "$NIKATRU_QUIET"
       - name: Stamped app asserts its own chassis properties
-        if: ${{ success() || (!cancelled() && (github.event.client_payload.event == 'pull_request' && startsWith(github.event.client_payload.ref, 'refs/heads/rehearsal/')) && steps.nikatru-setup-ok.outcome == 'success' && steps.nikatru-setup-38.outcome == 'success') }}
+        if: ${{ success() || (!cancelled() && (github.event.client_payload.event == 'pull_request' && startsWith(github.event.client_payload.ref, 'refs/heads/rehearsal/')) && steps.nikatru-setup-ok.outcome == 'success' && steps.nikatru-setup-40.outcome == 'success') }}
         run: |
           NIKATRU_QUIET="$(mktemp "${RUNNER_TEMP:-/tmp}/nikatru-step.XXXXXX")"
           cat > "$NIKATRU_QUIET" <<'NIKATRU_QUIET_EOF'
           node tooling/ci/assert-stamp-properties.mjs
           NIKATRU_QUIET_EOF
           NIKATRU_SHELL="${BASH:-bash}"; if command -v cygpath >/dev/null 2>&1; then NIKATRU_SHELL="$(cygpath -w "$NIKATRU_SHELL")"; fi
-          node "$GITHUB_WORKSPACE/../.nikatru-shell/quiet-step.mjs" --name lane-apps.app-brick.43 -- "$NIKATRU_SHELL" -e "$NIKATRU_QUIET"
+          node "$GITHUB_WORKSPACE/../.nikatru-shell/quiet-step.mjs" --name lane-apps.app-brick.45 -- "$NIKATRU_SHELL" -e "$NIKATRU_QUIET"
       - name: The stamped app carries a done-record, and its DoD items really run
-        if: ${{ success() || (!cancelled() && (github.event.client_payload.event == 'pull_request' && startsWith(github.event.client_payload.ref, 'refs/heads/rehearsal/')) && steps.nikatru-setup-ok.outcome == 'success' && steps.nikatru-setup-38.outcome == 'success') }}
+        if: ${{ success() || (!cancelled() && (github.event.client_payload.event == 'pull_request' && startsWith(github.event.client_payload.ref, 'refs/heads/rehearsal/')) && steps.nikatru-setup-ok.outcome == 'success' && steps.nikatru-setup-40.outcome == 'success') }}
         run: |
           NIKATRU_QUIET="$(mktemp "${RUNNER_TEMP:-/tmp}/nikatru-step.XXXXXX")"
           cat > "$NIKATRU_QUIET" <<'NIKATRU_QUIET_EOF'
           node tooling/ci/assert-app-dod.mjs . --require-stamped
           NIKATRU_QUIET_EOF
           NIKATRU_SHELL="${BASH:-bash}"; if command -v cygpath >/dev/null 2>&1; then NIKATRU_SHELL="$(cygpath -w "$NIKATRU_SHELL")"; fi
-          node "$GITHUB_WORKSPACE/../.nikatru-shell/quiet-step.mjs" --name lane-apps.app-brick.44 -- "$NIKATRU_SHELL" -e "$NIKATRU_QUIET"
+          node "$GITHUB_WORKSPACE/../.nikatru-shell/quiet-step.mjs" --name lane-apps.app-brick.46 -- "$NIKATRU_SHELL" -e "$NIKATRU_QUIET"
       - name: Every package file each app ships has the licence row its stamp wrote
-        if: ${{ success() || (!cancelled() && (github.event.client_payload.event == 'pull_request' && startsWith(github.event.client_payload.ref, 'refs/heads/rehearsal/')) && steps.nikatru-setup-ok.outcome == 'success' && steps.nikatru-setup-38.outcome == 'success') }}
+        if: ${{ success() || (!cancelled() && (github.event.client_payload.event == 'pull_request' && startsWith(github.event.client_payload.ref, 'refs/heads/rehearsal/')) && steps.nikatru-setup-ok.outcome == 'success' && steps.nikatru-setup-40.outcome == 'success') }}
         run: |
           NIKATRU_QUIET="$(mktemp "${RUNNER_TEMP:-/tmp}/nikatru-step.XXXXXX")"
           cat > "$NIKATRU_QUIET" <<'NIKATRU_QUIET_EOF'
           node tooling/ci/gen-app-licence-rows.mjs "${{ github.workspace }}" --check
           NIKATRU_QUIET_EOF
           NIKATRU_SHELL="${BASH:-bash}"; if command -v cygpath >/dev/null 2>&1; then NIKATRU_SHELL="$(cygpath -w "$NIKATRU_SHELL")"; fi
-          node "$GITHUB_WORKSPACE/../.nikatru-shell/quiet-step.mjs" --name lane-apps.app-brick.45 -- "$NIKATRU_SHELL" -e "$NIKATRU_QUIET"
+          node "$GITHUB_WORKSPACE/../.nikatru-shell/quiet-step.mjs" --name lane-apps.app-brick.47 -- "$NIKATRU_SHELL" -e "$NIKATRU_QUIET"
       - name: Backend stamp has a Worker + APP_DB but still no per-app R2
-        if: ${{ success() || (!cancelled() && (github.event.client_payload.event == 'pull_request' && startsWith(github.event.client_payload.ref, 'refs/heads/rehearsal/')) && steps.nikatru-setup-ok.outcome == 'success' && steps.nikatru-setup-38.outcome == 'success') }}
+        if: ${{ success() || (!cancelled() && (github.event.client_payload.event == 'pull_request' && startsWith(github.event.client_payload.ref, 'refs/heads/rehearsal/')) && steps.nikatru-setup-ok.outcome == 'success' && steps.nikatru-setup-40.outcome == 'success') }}
         run: |
           NIKATRU_QUIET="$(mktemp "${RUNNER_TEMP:-/tmp}/nikatru-step.XXXXXX")"
           cat > "$NIKATRU_QUIET" <<'NIKATRU_QUIET_EOF'
           node tooling/ci/assert-clone-contract.mjs --client probe --backend probeapi
           NIKATRU_QUIET_EOF
           NIKATRU_SHELL="${BASH:-bash}"; if command -v cygpath >/dev/null 2>&1; then NIKATRU_SHELL="$(cygpath -w "$NIKATRU_SHELL")"; fi
-          node "$GITHUB_WORKSPACE/../.nikatru-shell/quiet-step.mjs" --name lane-apps.app-brick.46 -- "$NIKATRU_SHELL" -e "$NIKATRU_QUIET"
+          node "$GITHUB_WORKSPACE/../.nikatru-shell/quiet-step.mjs" --name lane-apps.app-brick.48 -- "$NIKATRU_SHELL" -e "$NIKATRU_QUIET"
       - name: The provisioner's config surgery still targets APP_DB, not the shared binding
-        if: ${{ success() || (!cancelled() && (github.event.client_payload.event == 'pull_request' && startsWith(github.event.client_payload.ref, 'refs/heads/rehearsal/')) && steps.nikatru-setup-ok.outcome == 'success' && steps.nikatru-setup-38.outcome == 'success') }}
+        if: ${{ success() || (!cancelled() && (github.event.client_payload.event == 'pull_request' && startsWith(github.event.client_payload.ref, 'refs/heads/rehearsal/')) && steps.nikatru-setup-ok.outcome == 'success' && steps.nikatru-setup-40.outcome == 'success') }}
         run: |
           NIKATRU_QUIET="$(mktemp "${RUNNER_TEMP:-/tmp}/nikatru-step.XXXXXX")"
           cat > "$NIKATRU_QUIET" <<'NIKATRU_QUIET_EOF'
           node tooling/scripts/provision-backend.mjs probeapi --self-check
           NIKATRU_QUIET_EOF
           NIKATRU_SHELL="${BASH:-bash}"; if command -v cygpath >/dev/null 2>&1; then NIKATRU_SHELL="$(cygpath -w "$NIKATRU_SHELL")"; fi
-          node "$GITHUB_WORKSPACE/../.nikatru-shell/quiet-step.mjs" --name lane-apps.app-brick.47 -- "$NIKATRU_SHELL" -e "$NIKATRU_QUIET"
+          node "$GITHUB_WORKSPACE/../.nikatru-shell/quiet-step.mjs" --name lane-apps.app-brick.49 -- "$NIKATRU_SHELL" -e "$NIKATRU_QUIET"
       - name: Backend stamp derived its own web origin, API host and release id
-        if: ${{ success() || (!cancelled() && (github.event.client_payload.event == 'pull_request' && startsWith(github.event.client_payload.ref, 'refs/heads/rehearsal/')) && steps.nikatru-setup-ok.outcome == 'success' && steps.nikatru-setup-38.outcome == 'success') }}
+        if: ${{ success() || (!cancelled() && (github.event.client_payload.event == 'pull_request' && startsWith(github.event.client_payload.ref, 'refs/heads/rehearsal/')) && steps.nikatru-setup-ok.outcome == 'success' && steps.nikatru-setup-40.outcome == 'success') }}
         run: |
           NIKATRU_QUIET="$(mktemp "${RUNNER_TEMP:-/tmp}/nikatru-step.XXXXXX")"
           cat > "$NIKATRU_QUIET" <<'NIKATRU_QUIET_EOF'
           node tooling/ci/assert-stamp-text-fidelity.mjs --vars tooling/bricks/app/_probe_backend_vars.json --service services/probeapi-api
           NIKATRU_QUIET_EOF
           NIKATRU_SHELL="${BASH:-bash}"; if command -v cygpath >/dev/null 2>&1; then NIKATRU_SHELL="$(cygpath -w "$NIKATRU_SHELL")"; fi
-          node "$GITHUB_WORKSPACE/../.nikatru-shell/quiet-step.mjs" --name lane-apps.app-brick.48 -- "$NIKATRU_SHELL" -e "$NIKATRU_QUIET"
+          node "$GITHUB_WORKSPACE/../.nikatru-shell/quiet-step.mjs" --name lane-apps.app-brick.50 -- "$NIKATRU_SHELL" -e "$NIKATRU_QUIET"
       - name: Revert the catalogue — both probes are throwaway
-        if: ${{ success() || (!cancelled() && (github.event.client_payload.event == 'pull_request' && startsWith(github.event.client_payload.ref, 'refs/heads/rehearsal/')) && steps.nikatru-setup-ok.outcome == 'success' && steps.nikatru-setup-38.outcome == 'success') }}
+        if: ${{ success() || (!cancelled() && (github.event.client_payload.event == 'pull_request' && startsWith(github.event.client_payload.ref, 'refs/heads/rehearsal/')) && steps.nikatru-setup-ok.outcome == 'success' && steps.nikatru-setup-40.outcome == 'success') }}
         run: |
           NIKATRU_QUIET="$(mktemp "${RUNNER_TEMP:-/tmp}/nikatru-step.XXXXXX")"
           cat > "$NIKATRU_QUIET" <<'NIKATRU_QUIET_EOF'
           git checkout -- catalog/apps.json sites/_shared/_data/apps.json
           NIKATRU_QUIET_EOF
           NIKATRU_SHELL="${BASH:-bash}"; if command -v cygpath >/dev/null 2>&1; then NIKATRU_SHELL="$(cygpath -w "$NIKATRU_SHELL")"; fi
-          node "$GITHUB_WORKSPACE/../.nikatru-shell/quiet-step.mjs" --name lane-apps.app-brick.49 -- "$NIKATRU_SHELL" -e "$NIKATRU_QUIET"
+          node "$GITHUB_WORKSPACE/../.nikatru-shell/quiet-step.mjs" --name lane-apps.app-brick.51 -- "$NIKATRU_SHELL" -e "$NIKATRU_QUIET"
       - name: The WHOLE workspace still resolves from the root with stamped apps on it
-        id: nikatru-setup-50
-        if: ${{ success() || (!cancelled() && (github.event.client_payload.event == 'pull_request' && startsWith(github.event.client_payload.ref, 'refs/heads/rehearsal/')) && steps.nikatru-setup-ok.outcome == 'success' && steps.nikatru-setup-38.outcome == 'success') }}
+        id: nikatru-setup-52
+        if: ${{ success() || (!cancelled() && (github.event.client_payload.event == 'pull_request' && startsWith(github.event.client_payload.ref, 'refs/heads/rehearsal/')) && steps.nikatru-setup-ok.outcome == 'success' && steps.nikatru-setup-40.outcome == 'success') }}
         run: |
           NIKATRU_QUIET="$(mktemp "${RUNNER_TEMP:-/tmp}/nikatru-step.XXXXXX")"
           cat > "$NIKATRU_QUIET" <<'NIKATRU_QUIET_EOF'
           flutter pub get
           NIKATRU_QUIET_EOF
           NIKATRU_SHELL="${BASH:-bash}"; if command -v cygpath >/dev/null 2>&1; then NIKATRU_SHELL="$(cygpath -w "$NIKATRU_SHELL")"; fi
-          node "$GITHUB_WORKSPACE/../.nikatru-shell/quiet-step.mjs" --name lane-apps.app-brick.50 -- "$NIKATRU_SHELL" -e "$NIKATRU_QUIET"
+          node "$GITHUB_WORKSPACE/../.nikatru-shell/quiet-step.mjs" --name lane-apps.app-brick.52 -- "$NIKATRU_SHELL" -e "$NIKATRU_QUIET"
       - name: The stamped probes' Apple audits are graded as preview, app #1's as sworn
-        if: ${{ success() || (!cancelled() && (github.event.client_payload.event == 'pull_request' && startsWith(github.event.client_payload.ref, 'refs/heads/rehearsal/')) && steps.nikatru-setup-ok.outcome == 'success' && steps.nikatru-setup-38.outcome == 'success' && steps.nikatru-setup-50.outcome == 'success') }}
+        if: ${{ success() || (!cancelled() && (github.event.client_payload.event == 'pull_request' && startsWith(github.event.client_payload.ref, 'refs/heads/rehearsal/')) && steps.nikatru-setup-ok.outcome == 'success' && steps.nikatru-setup-40.outcome == 'success' && steps.nikatru-setup-52.outcome == 'success') }}
         run: |
           NIKATRU_QUIET="$(mktemp "${RUNNER_TEMP:-/tmp}/nikatru-step.XXXXXX")"
           cat > "$NIKATRU_QUIET" <<'NIKATRU_QUIET_EOF'
           node tooling/ci/assert-apple-privacy-manifest.mjs
           NIKATRU_QUIET_EOF
           NIKATRU_SHELL="${BASH:-bash}"; if command -v cygpath >/dev/null 2>&1; then NIKATRU_SHELL="$(cygpath -w "$NIKATRU_SHELL")"; fi
-          node "$GITHUB_WORKSPACE/../.nikatru-shell/quiet-step.mjs" --name lane-apps.app-brick.51 -- "$NIKATRU_SHELL" -e "$NIKATRU_QUIET"
+          node "$GITHUB_WORKSPACE/../.nikatru-shell/quiet-step.mjs" --name lane-apps.app-brick.53 -- "$NIKATRU_SHELL" -e "$NIKATRU_QUIET"
       - name: Revert the root pubspec + lockfile — both probes are throwaway
-        if: ${{ success() || (!cancelled() && (github.event.client_payload.event == 'pull_request' && startsWith(github.event.client_payload.ref, 'refs/heads/rehearsal/')) && steps.nikatru-setup-ok.outcome == 'success' && steps.nikatru-setup-38.outcome == 'success' && steps.nikatru-setup-50.outcome == 'success') }}
+        if: ${{ success() || (!cancelled() && (github.event.client_payload.event == 'pull_request' && startsWith(github.event.client_payload.ref, 'refs/heads/rehearsal/')) && steps.nikatru-setup-ok.outcome == 'success' && steps.nikatru-setup-40.outcome == 'success' && steps.nikatru-setup-52.outcome == 'success') }}
         run: |
           NIKATRU_QUIET="$(mktemp "${RUNNER_TEMP:-/tmp}/nikatru-step.XXXXXX")"
           cat > "$NIKATRU_QUIET" <<'NIKATRU_QUIET_EOF'
           git checkout -- pubspec.yaml pubspec.lock
           NIKATRU_QUIET_EOF
           NIKATRU_SHELL="${BASH:-bash}"; if command -v cygpath >/dev/null 2>&1; then NIKATRU_SHELL="$(cygpath -w "$NIKATRU_SHELL")"; fi
-          node "$GITHUB_WORKSPACE/../.nikatru-shell/quiet-step.mjs" --name lane-apps.app-brick.52 -- "$NIKATRU_SHELL" -e "$NIKATRU_QUIET"
+          node "$GITHUB_WORKSPACE/../.nikatru-shell/quiet-step.mjs" --name lane-apps.app-brick.54 -- "$NIKATRU_SHELL" -e "$NIKATRU_QUIET"
       - name: Typecheck + dry-run the stamped service
-        id: nikatru-setup-53
-        if: ${{ success() || (!cancelled() && (github.event.client_payload.event == 'pull_request' && startsWith(github.event.client_payload.ref, 'refs/heads/rehearsal/')) && steps.nikatru-setup-ok.outcome == 'success' && steps.nikatru-setup-38.outcome == 'success' && steps.nikatru-setup-50.outcome == 'success') }}
+        id: nikatru-setup-55
+        if: ${{ success() || (!cancelled() && (github.event.client_payload.event == 'pull_request' && startsWith(github.event.client_payload.ref, 'refs/heads/rehearsal/')) && steps.nikatru-setup-ok.outcome == 'success' && steps.nikatru-setup-40.outcome == 'success' && steps.nikatru-setup-52.outcome == 'success') }}
         working-directory: services/probeapi-api
         run: |
           NIKATRU_QUIET="$(mktemp "${RUNNER_TEMP:-/tmp}/nikatru-step.XXXXXX")"
@@ -950,7 +969,7 @@ jobs:
           npx wrangler deploy --dry-run
           NIKATRU_QUIET_EOF
           NIKATRU_SHELL="${BASH:-bash}"; if command -v cygpath >/dev/null 2>&1; then NIKATRU_SHELL="$(cygpath -w "$NIKATRU_SHELL")"; fi
-          node "$GITHUB_WORKSPACE/../.nikatru-shell/quiet-step.mjs" --name lane-apps.app-brick.53 -- "$NIKATRU_SHELL" -e "$NIKATRU_QUIET"
+          node "$GITHUB_WORKSPACE/../.nikatru-shell/quiet-step.mjs" --name lane-apps.app-brick.55 -- "$NIKATRU_SHELL" -e "$NIKATRU_QUIET"
       - name: Hand this job's red detail to the report job, sealed (generated)
         id: nikatru-handoff
         if: always()
@@ -1840,9 +1859,511 @@ jobs:
           key: nikatru-detail-${{ github.run_id }}-${{ github.run_attempt }}-lane-apps.app-lock-desktop.${{ strategy.job-index }}
           enableCrossOsArchive: true
 
+  journey-plan:
+    name: Journey smoke plan (does this change walk sign-up → delete-account)
+    needs: [detect]
+    if: needs.detect.outputs.affected == 'true'
+    runs-on: ubuntu-24.04
+    timeout-minutes: 5
+    permissions:
+      contents: read
+    outputs:
+      walk: ${{ steps.plan.outputs.walk }}
+      apps: ${{ steps.workspace.outputs.apps }}
+    steps:
+      - name: Check out the private tree (generated)
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
+        with:
+          repository: ${{ env.NIKATRU_PRIVATE_REPO }}
+          ref: ${{ inputs.nikatru_sha || (github.event.client_payload.event == 'pull_request' && format('refs/pull/{0}/merge', github.event.client_payload.pr) || github.event.client_payload.sha || 'main') }}
+          fetch-depth: 0
+          filter: blob:none
+          ssh-key: ${{ secrets.PRIVATE_DEPLOY_KEY }}
+          persist-credentials: false
+      - name: Name the private commit (generated)
+        shell: bash
+        working-directory: ${{ github.workspace }}
+        env:
+          NIKATRU_P_EVENT: ${{ github.event.client_payload.event || github.event_name }}
+          NIKATRU_P_REF: ${{ github.event.client_payload.ref || 'refs/heads/main' }}
+          NIKATRU_P_BASE_SHA: ${{ github.event.client_payload.base_sha }}
+          NIKATRU_P_BASE_REF: ${{ github.event.client_payload.base_ref }}
+          NIKATRU_P_PR: ${{ github.event.client_payload.pr }}
+          NIKATRU_P_PR_CREATED_AT: ${{ github.event.client_payload.pr_created_at }}
+          NIKATRU_P_DRAFT: ${{ github.event.client_payload.draft }}
+          NIKATRU_P_SHA: ${{ github.event.client_payload.sha }}
+        run: |
+          if [ "$NIKATRU_P_EVENT" = pull_request ]; then
+            set -- $(git cat-file -p HEAD | sed -n '1,/^$/s/^parent //p')
+            if [ "${2:-}" != "$NIKATRU_P_SHA" ]; then
+              echo "::error::the checked-out merge of PR #$NIKATRU_P_PR is not the merge of the dispatched head $NIKATRU_P_SHA (its second parent is ${2:-none}); the nikatru-pin job pins it — re-run the whole workflow, not this job"
+              exit 1
+            fi
+          fi
+          {
+            echo "NIKATRU_SHA=$(git rev-parse HEAD)"
+            echo "NIKATRU_HEAD_SHA=${NIKATRU_P_SHA:-$(git rev-parse HEAD)}"
+            echo "NIKATRU_EVENT_NAME=$NIKATRU_P_EVENT"
+            echo "NIKATRU_REF=$NIKATRU_P_REF"
+            echo "NIKATRU_REF_NAME=${NIKATRU_P_REF#refs/*/}"
+            echo "NIKATRU_BASE_SHA=$NIKATRU_P_BASE_SHA"
+            echo "NIKATRU_BASE_REF=$NIKATRU_P_BASE_REF"
+            echo "NIKATRU_PR=$NIKATRU_P_PR"
+            echo "NIKATRU_PR_CREATED_AT=$NIKATRU_P_PR_CREATED_AT"
+            echo "NIKATRU_DRAFT=$NIKATRU_P_DRAFT"
+          } >> "$GITHUB_ENV"
+      - name: Check out this shell repository's own step wrapper and reporter (generated)
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
+        with:
+          path: .nikatru-shell
+          sparse-checkout: .github/nikatru
+          persist-credentials: false
+      - name: Stage the shell's own copies outside the private checkout (generated)
+        shell: bash
+        working-directory: ${{ github.workspace }}
+        env:
+          NIKATRU_DETAIL_KEY: ${{ secrets.NIKATRU_DETAIL_KEY }}
+          NIKATRU_DETAIL_KEY_FILE: ${{ github.workspace }}/../.nikatru-shell/detail.key
+        run: |
+          rm -rf ../.nikatru-shell
+          mv .nikatru-shell/.github/nikatru ../.nikatru-shell
+          rm -rf .nikatru-shell
+          py=python3; python3 -c '' >/dev/null 2>&1 || py=python
+          "$py" -I "$GITHUB_WORKSPACE/../.nikatru-shell/report.py" derive
+      - name: Check out private main's composite actions (generated)
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
+        with:
+          repository: ${{ env.NIKATRU_PRIVATE_REPO }}
+          ref: refs/heads/main
+          path: .nikatru-trusted
+          sparse-checkout: .github/actions
+          ssh-key: ${{ secrets.PRIVATE_DEPLOY_KEY }}
+          persist-credentials: false
+      - name: Keep private main's composite actions out of the branch's tree (generated)
+        shell: bash
+        working-directory: ${{ github.workspace }}
+        run: printf '/.nikatru-trusted/\n' >> "$(git rev-parse --git-path info/exclude)"
+      - uses: ./.nikatru-trusted/.github/actions/setup-node
+        env:
+          NIKATRU_REF: ${{ github.event.client_payload.ref || 'refs/heads/main' }}
+          NIKATRU_EVENT_NAME: ${{ github.event.client_payload.event || github.event_name }}
+          NIKATRU_PR: ${{ github.event.client_payload.pr }}
+      - name: Every setup step of this job succeeded (generated)
+        id: nikatru-setup-ok
+        run: echo "every setup step before the first check succeeded"
+      - id: plan
+        name: The plan (walk on an auth or account diff, and on every push to main)
+        run: |
+          NIKATRU_QUIET="$(mktemp "${RUNNER_TEMP:-/tmp}/nikatru-step.XXXXXX")"
+          cat > "$NIKATRU_QUIET" <<'NIKATRU_QUIET_EOF'
+          node tooling/e2e/new-user/pr-smoke.mjs plan
+          NIKATRU_QUIET_EOF
+          NIKATRU_SHELL="${BASH:-bash}"; if command -v cygpath >/dev/null 2>&1; then NIKATRU_SHELL="$(cygpath -w "$NIKATRU_SHELL")"; fi
+          node "$GITHUB_WORKSPACE/../.nikatru-shell/quiet-step.mjs" --name lane-apps.journey-plan.3 -- "$NIKATRU_SHELL" -e "$NIKATRU_QUIET"
+      - id: workspace
+        if: ${{ success() || (!cancelled() && (github.event.client_payload.event == 'pull_request' && startsWith(github.event.client_payload.ref, 'refs/heads/rehearsal/')) && steps.nikatru-setup-ok.outcome == 'success') }}
+        name: The matrix comes from the workspace, never from this file
+        run: |
+          NIKATRU_QUIET="$(mktemp "${RUNNER_TEMP:-/tmp}/nikatru-step.XXXXXX")"
+          cat > "$NIKATRU_QUIET" <<'NIKATRU_QUIET_EOF'
+          set -euo pipefail
+          apps="$(node tooling/ci/assert-release-lane-generic.mjs --emit-apps)"
+          node tooling/e2e/new-user/pr-smoke.mjs apps "$apps"
+          NIKATRU_QUIET_EOF
+          NIKATRU_SHELL="${BASH:-bash}"; if command -v cygpath >/dev/null 2>&1; then NIKATRU_SHELL="$(cygpath -w "$NIKATRU_SHELL")"; fi
+          node "$GITHUB_WORKSPACE/../.nikatru-shell/quiet-step.mjs" --name lane-apps.journey-plan.4 -- "$NIKATRU_SHELL" -e "$NIKATRU_QUIET"
+      - name: Hand this job's red detail to the report job, sealed (generated)
+        id: nikatru-handoff
+        if: always()
+        shell: bash
+        working-directory: ${{ github.workspace }}
+        env:
+          NIKATRU_DETAIL_KEY_FILE: ${{ github.workspace }}/../.nikatru-shell/detail.key
+          NIKATRU_HANDOFF: nikatru-detail-${{ github.run_id }}-${{ github.run_attempt }}-lane-apps.journey-plan.${{ strategy.job-index }}
+        run: |
+          if [ -s "$RUNNER_TEMP/report-detail.md" ]; then
+            py=python3; python3 -c '' >/dev/null 2>&1 || py=python
+            "$py" -I "$GITHUB_WORKSPACE/../.nikatru-shell/report.py" handoff
+          fi
+      - name: Save the hand-off (generated)
+        if: always() && steps.nikatru-handoff.outputs.has == 'true'
+        uses: actions/cache/save@55cc8345863c7cc4c66a329aec7e433d2d1c52a9
+        with:
+          path: .nikatru-detail
+          key: nikatru-detail-${{ github.run_id }}-${{ github.run_attempt }}-lane-apps.journey-plan.${{ strategy.job-index }}
+          enableCrossOsArchive: true
+
+  journey-smoke:
+    name: Journey smoke (ephemeral identity, ${{ matrix.app }}, sign-up form → delete-account)
+    needs: [detect, journey-plan]
+    if: needs.detect.outputs.affected == 'true'
+    runs-on: ubuntu-24.04
+    timeout-minutes: 30
+    permissions:
+      contents: read
+    strategy:
+      fail-fast: false
+      max-parallel: 4
+      matrix:
+        app: ${{ fromJSON(needs.journey-plan.outputs.apps) }}
+    env:
+      WRANGLER_SEND_METRICS: 'false'
+      NUJ_MAIL_READER: mailpit
+      SUPABASE_URL: http://127.0.0.1:54321
+      WORKER_URL: http://127.0.0.1:8787
+      APP_API_URL: https://127.0.0.1:8788
+      NUJ_MAIL_URL: http://127.0.0.1:8025
+      ALLOW_LIST_ORIGIN_OVERRIDE: http://127.0.0.1:8787
+      NUJ_N: '2'
+      NUJ_ONBOARDING: skip
+    steps:
+      - name: Check out the private tree (generated)
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
+        with:
+          repository: ${{ env.NIKATRU_PRIVATE_REPO }}
+          ref: ${{ inputs.nikatru_sha || (github.event.client_payload.event == 'pull_request' && format('refs/pull/{0}/merge', github.event.client_payload.pr) || github.event.client_payload.sha || 'main') }}
+          ssh-key: ${{ secrets.PRIVATE_DEPLOY_KEY }}
+          persist-credentials: false
+      - name: Name the private commit (generated)
+        shell: bash
+        working-directory: ${{ github.workspace }}
+        env:
+          NIKATRU_P_EVENT: ${{ github.event.client_payload.event || github.event_name }}
+          NIKATRU_P_REF: ${{ github.event.client_payload.ref || 'refs/heads/main' }}
+          NIKATRU_P_BASE_SHA: ${{ github.event.client_payload.base_sha }}
+          NIKATRU_P_BASE_REF: ${{ github.event.client_payload.base_ref }}
+          NIKATRU_P_PR: ${{ github.event.client_payload.pr }}
+          NIKATRU_P_PR_CREATED_AT: ${{ github.event.client_payload.pr_created_at }}
+          NIKATRU_P_DRAFT: ${{ github.event.client_payload.draft }}
+          NIKATRU_P_SHA: ${{ github.event.client_payload.sha }}
+        run: |
+          if [ "$NIKATRU_P_EVENT" = pull_request ]; then
+            set -- $(git cat-file -p HEAD | sed -n '1,/^$/s/^parent //p')
+            if [ "${2:-}" != "$NIKATRU_P_SHA" ]; then
+              echo "::error::the checked-out merge of PR #$NIKATRU_P_PR is not the merge of the dispatched head $NIKATRU_P_SHA (its second parent is ${2:-none}); the nikatru-pin job pins it — re-run the whole workflow, not this job"
+              exit 1
+            fi
+          fi
+          {
+            echo "NIKATRU_SHA=$(git rev-parse HEAD)"
+            echo "NIKATRU_HEAD_SHA=${NIKATRU_P_SHA:-$(git rev-parse HEAD)}"
+            echo "NIKATRU_EVENT_NAME=$NIKATRU_P_EVENT"
+            echo "NIKATRU_REF=$NIKATRU_P_REF"
+            echo "NIKATRU_REF_NAME=${NIKATRU_P_REF#refs/*/}"
+            echo "NIKATRU_BASE_SHA=$NIKATRU_P_BASE_SHA"
+            echo "NIKATRU_BASE_REF=$NIKATRU_P_BASE_REF"
+            echo "NIKATRU_PR=$NIKATRU_P_PR"
+            echo "NIKATRU_PR_CREATED_AT=$NIKATRU_P_PR_CREATED_AT"
+            echo "NIKATRU_DRAFT=$NIKATRU_P_DRAFT"
+          } >> "$GITHUB_ENV"
+      - name: Check out this shell repository's own step wrapper and reporter (generated)
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
+        with:
+          path: .nikatru-shell
+          sparse-checkout: .github/nikatru
+          persist-credentials: false
+      - name: Stage the shell's own copies outside the private checkout (generated)
+        shell: bash
+        working-directory: ${{ github.workspace }}
+        env:
+          NIKATRU_DETAIL_KEY: ${{ secrets.NIKATRU_DETAIL_KEY }}
+          NIKATRU_DETAIL_KEY_FILE: ${{ github.workspace }}/../.nikatru-shell/detail.key
+        run: |
+          rm -rf ../.nikatru-shell
+          mv .nikatru-shell/.github/nikatru ../.nikatru-shell
+          rm -rf .nikatru-shell
+          py=python3; python3 -c '' >/dev/null 2>&1 || py=python
+          "$py" -I "$GITHUB_WORKSPACE/../.nikatru-shell/report.py" derive
+      - name: Check out the private tree (generated)
+        if: needs.journey-plan.outputs.walk == 'true'
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
+        with:
+          repository: ${{ env.NIKATRU_PRIVATE_REPO }}
+          ref: ${{ inputs.nikatru_sha || (github.event.client_payload.event == 'pull_request' && format('refs/pull/{0}/merge', github.event.client_payload.pr) || github.event.client_payload.sha || 'main') }}
+          ssh-key: ${{ secrets.PRIVATE_DEPLOY_KEY }}
+          persist-credentials: false
+      - name: Check out private main's composite actions (generated)
+        if: needs.journey-plan.outputs.walk == 'true'
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
+        with:
+          repository: ${{ env.NIKATRU_PRIVATE_REPO }}
+          ref: refs/heads/main
+          path: .nikatru-trusted
+          sparse-checkout: .github/actions
+          ssh-key: ${{ secrets.PRIVATE_DEPLOY_KEY }}
+          persist-credentials: false
+      - name: Keep private main's composite actions out of the branch's tree (generated)
+        if: needs.journey-plan.outputs.walk == 'true'
+        shell: bash
+        working-directory: ${{ github.workspace }}
+        run: printf '/.nikatru-trusted/\n' >> "$(git rev-parse --git-path info/exclude)"
+      - uses: ./.nikatru-trusted/.github/actions/setup-flutter
+        if: needs.journey-plan.outputs.walk == 'true'
+        with:
+          node: 'pinned'
+        env:
+          NIKATRU_REF: ${{ github.event.client_payload.ref || 'refs/heads/main' }}
+          NIKATRU_EVENT_NAME: ${{ github.event.client_payload.event || github.event_name }}
+          NIKATRU_PR: ${{ github.event.client_payload.pr }}
+      - name: Every setup step of this job succeeded (generated)
+        id: nikatru-setup-ok
+        run: echo "every setup step before the first check succeeded"
+      - name: The plan's verdict
+        env:
+          WALK: ${{ needs.journey-plan.outputs.walk }}
+        run: |
+          NIKATRU_QUIET="$(mktemp "${RUNNER_TEMP:-/tmp}/nikatru-step.XXXXXX")"
+          cat > "$NIKATRU_QUIET" <<'NIKATRU_QUIET_EOF'
+          if [ "$WALK" = "true" ]; then echo "journey smoke: WALKS"; else echo "journey smoke: not walked (journey-plan's reason is in its summary)"; fi
+          NIKATRU_QUIET_EOF
+          NIKATRU_SHELL="${BASH:-bash}"; if command -v cygpath >/dev/null 2>&1; then NIKATRU_SHELL="$(cygpath -w "$NIKATRU_SHELL")"; fi
+          node "$GITHUB_WORKSPACE/../.nikatru-shell/quiet-step.mjs" --name lane-apps.journey-smoke.3 -- "$NIKATRU_SHELL" -e "$NIKATRU_QUIET"
+      - name: The stack's directory and the run's UTC date
+        id: nikatru-setup-4
+        if: ${{ success() || (!cancelled() && (github.event.client_payload.event == 'pull_request' && startsWith(github.event.client_payload.ref, 'refs/heads/rehearsal/')) && steps.nikatru-setup-ok.outcome == 'success') }}
+        run: |
+          NIKATRU_QUIET="$(mktemp "${RUNNER_TEMP:-/tmp}/nikatru-step.XXXXXX")"
+          cat > "$NIKATRU_QUIET" <<'NIKATRU_QUIET_EOF'
+          echo "NUJ_STACK_DIR=${RUNNER_TEMP}/nuj-email" >> "$GITHUB_ENV"
+          echo "E2E_NUJ_DATE=$(date -u +%Y%m%d)" >> "$GITHUB_ENV"
+          NIKATRU_QUIET_EOF
+          NIKATRU_SHELL="${BASH:-bash}"; if command -v cygpath >/dev/null 2>&1; then NIKATRU_SHELL="$(cygpath -w "$NIKATRU_SHELL")"; fi
+          node "$GITHUB_WORKSPACE/../.nikatru-shell/quiet-step.mjs" --name lane-apps.journey-smoke.4 -- "$NIKATRU_SHELL" -e "$NIKATRU_QUIET"
+      - name: This run's build identity (APP_VERSION)
+        id: nikatru-setup-5
+        if: ${{ success() || (!cancelled() && (github.event.client_payload.event == 'pull_request' && startsWith(github.event.client_payload.ref, 'refs/heads/rehearsal/')) && steps.nikatru-setup-ok.outcome == 'success' && steps.nikatru-setup-4.outcome == 'success') }}
+        run: |
+          NIKATRU_QUIET="$(mktemp "${RUNNER_TEMP:-/tmp}/nikatru-step.XXXXXX")"
+          cat > "$NIKATRU_QUIET" <<'NIKATRU_QUIET_EOF'
+          echo "NUJ_APP_VERSION=nuj-${{ github.run_number }}-${NIKATRU_SHA::7}" >> "$GITHUB_ENV"
+          NIKATRU_QUIET_EOF
+          NIKATRU_SHELL="${BASH:-bash}"; if command -v cygpath >/dev/null 2>&1; then NIKATRU_SHELL="$(cygpath -w "$NIKATRU_SHELL")"; fi
+          node "$GITHUB_WORKSPACE/../.nikatru-shell/quiet-step.mjs" --name lane-apps.journey-smoke.5 -- "$NIKATRU_SHELL" -e "$NIKATRU_QUIET"
+      - name: Refuse any non-local URL before a request
+        if: ${{ (success() || (!cancelled() && (github.event.client_payload.event == 'pull_request' && startsWith(github.event.client_payload.ref, 'refs/heads/rehearsal/')) && steps.nikatru-setup-ok.outcome == 'success' && steps.nikatru-setup-4.outcome == 'success' && steps.nikatru-setup-5.outcome == 'success')) && (needs.journey-plan.outputs.walk == 'true') }}
+        run: |
+          NIKATRU_QUIET="$(mktemp "${RUNNER_TEMP:-/tmp}/nikatru-step.XXXXXX")"
+          cat > "$NIKATRU_QUIET" <<'NIKATRU_QUIET_EOF'
+          node tooling/e2e/new-user/journey.mjs isolation
+          NIKATRU_QUIET_EOF
+          NIKATRU_SHELL="${BASH:-bash}"; if command -v cygpath >/dev/null 2>&1; then NIKATRU_SHELL="$(cygpath -w "$NIKATRU_SHELL")"; fi
+          node "$GITHUB_WORKSPACE/../.nikatru-shell/quiet-step.mjs" --name lane-apps.journey-smoke.6 -- "$NIKATRU_SHELL" -e "$NIKATRU_QUIET"
+      - name: Install the platform Worker
+        id: nikatru-setup-7
+        if: ${{ (success() || (!cancelled() && (github.event.client_payload.event == 'pull_request' && startsWith(github.event.client_payload.ref, 'refs/heads/rehearsal/')) && steps.nikatru-setup-ok.outcome == 'success' && steps.nikatru-setup-4.outcome == 'success' && steps.nikatru-setup-5.outcome == 'success')) && (needs.journey-plan.outputs.walk == 'true') }}
+        working-directory: services/platform
+        run: |
+          NIKATRU_QUIET="$(mktemp "${RUNNER_TEMP:-/tmp}/nikatru-step.XXXXXX")"
+          cat > "$NIKATRU_QUIET" <<'NIKATRU_QUIET_EOF'
+          node "$GITHUB_WORKSPACE/tooling/ops/npm-ci-retry.mjs" -- npm ci --no-audit --no-fund
+          NIKATRU_QUIET_EOF
+          NIKATRU_SHELL="${BASH:-bash}"; if command -v cygpath >/dev/null 2>&1; then NIKATRU_SHELL="$(cygpath -w "$NIKATRU_SHELL")"; fi
+          node "$GITHUB_WORKSPACE/../.nikatru-shell/quiet-step.mjs" --name lane-apps.journey-smoke.7 -- "$NIKATRU_SHELL" -e "$NIKATRU_QUIET"
+      - name: Install the app Worker
+        id: nikatru-setup-8
+        if: ${{ (success() || (!cancelled() && (github.event.client_payload.event == 'pull_request' && startsWith(github.event.client_payload.ref, 'refs/heads/rehearsal/')) && steps.nikatru-setup-ok.outcome == 'success' && steps.nikatru-setup-4.outcome == 'success' && steps.nikatru-setup-5.outcome == 'success' && steps.nikatru-setup-7.outcome == 'success')) && (needs.journey-plan.outputs.walk == 'true') }}
+        working-directory: services/${{ matrix.app }}-api
+        run: |
+          NIKATRU_QUIET="$(mktemp "${RUNNER_TEMP:-/tmp}/nikatru-step.XXXXXX")"
+          cat > "$NIKATRU_QUIET" <<'NIKATRU_QUIET_EOF'
+          node "$GITHUB_WORKSPACE/tooling/ops/npm-ci-retry.mjs" -- npm ci --no-audit --no-fund
+          NIKATRU_QUIET_EOF
+          NIKATRU_SHELL="${BASH:-bash}"; if command -v cygpath >/dev/null 2>&1; then NIKATRU_SHELL="$(cygpath -w "$NIKATRU_SHELL")"; fi
+          node "$GITHUB_WORKSPACE/../.nikatru-shell/quiet-step.mjs" --name lane-apps.journey-smoke.8 -- "$NIKATRU_SHELL" -e "$NIKATRU_QUIET"
+      - name: Bring up the ephemeral identity stack, with the mail catcher (captcha off)
+        if: ${{ (success() || (!cancelled() && (github.event.client_payload.event == 'pull_request' && startsWith(github.event.client_payload.ref, 'refs/heads/rehearsal/')) && steps.nikatru-setup-ok.outcome == 'success' && steps.nikatru-setup-4.outcome == 'success' && steps.nikatru-setup-5.outcome == 'success' && steps.nikatru-setup-7.outcome == 'success' && steps.nikatru-setup-8.outcome == 'success')) && (needs.journey-plan.outputs.walk == 'true') }}
+        timeout-minutes: 8
+        run: |
+          NIKATRU_QUIET="$(mktemp "${RUNNER_TEMP:-/tmp}/nikatru-step.XXXXXX")"
+          cat > "$NIKATRU_QUIET" <<'NIKATRU_QUIET_EOF'
+          node tooling/e2e/first-sign-in/stack.mjs up --mail --captcha off
+          NIKATRU_QUIET_EOF
+          NIKATRU_SHELL="${BASH:-bash}"; if command -v cygpath >/dev/null 2>&1; then NIKATRU_SHELL="$(cygpath -w "$NIKATRU_SHELL")"; fi
+          node "$GITHUB_WORKSPACE/../.nikatru-shell/quiet-step.mjs" --name lane-apps.journey-smoke.9 -- "$NIKATRU_SHELL" -e "$NIKATRU_QUIET"
+      - name: Apply the D1 migrations (local, one shared state)
+        if: ${{ (success() || (!cancelled() && (github.event.client_payload.event == 'pull_request' && startsWith(github.event.client_payload.ref, 'refs/heads/rehearsal/')) && steps.nikatru-setup-ok.outcome == 'success' && steps.nikatru-setup-4.outcome == 'success' && steps.nikatru-setup-5.outcome == 'success' && steps.nikatru-setup-7.outcome == 'success' && steps.nikatru-setup-8.outcome == 'success')) && (needs.journey-plan.outputs.walk == 'true') }}
+        run: |
+          NIKATRU_QUIET="$(mktemp "${RUNNER_TEMP:-/tmp}/nikatru-step.XXXXXX")"
+          cat > "$NIKATRU_QUIET" <<'NIKATRU_QUIET_EOF'
+          set -euo pipefail
+          (cd services/${{ matrix.app }}-api && npx wrangler d1 migrations apply APP_DB --local --env sandbox --persist-to "$RUNNER_TEMP/wrangler-state")
+          (cd services/platform && npx wrangler d1 migrations apply PLATFORM_DB --local --env sandbox --persist-to "$RUNNER_TEMP/wrangler-state")
+          NIKATRU_QUIET_EOF
+          NIKATRU_SHELL="${BASH:-bash}"; if command -v cygpath >/dev/null 2>&1; then NIKATRU_SHELL="$(cygpath -w "$NIKATRU_SHELL")"; fi
+          node "$GITHUB_WORKSPACE/../.nikatru-shell/quiet-step.mjs" --name lane-apps.journey-smoke.10 -- "$NIKATRU_SHELL" -e "$NIKATRU_QUIET"
+      - name: Start the app Worker and the platform Worker against the ephemeral GoTrue
+        if: ${{ (success() || (!cancelled() && (github.event.client_payload.event == 'pull_request' && startsWith(github.event.client_payload.ref, 'refs/heads/rehearsal/')) && steps.nikatru-setup-ok.outcome == 'success' && steps.nikatru-setup-4.outcome == 'success' && steps.nikatru-setup-5.outcome == 'success' && steps.nikatru-setup-7.outcome == 'success' && steps.nikatru-setup-8.outcome == 'success')) && (needs.journey-plan.outputs.walk == 'true') }}
+        run: |
+          NIKATRU_QUIET="$(mktemp "${RUNNER_TEMP:-/tmp}/nikatru-step.XXXXXX")"
+          cat > "$NIKATRU_QUIET" <<'NIKATRU_QUIET_EOF'
+          set -euo pipefail
+          stack="${GITHUB_WORKSPACE}/tooling/e2e/first-sign-in/stack.mjs"
+          certs="${NUJ_STACK_DIR}/certs"
+          appenv="$(node "$stack" worker-env app)"
+          platenv="$(node "$stack" worker-env platform)"
+          (cd services/${{ matrix.app }}-api && nohup npx wrangler dev --env sandbox --local --ip 127.0.0.1 --port 8788 --inspector-port 9230 \
+            --local-protocol https --https-key-path "$certs/local.key" --https-cert-path "$certs/local.pem" \
+            --persist-to "$RUNNER_TEMP/wrangler-state" --env-file "$appenv" > "$RUNNER_TEMP/wrangler-app.log" 2>&1 &)
+          (cd services/platform && NODE_EXTRA_CA_CERTS="$certs/ca.pem" nohup npx wrangler dev --env sandbox --local --ip 127.0.0.1 --port 8787 --inspector-port 9229 \
+            --persist-to "$RUNNER_TEMP/wrangler-state" --env-file "$platenv" > "$RUNNER_TEMP/wrangler.log" 2>&1 &)
+          tries=0
+          while [ "$tries" -lt 120 ]; do
+            if curl -sf --cacert "$certs/ca.pem" "${APP_API_URL}/v1/health" > /dev/null && curl -sf "${WORKER_URL}/v1/health" > /dev/null; then exit 0; fi
+            tries=$((tries + 1))
+            sleep 1
+          done
+          echo "::error::the Workers did not both answer (:8788 https, :8787)"
+          tail -60 "$RUNNER_TEMP/wrangler-app.log"
+          tail -60 "$RUNNER_TEMP/wrangler.log"
+          exit 2
+          NIKATRU_QUIET_EOF
+          NIKATRU_SHELL="${BASH:-bash}"; if command -v cygpath >/dev/null 2>&1; then NIKATRU_SHELL="$(cygpath -w "$NIKATRU_SHELL")"; fi
+          node "$GITHUB_WORKSPACE/../.nikatru-shell/quiet-step.mjs" --name lane-apps.journey-smoke.11 -- "$NIKATRU_SHELL" -e "$NIKATRU_QUIET"
+      - name: The stack is ready (captcha off; the catcher answers, the Worker trusts the stack)
+        if: ${{ (success() || (!cancelled() && (github.event.client_payload.event == 'pull_request' && startsWith(github.event.client_payload.ref, 'refs/heads/rehearsal/')) && steps.nikatru-setup-ok.outcome == 'success' && steps.nikatru-setup-4.outcome == 'success' && steps.nikatru-setup-5.outcome == 'success' && steps.nikatru-setup-7.outcome == 'success' && steps.nikatru-setup-8.outcome == 'success')) && (needs.journey-plan.outputs.walk == 'true') }}
+        run: |
+          NIKATRU_QUIET="$(mktemp "${RUNNER_TEMP:-/tmp}/nikatru-step.XXXXXX")"
+          cat > "$NIKATRU_QUIET" <<'NIKATRU_QUIET_EOF'
+          node tooling/e2e/new-user/journey.mjs stack-ready
+          NIKATRU_QUIET_EOF
+          NIKATRU_SHELL="${BASH:-bash}"; if command -v cygpath >/dev/null 2>&1; then NIKATRU_SHELL="$(cygpath -w "$NIKATRU_SHELL")"; fi
+          node "$GITHUB_WORKSPACE/../.nikatru-shell/quiet-step.mjs" --name lane-apps.journey-smoke.12 -- "$NIKATRU_SHELL" -e "$NIKATRU_QUIET"
+      - name: The leg plan (walk, or PENDING with its reason)
+        if: ${{ (success() || (!cancelled() && (github.event.client_payload.event == 'pull_request' && startsWith(github.event.client_payload.ref, 'refs/heads/rehearsal/')) && steps.nikatru-setup-ok.outcome == 'success' && steps.nikatru-setup-4.outcome == 'success' && steps.nikatru-setup-5.outcome == 'success' && steps.nikatru-setup-7.outcome == 'success' && steps.nikatru-setup-8.outcome == 'success')) && (needs.journey-plan.outputs.walk == 'true') }}
+        run: |
+          NIKATRU_QUIET="$(mktemp "${RUNNER_TEMP:-/tmp}/nikatru-step.XXXXXX")"
+          cat > "$NIKATRU_QUIET" <<'NIKATRU_QUIET_EOF'
+          node tooling/e2e/new-user/journey.mjs plan
+          NIKATRU_QUIET_EOF
+          NIKATRU_SHELL="${BASH:-bash}"; if command -v cygpath >/dev/null 2>&1; then NIKATRU_SHELL="$(cygpath -w "$NIKATRU_SHELL")"; fi
+          node "$GITHUB_WORKSPACE/../.nikatru-shell/quiet-step.mjs" --name lane-apps.journey-smoke.13 -- "$NIKATRU_SHELL" -e "$NIKATRU_QUIET"
+      - name: Set up ChromeDriver
+        id: nikatru-setup-14
+        if: ${{ (success() || (!cancelled() && (github.event.client_payload.event == 'pull_request' && startsWith(github.event.client_payload.ref, 'refs/heads/rehearsal/')) && steps.nikatru-setup-ok.outcome == 'success' && steps.nikatru-setup-4.outcome == 'success' && steps.nikatru-setup-5.outcome == 'success' && steps.nikatru-setup-7.outcome == 'success' && steps.nikatru-setup-8.outcome == 'success')) && (needs.journey-plan.outputs.walk == 'true') }}
+        uses: nanasess/setup-chromedriver@e913548694400f275b4070efcd90f47dbbc8914c
+      - name: flutter pub get
+        id: nikatru-setup-15
+        if: ${{ (success() || (!cancelled() && (github.event.client_payload.event == 'pull_request' && startsWith(github.event.client_payload.ref, 'refs/heads/rehearsal/')) && steps.nikatru-setup-ok.outcome == 'success' && steps.nikatru-setup-4.outcome == 'success' && steps.nikatru-setup-5.outcome == 'success' && steps.nikatru-setup-7.outcome == 'success' && steps.nikatru-setup-8.outcome == 'success' && steps.nikatru-setup-14.outcome == 'success')) && (needs.journey-plan.outputs.walk == 'true') }}
+        working-directory: apps/${{ matrix.app }}
+        run: |
+          NIKATRU_QUIET="$(mktemp "${RUNNER_TEMP:-/tmp}/nikatru-step.XXXXXX")"
+          cat > "$NIKATRU_QUIET" <<'NIKATRU_QUIET_EOF'
+          flutter pub get --enforce-lockfile
+          NIKATRU_QUIET_EOF
+          NIKATRU_SHELL="${BASH:-bash}"; if command -v cygpath >/dev/null 2>&1; then NIKATRU_SHELL="$(cygpath -w "$NIKATRU_SHELL")"; fi
+          node "$GITHUB_WORKSPACE/../.nikatru-shell/quiet-step.mjs" --name lane-apps.journey-smoke.15 -- "$NIKATRU_SHELL" -e "$NIKATRU_QUIET"
+      - name: Stage the fallback fonts the bootstrap points at
+        if: ${{ (success() || (!cancelled() && (github.event.client_payload.event == 'pull_request' && startsWith(github.event.client_payload.ref, 'refs/heads/rehearsal/')) && steps.nikatru-setup-ok.outcome == 'success' && steps.nikatru-setup-4.outcome == 'success' && steps.nikatru-setup-5.outcome == 'success' && steps.nikatru-setup-7.outcome == 'success' && steps.nikatru-setup-8.outcome == 'success' && steps.nikatru-setup-14.outcome == 'success' && steps.nikatru-setup-15.outcome == 'success')) && (needs.journey-plan.outputs.walk == 'true') }}
+        run: |
+          NIKATRU_QUIET="$(mktemp "${RUNNER_TEMP:-/tmp}/nikatru-step.XXXXXX")"
+          cat > "$NIKATRU_QUIET" <<'NIKATRU_QUIET_EOF'
+          node tooling/store/capture-fallback-fonts.mjs --stage apps/${{ matrix.app }}
+          NIKATRU_QUIET_EOF
+          NIKATRU_SHELL="${BASH:-bash}"; if command -v cygpath >/dev/null 2>&1; then NIKATRU_SHELL="$(cygpath -w "$NIKATRU_SHELL")"; fi
+          node "$GITHUB_WORKSPACE/../.nikatru-shell/quiet-step.mjs" --name lane-apps.journey-smoke.16 -- "$NIKATRU_SHELL" -e "$NIKATRU_QUIET"
+      - name: The new customer — the sign-up form to delete-account (ephemeral)
+        id: drive
+        if: ${{ (success() || (!cancelled() && (github.event.client_payload.event == 'pull_request' && startsWith(github.event.client_payload.ref, 'refs/heads/rehearsal/')) && steps.nikatru-setup-ok.outcome == 'success' && steps.nikatru-setup-4.outcome == 'success' && steps.nikatru-setup-5.outcome == 'success' && steps.nikatru-setup-7.outcome == 'success' && steps.nikatru-setup-8.outcome == 'success' && steps.nikatru-setup-14.outcome == 'success' && steps.nikatru-setup-15.outcome == 'success')) && (needs.journey-plan.outputs.walk == 'true') }}
+        timeout-minutes: 20
+        working-directory: apps/${{ matrix.app }}
+        run: |
+          NIKATRU_QUIET="$(mktemp "${RUNNER_TEMP:-/tmp}/nikatru-step.XXXXXX")"
+          cat > "$NIKATRU_QUIET" <<'NIKATRU_QUIET_EOF'
+          set -euo pipefail
+          chromedriver --port=4444 > "${RUNNER_TEMP}/chromedriver.log" 2>&1 &
+          journey="${GITHUB_WORKSPACE}/tooling/e2e/new-user/journey.mjs"
+          stack="${GITHUB_WORKSPACE}/tooling/e2e/first-sign-in/stack.mjs"
+          anon="$(node "$stack" anon-key)"
+          echo "::add-mask::${anon}"
+          site="$(node "$stack" site-key)"
+          E2E_NUJ_NONCE="$(node "$journey" nonce)"
+          echo "::add-mask::${E2E_NUJ_NONCE}"
+          export E2E_NUJ_NONCE
+          node "$journey" watch --n "$NUJ_N" > "${RUNNER_TEMP}/watch.log" 2>&1 &
+          watcher=$!
+          drive_code=0
+          node "$journey" isolation
+          flutter drive \
+            --driver=test_driver/integration_test.dart \
+            --target=integration_test/new_user_journey_test.dart \
+            -d web-server --web-port=3000 --browser-name=chrome \
+            --web-browser-flag=--headless=new \
+            --web-browser-flag=--disable-gpu \
+            --web-browser-flag=--no-sandbox \
+            --web-browser-flag=--disable-dev-shm-usage \
+            --web-browser-flag=--ignore-certificate-errors \
+            --browser-dimension=430x932@1 \
+            --dart-define=SUPABASE_URL="$SUPABASE_URL" \
+            --dart-define=SUPABASE_ANON_KEY="$anon" \
+            --dart-define=API_BASE_URL="$APP_API_URL" \
+            --dart-define=PLATFORM_BASE_URL="$WORKER_URL" \
+            --dart-define=CONFIG_BASE_URL="$WORKER_URL" \
+            --dart-define=PIN_BACKEND_HOSTS=true \
+            --dart-define=APP_VERSION="$NUJ_APP_VERSION" \
+            --dart-define=RELEASE_CHANNEL=web \
+            --dart-define=E2E_NUJ_TARGET=ephemeral \
+            --dart-define=TURNSTILE_SITE_KEY="$site" \
+            --dart-define=E2E_NUJ_N="$NUJ_N" \
+            --dart-define=E2E_NUJ_DATE="$E2E_NUJ_DATE" \
+            --dart-define=E2E_NUJ_NONCE="$E2E_NUJ_NONCE" \
+            --dart-define=E2E_NUJ_ONBOARDING="$NUJ_ONBOARDING" 2>&1 | tee "${RUNNER_TEMP}/drive.log" || drive_code=$?
+          watch_code=0
+          wait "$watcher" || watch_code=$?
+          cat "${RUNNER_TEMP}/watch.log"
+          if [ "$watch_code" -ne 0 ]; then
+            echo "::error title=Journey smoke (ephemeral)::the watcher exited ${watch_code} (allow-list, mail or link); its NUJ lines above name the leg"
+            exit 1
+          fi
+          node "$journey" grade --n "$NUJ_N" --log "${RUNNER_TEMP}/drive.log"
+          node "$journey" verify --n "$NUJ_N"
+          exit "$drive_code"
+          NIKATRU_QUIET_EOF
+          NIKATRU_SHELL="${BASH:-bash}"; if command -v cygpath >/dev/null 2>&1; then NIKATRU_SHELL="$(cygpath -w "$NIKATRU_SHELL")"; fi
+          node "$GITHUB_WORKSPACE/../.nikatru-shell/quiet-step.mjs" --name lane-apps.journey-smoke.17 -- "$NIKATRU_SHELL" -e "$NIKATRU_QUIET"
+      - name: Stack and Worker logs
+        if: failure() && needs.journey-plan.outputs.walk == 'true'
+        run: |
+          NIKATRU_QUIET="$(mktemp "${RUNNER_TEMP:-/tmp}/nikatru-step.XXXXXX")"
+          cat > "$NIKATRU_QUIET" <<'NIKATRU_QUIET_EOF'
+          node tooling/e2e/first-sign-in/stack.mjs logs
+          tail -150 "$RUNNER_TEMP/wrangler.log" || true
+          tail -150 "$RUNNER_TEMP/wrangler-app.log" || true
+          NIKATRU_QUIET_EOF
+          NIKATRU_SHELL="${BASH:-bash}"; if command -v cygpath >/dev/null 2>&1; then NIKATRU_SHELL="$(cygpath -w "$NIKATRU_SHELL")"; fi
+          node "$GITHUB_WORKSPACE/../.nikatru-shell/quiet-step.mjs" --name lane-apps.journey-smoke.18 -- "$NIKATRU_SHELL" -e "$NIKATRU_QUIET"
+      - name: Tear down
+        if: always() && needs.journey-plan.outputs.walk == 'true'
+        run: |
+          NIKATRU_QUIET="$(mktemp "${RUNNER_TEMP:-/tmp}/nikatru-step.XXXXXX")"
+          cat > "$NIKATRU_QUIET" <<'NIKATRU_QUIET_EOF'
+          node tooling/e2e/first-sign-in/stack.mjs down
+          NIKATRU_QUIET_EOF
+          NIKATRU_SHELL="${BASH:-bash}"; if command -v cygpath >/dev/null 2>&1; then NIKATRU_SHELL="$(cygpath -w "$NIKATRU_SHELL")"; fi
+          node "$GITHUB_WORKSPACE/../.nikatru-shell/quiet-step.mjs" --name lane-apps.journey-smoke.19 -- "$NIKATRU_SHELL" -e "$NIKATRU_QUIET"
+      - name: Hand this job's red detail to the report job, sealed (generated)
+        id: nikatru-handoff
+        if: always()
+        shell: bash
+        working-directory: ${{ github.workspace }}
+        env:
+          NIKATRU_DETAIL_KEY_FILE: ${{ github.workspace }}/../.nikatru-shell/detail.key
+          NIKATRU_HANDOFF: nikatru-detail-${{ github.run_id }}-${{ github.run_attempt }}-lane-apps.journey-smoke.${{ strategy.job-index }}
+        run: |
+          if [ -s "$RUNNER_TEMP/report-detail.md" ]; then
+            py=python3; python3 -c '' >/dev/null 2>&1 || py=python
+            "$py" -I "$GITHUB_WORKSPACE/../.nikatru-shell/report.py" handoff
+          fi
+      - name: Save the hand-off (generated)
+        if: always() && steps.nikatru-handoff.outputs.has == 'true'
+        uses: actions/cache/save@55cc8345863c7cc4c66a329aec7e433d2d1c52a9
+        with:
+          path: .nikatru-detail
+          key: nikatru-detail-${{ github.run_id }}-${{ github.run_attempt }}-lane-apps.journey-smoke.${{ strategy.job-index }}
+          enableCrossOsArchive: true
+
   lane-verdict:
     name: lane-verdict
-    needs: [detect, app-brick, app-brick-client, app-brick-backend, workspace-gate, app-lock-desktop]
+    needs: [detect, app-brick, app-brick-client, app-brick-backend, workspace-gate, app-lock-desktop, journey-plan, journey-smoke]
     if: always()
     runs-on: ubuntu-24.04
     timeout-minutes: 5

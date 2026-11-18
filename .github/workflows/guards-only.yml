@@ -179,6 +179,7 @@ jobs:
           NIKATRU_PATHS: ${{ runner.temp }}/all-guards.json
           NIKATRU_ARTIFACT_NAME: all-guards
           NIKATRU_IF_NO_FILES: error
+          NIKATRU_RETENTION_CLASS: diag
           BRIDGE_ARTIFACT_SECRET: ${{ secrets.BRIDGE_ARTIFACT_SECRET }}
           NIKATRU_BRIDGE_ARTIFACT_URL: https://gh-bridge.nikatru.workers.dev/artifact
         run: node tooling/ops/bridge-artifact.mjs upload

@@ -958,8 +958,38 @@ jobs:
           NIKATRU_QUIET_EOF
           NIKATRU_SHELL="${BASH:-bash}"; if command -v cygpath >/dev/null 2>&1; then NIKATRU_SHELL="$(cygpath -w "$NIKATRU_SHELL")"; fi
           node "$GITHUB_WORKSPACE/../.nikatru-shell/quiet-step.mjs" --name build-platforms.linux_web_android.34 -- "$NIKATRU_SHELL" -e "$NIKATRU_QUIET"
-      - name: Stage store-${{ matrix.app }}-linux-snap for this run's later jobs (generated)
+      - name: Stage store-${{ matrix.app }}-android-aab-${{ env.ANDROID_SIGNING_POSTURE }} for this run's later jobs (generated)
         id: nikatru-stage-2
+        if: (startsWith(github.event.client_payload.ref || 'refs/heads/main', 'refs/tags/') && 'tag' || 'branch') == 'tag'
+        shell: bash
+        working-directory: ${{ github.workspace }}
+        env:
+          NIKATRU_PATHS: |
+            apps/${{ matrix.app }}/build/app/outputs/bundle/release/*.aab
+            apps/${{ matrix.app }}/build/app/outputs/bundle/release/*.aab.channel.json
+          NIKATRU_IF_NO_FILES: error
+        run: node tooling/ci/shell-handoff.mjs stage
+      - name: Seal store-${{ matrix.app }}-android-aab-${{ env.ANDROID_SIGNING_POSTURE }} for this run's later jobs (generated)
+        id: nikatru-seal-2
+        if: ${{ ((startsWith(github.event.client_payload.ref || 'refs/heads/main', 'refs/tags/') && 'tag' || 'branch') == 'tag') && steps.nikatru-stage-2.outputs.has == 'true' }}
+        shell: bash
+        working-directory: ${{ github.workspace }}
+        env:
+          NIKATRU_HANDOFF_KEY_FILE: ${{ github.workspace }}/../.nikatru-shell/handoff.key
+          NIKATRU_HANDOFF_KEY: nikatru-handoff-store-${{ matrix.app }}-android-aab-${{ env.ANDROID_SIGNING_POSTURE }}-${{ github.run_id }}-run
+        run: node tooling/ci/shell-handoff.mjs seal
+      - name: Hand off store-${{ matrix.app }}-android-aab-${{ env.ANDROID_SIGNING_POSTURE }} to this run's later jobs, sealed (generated)
+        if: ${{ ((startsWith(github.event.client_payload.ref || 'refs/heads/main', 'refs/tags/') && 'tag' || 'branch') == 'tag') && steps.nikatru-seal-2.outcome == 'success' }}
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9
+        with:
+          name: nikatru-handoff-store-${{ matrix.app }}-android-aab-${{ env.ANDROID_SIGNING_POSTURE }}
+          path: .nikatru-handoff/sealed
+          if-no-files-found: error
+          retention-days: 30
+          include-hidden-files: true
+          overwrite: true
+      - name: Stage store-${{ matrix.app }}-linux-snap for this run's later jobs (generated)
+        id: nikatru-stage-3
         if: (startsWith(github.event.client_payload.ref || 'refs/heads/main', 'refs/tags/') && 'tag' || 'branch') == 'tag'
         shell: bash
         working-directory: ${{ github.workspace }}
@@ -968,8 +998,8 @@ jobs:
           NIKATRU_IF_NO_FILES: error
         run: node tooling/ci/shell-handoff.mjs stage
       - name: Seal store-${{ matrix.app }}-linux-snap for this run's later jobs (generated)
-        id: nikatru-seal-2
-        if: ${{ ((startsWith(github.event.client_payload.ref || 'refs/heads/main', 'refs/tags/') && 'tag' || 'branch') == 'tag') && steps.nikatru-stage-2.outputs.has == 'true' }}
+        id: nikatru-seal-3
+        if: ${{ ((startsWith(github.event.client_payload.ref || 'refs/heads/main', 'refs/tags/') && 'tag' || 'branch') == 'tag') && steps.nikatru-stage-3.outputs.has == 'true' }}
         shell: bash
         working-directory: ${{ github.workspace }}
         env:
@@ -977,7 +1007,7 @@ jobs:
           NIKATRU_HANDOFF_KEY: nikatru-handoff-store-${{ matrix.app }}-linux-snap-${{ github.run_id }}-run
         run: node tooling/ci/shell-handoff.mjs seal
       - name: Hand off store-${{ matrix.app }}-linux-snap to this run's later jobs, sealed (generated)
-        if: ${{ ((startsWith(github.event.client_payload.ref || 'refs/heads/main', 'refs/tags/') && 'tag' || 'branch') == 'tag') && steps.nikatru-seal-2.outcome == 'success' }}
+        if: ${{ ((startsWith(github.event.client_payload.ref || 'refs/heads/main', 'refs/tags/') && 'tag' || 'branch') == 'tag') && steps.nikatru-seal-3.outcome == 'success' }}
         uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9
         with:
           name: nikatru-handoff-store-${{ matrix.app }}-linux-snap
@@ -1023,7 +1053,7 @@ jobs:
           NIKATRU_SHELL="${BASH:-bash}"; if command -v cygpath >/dev/null 2>&1; then NIKATRU_SHELL="$(cygpath -w "$NIKATRU_SHELL")"; fi
           node "$GITHUB_WORKSPACE/../.nikatru-shell/quiet-step.mjs" --name build-platforms.linux_web_android.42 -- "$NIKATRU_SHELL" -e "$NIKATRU_QUIET"
       - name: Stage ${{ steps.agi_verify.outputs.artifact_name }} for this run's later jobs (generated)
-        id: nikatru-stage-3
+        id: nikatru-stage-4
         shell: bash
         working-directory: ${{ github.workspace }}
         env:
@@ -1033,8 +1063,8 @@ jobs:
           NIKATRU_IF_NO_FILES: error
         run: node tooling/ci/shell-handoff.mjs stage
       - name: Seal ${{ steps.agi_verify.outputs.artifact_name }} for this run's later jobs (generated)
-        id: nikatru-seal-3
-        if: ${{ (success()) && steps.nikatru-stage-3.outputs.has == 'true' }}
+        id: nikatru-seal-4
+        if: ${{ (success()) && steps.nikatru-stage-4.outputs.has == 'true' }}
         shell: bash
         working-directory: ${{ github.workspace }}
         env:
@@ -1042,7 +1072,7 @@ jobs:
           NIKATRU_HANDOFF_KEY: nikatru-handoff-${{ steps.agi_verify.outputs.artifact_name }}-${{ github.run_id }}-run
         run: node tooling/ci/shell-handoff.mjs seal
       - name: Hand off ${{ steps.agi_verify.outputs.artifact_name }} to this run's later jobs, sealed (generated)
-        if: ${{ (success()) && steps.nikatru-seal-3.outcome == 'success' }}
+        if: ${{ (success()) && steps.nikatru-seal-4.outcome == 'success' }}
         uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9
         with:
           name: nikatru-handoff-${{ steps.agi_verify.outputs.artifact_name }}
@@ -1058,6 +1088,7 @@ jobs:
           NIKATRU_PATHS: ${{ steps.agi_verify.outputs.kit_dir }}
           NIKATRU_ARTIFACT_NAME: upload-kit-${{ steps.agi_verify.outputs.artifact_name }}
           NIKATRU_IF_NO_FILES: error
+          NIKATRU_RETENTION_CLASS: release
           BRIDGE_ARTIFACT_SECRET: ${{ secrets.BRIDGE_ARTIFACT_SECRET }}
           NIKATRU_BRIDGE_ARTIFACT_URL: https://gh-bridge.nikatru.workers.dev/artifact
         run: node tooling/ops/bridge-artifact.mjs upload
@@ -1069,6 +1100,7 @@ jobs:
           NIKATRU_PATHS: ${{ steps.agi_verify.outputs.kit_part_01_dir }}
           NIKATRU_ARTIFACT_NAME: upload-kit-${{ steps.agi_verify.outputs.kit_part_01 }}
           NIKATRU_IF_NO_FILES: error
+          NIKATRU_RETENTION_CLASS: release
           BRIDGE_ARTIFACT_SECRET: ${{ secrets.BRIDGE_ARTIFACT_SECRET }}
           NIKATRU_BRIDGE_ARTIFACT_URL: https://gh-bridge.nikatru.workers.dev/artifact
         run: node tooling/ops/bridge-artifact.mjs upload
@@ -1080,6 +1112,7 @@ jobs:
           NIKATRU_PATHS: ${{ steps.agi_verify.outputs.kit_part_02_dir }}
           NIKATRU_ARTIFACT_NAME: upload-kit-${{ steps.agi_verify.outputs.kit_part_02 }}
           NIKATRU_IF_NO_FILES: error
+          NIKATRU_RETENTION_CLASS: release
           BRIDGE_ARTIFACT_SECRET: ${{ secrets.BRIDGE_ARTIFACT_SECRET }}
           NIKATRU_BRIDGE_ARTIFACT_URL: https://gh-bridge.nikatru.workers.dev/artifact
         run: node tooling/ops/bridge-artifact.mjs upload
@@ -1091,6 +1124,7 @@ jobs:
           NIKATRU_PATHS: ${{ steps.agi_verify.outputs.kit_part_03_dir }}
           NIKATRU_ARTIFACT_NAME: upload-kit-${{ steps.agi_verify.outputs.kit_part_03 }}
           NIKATRU_IF_NO_FILES: error
+          NIKATRU_RETENTION_CLASS: release
           BRIDGE_ARTIFACT_SECRET: ${{ secrets.BRIDGE_ARTIFACT_SECRET }}
           NIKATRU_BRIDGE_ARTIFACT_URL: https://gh-bridge.nikatru.workers.dev/artifact
         run: node tooling/ops/bridge-artifact.mjs upload
@@ -1242,7 +1276,7 @@ jobs:
         shell: node ../.nikatru-shell/quiet-step.mjs --name build-platforms.windows.7 --default-shell {0}
         run: node tooling/ci/flutter-release-build.mjs ${{ matrix.app }} windows windows-store
       - name: Stage symbols-${{ matrix.app }}-windows for this run's later jobs (generated)
-        id: nikatru-stage-4
+        id: nikatru-stage-5
         shell: bash
         working-directory: ${{ github.workspace }}
         env:
@@ -1251,8 +1285,8 @@ jobs:
           NIKATRU_IF_NO_FILES: error
         run: node tooling/ci/shell-handoff.mjs stage
       - name: Seal symbols-${{ matrix.app }}-windows for this run's later jobs (generated)
-        id: nikatru-seal-4
-        if: ${{ (success()) && steps.nikatru-stage-4.outputs.has == 'true' }}
+        id: nikatru-seal-5
+        if: ${{ (success()) && steps.nikatru-stage-5.outputs.has == 'true' }}
         shell: bash
         working-directory: ${{ github.workspace }}
         env:
@@ -1260,7 +1294,7 @@ jobs:
           NIKATRU_HANDOFF_KEY: nikatru-handoff-symbols-${{ matrix.app }}-windows-${{ github.run_id }}-run
         run: node tooling/ci/shell-handoff.mjs seal
       - name: Hand off symbols-${{ matrix.app }}-windows to this run's later jobs, sealed (generated)
-        if: ${{ (success()) && steps.nikatru-seal-4.outcome == 'success' }}
+        if: ${{ (success()) && steps.nikatru-seal-5.outcome == 'success' }}
         uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9
         with:
           name: nikatru-handoff-symbols-${{ matrix.app }}-windows
@@ -1322,7 +1356,7 @@ jobs:
             --org $gt.org --project $gt.project
           if ($LASTEXITCODE -ne 0) { Write-Error "upload-native-symbols exited $LASTEXITCODE" }
       - name: Stage store-${{ matrix.app }}-windows-msix for this run's later jobs (generated)
-        id: nikatru-stage-5
+        id: nikatru-stage-6
         shell: bash
         working-directory: ${{ github.workspace }}
         env:
@@ -1332,8 +1366,8 @@ jobs:
           NIKATRU_IF_NO_FILES: error
         run: node tooling/ci/shell-handoff.mjs stage
       - name: Seal store-${{ matrix.app }}-windows-msix for this run's later jobs (generated)
-        id: nikatru-seal-5
-        if: ${{ (success()) && steps.nikatru-stage-5.outputs.has == 'true' }}
+        id: nikatru-seal-6
+        if: ${{ (success()) && steps.nikatru-stage-6.outputs.has == 'true' }}
         shell: bash
         working-directory: ${{ github.workspace }}
         env:
@@ -1341,7 +1375,7 @@ jobs:
           NIKATRU_HANDOFF_KEY: nikatru-handoff-store-${{ matrix.app }}-windows-msix-${{ github.run_id }}-run
         run: node tooling/ci/shell-handoff.mjs seal
       - name: Hand off store-${{ matrix.app }}-windows-msix to this run's later jobs, sealed (generated)
-        if: ${{ (success()) && steps.nikatru-seal-5.outcome == 'success' }}
+        if: ${{ (success()) && steps.nikatru-seal-6.outcome == 'success' }}
         uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9
         with:
           name: nikatru-handoff-store-${{ matrix.app }}-windows-msix
@@ -1557,7 +1591,7 @@ jobs:
         shell: node ../.nikatru-shell/quiet-step.mjs --name build-platforms.windows_arm64.7 --default-shell {0}
         run: node tooling/ci/flutter-release-build.mjs ${{ matrix.app }} windows windows-store
       - name: Stage symbols-${{ matrix.app }}-windows-arm64 for this run's later jobs (generated)
-        id: nikatru-stage-6
+        id: nikatru-stage-7
         shell: bash
         working-directory: ${{ github.workspace }}
         env:
@@ -1566,8 +1600,8 @@ jobs:
           NIKATRU_IF_NO_FILES: error
         run: node tooling/ci/shell-handoff.mjs stage
       - name: Seal symbols-${{ matrix.app }}-windows-arm64 for this run's later jobs (generated)
-        id: nikatru-seal-6
-        if: ${{ (success()) && steps.nikatru-stage-6.outputs.has == 'true' }}
+        id: nikatru-seal-7
+        if: ${{ (success()) && steps.nikatru-stage-7.outputs.has == 'true' }}
         shell: bash
         working-directory: ${{ github.workspace }}
         env:
@@ -1575,7 +1609,7 @@ jobs:
           NIKATRU_HANDOFF_KEY: nikatru-handoff-symbols-${{ matrix.app }}-windows-arm64-${{ github.run_id }}-run
         run: node tooling/ci/shell-handoff.mjs seal
       - name: Hand off symbols-${{ matrix.app }}-windows-arm64 to this run's later jobs, sealed (generated)
-        if: ${{ (success()) && steps.nikatru-seal-6.outcome == 'success' }}
+        if: ${{ (success()) && steps.nikatru-seal-7.outcome == 'success' }}
         uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9
         with:
           name: nikatru-handoff-symbols-${{ matrix.app }}-windows-arm64
@@ -1642,15 +1676,15 @@ jobs:
             --org $gt.org --project $gt.project
           if ($LASTEXITCODE -ne 0) { Write-Error "upload-native-symbols exited $LASTEXITCODE" }
       - name: Restore the store-${{ matrix.app }}-windows-msix hand-off from this run (generated)
-        id: nikatru-restore-7
+        id: nikatru-restore-8
         timeout-minutes: 6
         uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333
         with:
           name: nikatru-handoff-store-${{ matrix.app }}-windows-msix
           path: .nikatru-handoff/sealed
       - name: Unseal the store-${{ matrix.app }}-windows-msix hand-off (generated)
-        id: nikatru-unseal-7
-        if: ${{ (success()) && steps.nikatru-restore-7.outcome == 'success' }}
+        id: nikatru-unseal-8
+        if: ${{ (success()) && steps.nikatru-restore-8.outcome == 'success' }}
         shell: bash
         working-directory: ${{ github.workspace }}
         env:
@@ -1659,7 +1693,7 @@ jobs:
           NIKATRU_HANDOFF_PREFIX: nikatru-handoff-store-${{ matrix.app }}-windows-msix-${{ github.run_id }}-
         run: node tooling/ci/shell-handoff.mjs unseal
       - name: Place the store-${{ matrix.app }}-windows-msix hand-off where download-artifact put it (generated)
-        if: ${{ (success()) && steps.nikatru-unseal-7.outcome == 'success' }}
+        if: ${{ (success()) && steps.nikatru-unseal-8.outcome == 'success' }}
         shell: bash
         working-directory: ${{ github.workspace }}
         env:
@@ -1703,7 +1737,7 @@ jobs:
           node tooling/ci/assert-artifact-shape.mjs
           --app ${{ matrix.app }} --platform windows-msixbundle
       - name: Stage store-${{ matrix.app }}-windows-msixbundle for this run's later jobs (generated)
-        id: nikatru-stage-8
+        id: nikatru-stage-9
         if: (startsWith(github.event.client_payload.ref || 'refs/heads/main', 'refs/tags/') && 'tag' || 'branch') == 'tag'
         shell: bash
         working-directory: ${{ github.workspace }}
@@ -1712,8 +1746,8 @@ jobs:
           NIKATRU_IF_NO_FILES: error
         run: node tooling/ci/shell-handoff.mjs stage
       - name: Seal store-${{ matrix.app }}-windows-msixbundle for this run's later jobs (generated)
-        id: nikatru-seal-8
-        if: ${{ ((startsWith(github.event.client_payload.ref || 'refs/heads/main', 'refs/tags/') && 'tag' || 'branch') == 'tag') && steps.nikatru-stage-8.outputs.has == 'true' }}
+        id: nikatru-seal-9
+        if: ${{ ((startsWith(github.event.client_payload.ref || 'refs/heads/main', 'refs/tags/') && 'tag' || 'branch') == 'tag') && steps.nikatru-stage-9.outputs.has == 'true' }}
         shell: bash
         working-directory: ${{ github.workspace }}
         env:
@@ -1721,7 +1755,7 @@ jobs:
           NIKATRU_HANDOFF_KEY: nikatru-handoff-store-${{ matrix.app }}-windows-msixbundle-${{ github.run_id }}-run
         run: node tooling/ci/shell-handoff.mjs seal
       - name: Hand off store-${{ matrix.app }}-windows-msixbundle to this run's later jobs, sealed (generated)
-        if: ${{ ((startsWith(github.event.client_payload.ref || 'refs/heads/main', 'refs/tags/') && 'tag' || 'branch') == 'tag') && steps.nikatru-seal-8.outcome == 'success' }}
+        if: ${{ ((startsWith(github.event.client_payload.ref || 'refs/heads/main', 'refs/tags/') && 'tag' || 'branch') == 'tag') && steps.nikatru-seal-9.outcome == 'success' }}
         uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9
         with:
           name: nikatru-handoff-store-${{ matrix.app }}-windows-msixbundle
@@ -1899,7 +1933,7 @@ jobs:
           NIKATRU_SHELL="${BASH:-bash}"; if command -v cygpath >/dev/null 2>&1; then NIKATRU_SHELL="$(cygpath -w "$NIKATRU_SHELL")"; fi
           node "$GITHUB_WORKSPACE/../.nikatru-shell/quiet-step.mjs" --name build-platforms.linux_arm64.6 -- "$NIKATRU_SHELL" -e "$NIKATRU_QUIET"
       - name: Stage symbols-${{ matrix.app }}-linux-arm64 for this run's later jobs (generated)
-        id: nikatru-stage-9
+        id: nikatru-stage-10
         shell: bash
         working-directory: ${{ github.workspace }}
         env:
@@ -1908,8 +1942,8 @@ jobs:
           NIKATRU_IF_NO_FILES: error
         run: node tooling/ci/shell-handoff.mjs stage
       - name: Seal symbols-${{ matrix.app }}-linux-arm64 for this run's later jobs (generated)
-        id: nikatru-seal-9
-        if: ${{ (success()) && steps.nikatru-stage-9.outputs.has == 'true' }}
+        id: nikatru-seal-10
+        if: ${{ (success()) && steps.nikatru-stage-10.outputs.has == 'true' }}
         shell: bash
         working-directory: ${{ github.workspace }}
         env:
@@ -1917,7 +1951,7 @@ jobs:
           NIKATRU_HANDOFF_KEY: nikatru-handoff-symbols-${{ matrix.app }}-linux-arm64-${{ github.run_id }}-run
         run: node tooling/ci/shell-handoff.mjs seal
       - name: Hand off symbols-${{ matrix.app }}-linux-arm64 to this run's later jobs, sealed (generated)
-        if: ${{ (success()) && steps.nikatru-seal-9.outcome == 'success' }}
+        if: ${{ (success()) && steps.nikatru-seal-10.outcome == 'success' }}
         uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9
         with:
           name: nikatru-handoff-symbols-${{ matrix.app }}-linux-arm64
@@ -2038,7 +2072,7 @@ jobs:
           NIKATRU_SHELL="${BASH:-bash}"; if command -v cygpath >/dev/null 2>&1; then NIKATRU_SHELL="$(cygpath -w "$NIKATRU_SHELL")"; fi
           node "$GITHUB_WORKSPACE/../.nikatru-shell/quiet-step.mjs" --name build-platforms.linux_arm64.13 -- "$NIKATRU_SHELL" -e "$NIKATRU_QUIET"
       - name: Stage store-${{ matrix.app }}-linux-snap-arm64 for this run's later jobs (generated)
-        id: nikatru-stage-10
+        id: nikatru-stage-11
         if: (startsWith(github.event.client_payload.ref || 'refs/heads/main', 'refs/tags/') && 'tag' || 'branch') == 'tag'
         shell: bash
         working-directory: ${{ github.workspace }}
@@ -2047,8 +2081,8 @@ jobs:
           NIKATRU_IF_NO_FILES: error
         run: node tooling/ci/shell-handoff.mjs stage
       - name: Seal store-${{ matrix.app }}-linux-snap-arm64 for this run's later jobs (generated)
-        id: nikatru-seal-10
-        if: ${{ ((startsWith(github.event.client_payload.ref || 'refs/heads/main', 'refs/tags/') && 'tag' || 'branch') == 'tag') && steps.nikatru-stage-10.outputs.has == 'true' }}
+        id: nikatru-seal-11
+        if: ${{ ((startsWith(github.event.client_payload.ref || 'refs/heads/main', 'refs/tags/') && 'tag' || 'branch') == 'tag') && steps.nikatru-stage-11.outputs.has == 'true' }}
         shell: bash
         working-directory: ${{ github.workspace }}
         env:
@@ -2056,7 +2090,7 @@ jobs:
           NIKATRU_HANDOFF_KEY: nikatru-handoff-store-${{ matrix.app }}-linux-snap-arm64-${{ github.run_id }}-run
         run: node tooling/ci/shell-handoff.mjs seal
       - name: Hand off store-${{ matrix.app }}-linux-snap-arm64 to this run's later jobs, sealed (generated)
-        if: ${{ ((startsWith(github.event.client_payload.ref || 'refs/heads/main', 'refs/tags/') && 'tag' || 'branch') == 'tag') && steps.nikatru-seal-10.outcome == 'success' }}
+        if: ${{ ((startsWith(github.event.client_payload.ref || 'refs/heads/main', 'refs/tags/') && 'tag' || 'branch') == 'tag') && steps.nikatru-seal-11.outcome == 'success' }}
         uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9
         with:
           name: nikatru-handoff-store-${{ matrix.app }}-linux-snap-arm64
@@ -2244,6 +2278,7 @@ jobs:
           NIKATRU_PATHS: ${{ runner.temp }}/apple-dependency-locks-presign
           NIKATRU_ARTIFACT_NAME: apple-dependency-locks-presign-${{ matrix.app }}
           NIKATRU_IF_NO_FILES: warn
+          NIKATRU_RETENTION_CLASS: release
           BRIDGE_ARTIFACT_SECRET: ${{ secrets.BRIDGE_ARTIFACT_SECRET }}
           NIKATRU_BRIDGE_ARTIFACT_URL: https://gh-bridge.nikatru.workers.dev/artifact
         run: node tooling/ops/bridge-artifact.mjs upload
@@ -2390,7 +2425,7 @@ jobs:
           NIKATRU_SHELL="${BASH:-bash}"; if command -v cygpath >/dev/null 2>&1; then NIKATRU_SHELL="$(cygpath -w "$NIKATRU_SHELL")"; fi
           node "$GITHUB_WORKSPACE/../.nikatru-shell/quiet-step.mjs" --name build-platforms.apple.19 -- "$NIKATRU_SHELL" -e "$NIKATRU_QUIET"
       - name: Stage symbols-${{ matrix.app }}-apple for this run's later jobs (generated)
-        id: nikatru-stage-11
+        id: nikatru-stage-12
         shell: bash
         working-directory: ${{ github.workspace }}
         env:
@@ -2400,8 +2435,8 @@ jobs:
           NIKATRU_IF_NO_FILES: error
         run: node tooling/ci/shell-handoff.mjs stage
       - name: Seal symbols-${{ matrix.app }}-apple for this run's later jobs (generated)
-        id: nikatru-seal-11
-        if: ${{ (success()) && steps.nikatru-stage-11.outputs.has == 'true' }}
+        id: nikatru-seal-12
+        if: ${{ (success()) && steps.nikatru-stage-12.outputs.has == 'true' }}
         shell: bash
         working-directory: ${{ github.workspace }}
         env:
@@ -2409,7 +2444,7 @@ jobs:
           NIKATRU_HANDOFF_KEY: nikatru-handoff-symbols-${{ matrix.app }}-apple-${{ github.run_id }}-run
         run: node tooling/ci/shell-handoff.mjs seal
       - name: Hand off symbols-${{ matrix.app }}-apple to this run's later jobs, sealed (generated)
-        if: ${{ (success()) && steps.nikatru-seal-11.outcome == 'success' }}
+        if: ${{ (success()) && steps.nikatru-seal-12.outcome == 'success' }}
         uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9
         with:
           name: nikatru-handoff-symbols-${{ matrix.app }}-apple
@@ -2465,6 +2500,7 @@ jobs:
           NIKATRU_PATHS: ${{ runner.temp }}/apple-dependency-locks
           NIKATRU_ARTIFACT_NAME: apple-dependency-locks-${{ matrix.app }}
           NIKATRU_IF_NO_FILES: warn
+          NIKATRU_RETENTION_CLASS: release
           BRIDGE_ARTIFACT_SECRET: ${{ secrets.BRIDGE_ARTIFACT_SECRET }}
           NIKATRU_BRIDGE_ARTIFACT_URL: https://gh-bridge.nikatru.workers.dev/artifact
         run: node tooling/ops/bridge-artifact.mjs upload
@@ -2516,6 +2552,7 @@ jobs:
           NIKATRU_PATHS: ${{ runner.temp }}/apple-capture
           NIKATRU_ARTIFACT_NAME: ci-proof-apple-capture-${{ matrix.app }}
           NIKATRU_IF_NO_FILES: error
+          NIKATRU_RETENTION_CLASS: release
           BRIDGE_ARTIFACT_SECRET: ${{ secrets.BRIDGE_ARTIFACT_SECRET }}
           NIKATRU_BRIDGE_ARTIFACT_URL: https://gh-bridge.nikatru.workers.dev/artifact
         run: node tooling/ops/bridge-artifact.mjs upload
@@ -2587,7 +2624,7 @@ jobs:
           NIKATRU_SHELL="${BASH:-bash}"; if command -v cygpath >/dev/null 2>&1; then NIKATRU_SHELL="$(cygpath -w "$NIKATRU_SHELL")"; fi
           node "$GITHUB_WORKSPACE/../.nikatru-shell/quiet-step.mjs" --name build-platforms.apple.33 -- "$NIKATRU_SHELL" -e "$NIKATRU_QUIET"
       - name: Stage store-${{ matrix.app }}-macos-pkg for this run's later jobs (generated)
-        id: nikatru-stage-12
+        id: nikatru-stage-13
         if: ${{ (env.APPLE_SIGNING_POSTURE == 'release-signed') && (startsWith(github.event.client_payload.ref || 'refs/heads/main', 'refs/tags/') && 'tag' || 'branch') == 'tag' }}
         shell: bash
         working-directory: ${{ github.workspace }}
@@ -2598,8 +2635,8 @@ jobs:
           NIKATRU_IF_NO_FILES: error
         run: node tooling/ci/shell-handoff.mjs stage
       - name: Seal store-${{ matrix.app }}-macos-pkg for this run's later jobs (generated)
-        id: nikatru-seal-12
-        if: ${{ ((env.APPLE_SIGNING_POSTURE == 'release-signed') && (startsWith(github.event.client_payload.ref || 'refs/heads/main', 'refs/tags/') && 'tag' || 'branch') == 'tag') && steps.nikatru-stage-12.outputs.has == 'true' }}
+        id: nikatru-seal-13
+        if: ${{ ((env.APPLE_SIGNING_POSTURE == 'release-signed') && (startsWith(github.event.client_payload.ref || 'refs/heads/main', 'refs/tags/') && 'tag' || 'branch') == 'tag') && steps.nikatru-stage-13.outputs.has == 'true' }}
         shell: bash
         working-directory: ${{ github.workspace }}
         env:
@@ -2607,7 +2644,7 @@ jobs:
           NIKATRU_HANDOFF_KEY: nikatru-handoff-store-${{ matrix.app }}-macos-pkg-${{ github.run_id }}-run
         run: node tooling/ci/shell-handoff.mjs seal
       - name: Hand off store-${{ matrix.app }}-macos-pkg to this run's later jobs, sealed (generated)
-        if: ${{ ((env.APPLE_SIGNING_POSTURE == 'release-signed') && (startsWith(github.event.client_payload.ref || 'refs/heads/main', 'refs/tags/') && 'tag' || 'branch') == 'tag') && steps.nikatru-seal-12.outcome == 'success' }}
+        if: ${{ ((env.APPLE_SIGNING_POSTURE == 'release-signed') && (startsWith(github.event.client_payload.ref || 'refs/heads/main', 'refs/tags/') && 'tag' || 'branch') == 'tag') && steps.nikatru-seal-13.outcome == 'success' }}
         uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9
         with:
           name: nikatru-handoff-store-${{ matrix.app }}-macos-pkg
@@ -2617,7 +2654,7 @@ jobs:
           include-hidden-files: true
           overwrite: true
       - name: Stage store-${{ matrix.app }}-ios-${{ env.APPLE_SIGNING_POSTURE }} for this run's later jobs (generated)
-        id: nikatru-stage-13
+        id: nikatru-stage-14
         if: ${{ (env.APPLE_SIGNING_POSTURE == 'release-signed') && (startsWith(github.event.client_payload.ref || 'refs/heads/main', 'refs/tags/') && 'tag' || 'branch') == 'tag' }}
         shell: bash
         working-directory: ${{ github.workspace }}
@@ -2628,8 +2665,8 @@ jobs:
           NIKATRU_IF_NO_FILES: error
         run: node tooling/ci/shell-handoff.mjs stage
       - name: Seal store-${{ matrix.app }}-ios-${{ env.APPLE_SIGNING_POSTURE }} for this run's later jobs (generated)
-        id: nikatru-seal-13
-        if: ${{ ((env.APPLE_SIGNING_POSTURE == 'release-signed') && (startsWith(github.event.client_payload.ref || 'refs/heads/main', 'refs/tags/') && 'tag' || 'branch') == 'tag') && steps.nikatru-stage-13.outputs.has == 'true' }}
+        id: nikatru-seal-14
+        if: ${{ ((env.APPLE_SIGNING_POSTURE == 'release-signed') && (startsWith(github.event.client_payload.ref || 'refs/heads/main', 'refs/tags/') && 'tag' || 'branch') == 'tag') && steps.nikatru-stage-14.outputs.has == 'true' }}
         shell: bash
         working-directory: ${{ github.workspace }}
         env:
@@ -2637,7 +2674,7 @@ jobs:
           NIKATRU_HANDOFF_KEY: nikatru-handoff-store-${{ matrix.app }}-ios-${{ env.APPLE_SIGNING_POSTURE }}-${{ github.run_id }}-run
         run: node tooling/ci/shell-handoff.mjs seal
       - name: Hand off store-${{ matrix.app }}-ios-${{ env.APPLE_SIGNING_POSTURE }} to this run's later jobs, sealed (generated)
-        if: ${{ ((env.APPLE_SIGNING_POSTURE == 'release-signed') && (startsWith(github.event.client_payload.ref || 'refs/heads/main', 'refs/tags/') && 'tag' || 'branch') == 'tag') && steps.nikatru-seal-13.outcome == 'success' }}
+        if: ${{ ((env.APPLE_SIGNING_POSTURE == 'release-signed') && (startsWith(github.event.client_payload.ref || 'refs/heads/main', 'refs/tags/') && 'tag' || 'branch') == 'tag') && steps.nikatru-seal-14.outcome == 'success' }}
         uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9
         with:
           name: nikatru-handoff-store-${{ matrix.app }}-ios-${{ env.APPLE_SIGNING_POSTURE }}
@@ -2786,7 +2823,7 @@ jobs:
           APP: ${{ matrix.app }}
         run: echo "::notice title=Nothing to attest (${APP})::the release job staged nothing and owes nothing on this non-tag run, so it handed over no directory"
       - name: Restore the release-dist-${{ matrix.app }} hand-off from this run (generated)
-        id: nikatru-restore-14
+        id: nikatru-restore-15
         if: (startsWith(github.event.client_payload.ref || 'refs/heads/main', 'refs/tags/') && 'tag' || 'branch') == 'tag' || needs.release.outputs.nothing_owed != matrix.app
         timeout-minutes: 6
         uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333
@@ -2794,8 +2831,8 @@ jobs:
           name: nikatru-handoff-release-dist-${{ matrix.app }}
           path: .nikatru-handoff/sealed
       - name: Unseal the release-dist-${{ matrix.app }} hand-off (generated)
-        id: nikatru-unseal-14
-        if: ${{ ((startsWith(github.event.client_payload.ref || 'refs/heads/main', 'refs/tags/') && 'tag' || 'branch') == 'tag' || needs.release.outputs.nothing_owed != matrix.app) && steps.nikatru-restore-14.outcome == 'success' }}
+        id: nikatru-unseal-15
+        if: ${{ ((startsWith(github.event.client_payload.ref || 'refs/heads/main', 'refs/tags/') && 'tag' || 'branch') == 'tag' || needs.release.outputs.nothing_owed != matrix.app) && steps.nikatru-restore-15.outcome == 'success' }}
         shell: bash
         working-directory: ${{ github.workspace }}
         env:
@@ -2804,7 +2841,7 @@ jobs:
           NIKATRU_HANDOFF_PREFIX: nikatru-handoff-release-dist-${{ matrix.app }}-${{ github.run_id }}-
         run: node tooling/ci/shell-handoff.mjs unseal
       - name: Place the release-dist-${{ matrix.app }} hand-off where download-artifact put it (generated)
-        if: ${{ ((startsWith(github.event.client_payload.ref || 'refs/heads/main', 'refs/tags/') && 'tag' || 'branch') == 'tag' || needs.release.outputs.nothing_owed != matrix.app) && steps.nikatru-unseal-14.outcome == 'success' }}
+        if: ${{ ((startsWith(github.event.client_payload.ref || 'refs/heads/main', 'refs/tags/') && 'tag' || 'branch') == 'tag' || needs.release.outputs.nothing_owed != matrix.app) && steps.nikatru-unseal-15.outcome == 'success' }}
         shell: bash
         working-directory: ${{ github.workspace }}
         env:
@@ -2840,7 +2877,7 @@ jobs:
     if: (github.event_name != 'repository_dispatch' || (github.event.client_payload.event == 'push' && startsWith(github.event.client_payload.ref, 'refs/tags/subscriptiontracker-v')))
     runs-on: ubuntu-24.04
     environment: production
-    timeout-minutes: 65
+    timeout-minutes: 75
     needs: [nikatru-pin, gate, prepare, linux_web_android, windows, windows_arm64, linux_arm64, apple]
     outputs:
       store_sums: ${{ steps.copy.outputs.store_sums }}
@@ -2892,7 +2929,7 @@ jobs:
             echo "NIKATRU_DRAFT=$NIKATRU_P_DRAFT"
           } >> "$GITHUB_ENV"
       - name: Restore the symbols-${{ matrix.app }}-linux-android hand-off from this run (generated)
-        id: nikatru-restore-15
+        id: nikatru-restore-16
         if: (startsWith(github.event.client_payload.ref || 'refs/heads/main', 'refs/tags/') && 'tag' || 'branch') == 'tag'
         timeout-minutes: 6
         continue-on-error: true
@@ -2901,8 +2938,8 @@ jobs:
           name: nikatru-handoff-symbols-${{ matrix.app }}-linux-android
           path: .nikatru-handoff/sealed
       - name: Unseal the symbols-${{ matrix.app }}-linux-android hand-off (generated)
-        id: nikatru-unseal-15
-        if: ${{ ((startsWith(github.event.client_payload.ref || 'refs/heads/main', 'refs/tags/') && 'tag' || 'branch') == 'tag') && steps.nikatru-restore-15.outcome == 'success' }}
+        id: nikatru-unseal-16
+        if: ${{ ((startsWith(github.event.client_payload.ref || 'refs/heads/main', 'refs/tags/') && 'tag' || 'branch') == 'tag') && steps.nikatru-restore-16.outcome == 'success' }}
         shell: bash
         working-directory: ${{ github.workspace }}
         env:
@@ -2911,7 +2948,7 @@ jobs:
           NIKATRU_HANDOFF_PREFIX: nikatru-handoff-symbols-${{ matrix.app }}-linux-android-${{ github.run_id }}-
         run: node tooling/ci/shell-handoff.mjs unseal
       - name: Place the symbols-${{ matrix.app }}-linux-android hand-off where download-artifact put it (generated)
-        if: ${{ ((startsWith(github.event.client_payload.ref || 'refs/heads/main', 'refs/tags/') && 'tag' || 'branch') == 'tag') && steps.nikatru-unseal-15.outcome == 'success' }}
+        if: ${{ ((startsWith(github.event.client_payload.ref || 'refs/heads/main', 'refs/tags/') && 'tag' || 'branch') == 'tag') && steps.nikatru-unseal-16.outcome == 'success' }}
         shell: bash
         working-directory: ${{ github.workspace }}
         env:
@@ -2921,7 +2958,7 @@ jobs:
           cp -a .nikatru-handoff/x/. "$NIKATRU_TO/"
           rm -rf .nikatru-handoff/x
       - name: Restore the symbols-${{ matrix.app }}-windows hand-off from this run (generated)
-        id: nikatru-restore-16
+        id: nikatru-restore-17
         if: (startsWith(github.event.client_payload.ref || 'refs/heads/main', 'refs/tags/') && 'tag' || 'branch') == 'tag'
         timeout-minutes: 6
         continue-on-error: true
@@ -2930,8 +2967,8 @@ jobs:
           name: nikatru-handoff-symbols-${{ matrix.app }}-windows
           path: .nikatru-handoff/sealed
       - name: Unseal the symbols-${{ matrix.app }}-windows hand-off (generated)
-        id: nikatru-unseal-16
-        if: ${{ ((startsWith(github.event.client_payload.ref || 'refs/heads/main', 'refs/tags/') && 'tag' || 'branch') == 'tag') && steps.nikatru-restore-16.outcome == 'success' }}
+        id: nikatru-unseal-17
+        if: ${{ ((startsWith(github.event.client_payload.ref || 'refs/heads/main', 'refs/tags/') && 'tag' || 'branch') == 'tag') && steps.nikatru-restore-17.outcome == 'success' }}
         shell: bash
         working-directory: ${{ github.workspace }}
         env:
@@ -2940,7 +2977,7 @@ jobs:
           NIKATRU_HANDOFF_PREFIX: nikatru-handoff-symbols-${{ matrix.app }}-windows-${{ github.run_id }}-
         run: node tooling/ci/shell-handoff.mjs unseal
       - name: Place the symbols-${{ matrix.app }}-windows hand-off where download-artifact put it (generated)
-        if: ${{ ((startsWith(github.event.client_payload.ref || 'refs/heads/main', 'refs/tags/') && 'tag' || 'branch') == 'tag') && steps.nikatru-unseal-16.outcome == 'success' }}
+        if: ${{ ((startsWith(github.event.client_payload.ref || 'refs/heads/main', 'refs/tags/') && 'tag' || 'branch') == 'tag') && steps.nikatru-unseal-17.outcome == 'success' }}
         shell: bash
         working-directory: ${{ github.workspace }}
         env:
@@ -2950,7 +2987,7 @@ jobs:
           cp -a .nikatru-handoff/x/. "$NIKATRU_TO/"
           rm -rf .nikatru-handoff/x
       - name: Restore the symbols-${{ matrix.app }}-windows-arm64 hand-off from this run (generated)
-        id: nikatru-restore-17
+        id: nikatru-restore-18
         if: (startsWith(github.event.client_payload.ref || 'refs/heads/main', 'refs/tags/') && 'tag' || 'branch') == 'tag'
         timeout-minutes: 6
         continue-on-error: true
@@ -2959,8 +2996,8 @@ jobs:
           name: nikatru-handoff-symbols-${{ matrix.app }}-windows-arm64
           path: .nikatru-handoff/sealed
       - name: Unseal the symbols-${{ matrix.app }}-windows-arm64 hand-off (generated)
-        id: nikatru-unseal-17
-        if: ${{ ((startsWith(github.event.client_payload.ref || 'refs/heads/main', 'refs/tags/') && 'tag' || 'branch') == 'tag') && steps.nikatru-restore-17.outcome == 'success' }}
+        id: nikatru-unseal-18
+        if: ${{ ((startsWith(github.event.client_payload.ref || 'refs/heads/main', 'refs/tags/') && 'tag' || 'branch') == 'tag') && steps.nikatru-restore-18.outcome == 'success' }}
         shell: bash
         working-directory: ${{ github.workspace }}
         env:
@@ -2969,7 +3006,7 @@ jobs:
           NIKATRU_HANDOFF_PREFIX: nikatru-handoff-symbols-${{ matrix.app }}-windows-arm64-${{ github.run_id }}-
         run: node tooling/ci/shell-handoff.mjs unseal
       - name: Place the symbols-${{ matrix.app }}-windows-arm64 hand-off where download-artifact put it (generated)
-        if: ${{ ((startsWith(github.event.client_payload.ref || 'refs/heads/main', 'refs/tags/') && 'tag' || 'branch') == 'tag') && steps.nikatru-unseal-17.outcome == 'success' }}
+        if: ${{ ((startsWith(github.event.client_payload.ref || 'refs/heads/main', 'refs/tags/') && 'tag' || 'branch') == 'tag') && steps.nikatru-unseal-18.outcome == 'success' }}
         shell: bash
         working-directory: ${{ github.workspace }}
         env:
@@ -2979,7 +3016,7 @@ jobs:
           cp -a .nikatru-handoff/x/. "$NIKATRU_TO/"
           rm -rf .nikatru-handoff/x
       - name: Restore the symbols-${{ matrix.app }}-linux-arm64 hand-off from this run (generated)
-        id: nikatru-restore-18
+        id: nikatru-restore-19
         if: (startsWith(github.event.client_payload.ref || 'refs/heads/main', 'refs/tags/') && 'tag' || 'branch') == 'tag'
         timeout-minutes: 6
         continue-on-error: true
@@ -2988,8 +3025,8 @@ jobs:
           name: nikatru-handoff-symbols-${{ matrix.app }}-linux-arm64
           path: .nikatru-handoff/sealed
       - name: Unseal the symbols-${{ matrix.app }}-linux-arm64 hand-off (generated)
-        id: nikatru-unseal-18
-        if: ${{ ((startsWith(github.event.client_payload.ref || 'refs/heads/main', 'refs/tags/') && 'tag' || 'branch') == 'tag') && steps.nikatru-restore-18.outcome == 'success' }}
+        id: nikatru-unseal-19
+        if: ${{ ((startsWith(github.event.client_payload.ref || 'refs/heads/main', 'refs/tags/') && 'tag' || 'branch') == 'tag') && steps.nikatru-restore-19.outcome == 'success' }}
         shell: bash
         working-directory: ${{ github.workspace }}
         env:
@@ -2998,7 +3035,7 @@ jobs:
           NIKATRU_HANDOFF_PREFIX: nikatru-handoff-symbols-${{ matrix.app }}-linux-arm64-${{ github.run_id }}-
         run: node tooling/ci/shell-handoff.mjs unseal
       - name: Place the symbols-${{ matrix.app }}-linux-arm64 hand-off where download-artifact put it (generated)
-        if: ${{ ((startsWith(github.event.client_payload.ref || 'refs/heads/main', 'refs/tags/') && 'tag' || 'branch') == 'tag') && steps.nikatru-unseal-18.outcome == 'success' }}
+        if: ${{ ((startsWith(github.event.client_payload.ref || 'refs/heads/main', 'refs/tags/') && 'tag' || 'branch') == 'tag') && steps.nikatru-unseal-19.outcome == 'success' }}
         shell: bash
         working-directory: ${{ github.workspace }}
         env:
@@ -3008,7 +3045,7 @@ jobs:
           cp -a .nikatru-handoff/x/. "$NIKATRU_TO/"
           rm -rf .nikatru-handoff/x
       - name: Restore the symbols-${{ matrix.app }}-apple hand-off from this run (generated)
-        id: nikatru-restore-19
+        id: nikatru-restore-20
         if: (startsWith(github.event.client_payload.ref || 'refs/heads/main', 'refs/tags/') && 'tag' || 'branch') == 'tag'
         timeout-minutes: 6
         continue-on-error: true
@@ -3017,8 +3054,8 @@ jobs:
           name: nikatru-handoff-symbols-${{ matrix.app }}-apple
           path: .nikatru-handoff/sealed
       - name: Unseal the symbols-${{ matrix.app }}-apple hand-off (generated)
-        id: nikatru-unseal-19
-        if: ${{ ((startsWith(github.event.client_payload.ref || 'refs/heads/main', 'refs/tags/') && 'tag' || 'branch') == 'tag') && steps.nikatru-restore-19.outcome == 'success' }}
+        id: nikatru-unseal-20
+        if: ${{ ((startsWith(github.event.client_payload.ref || 'refs/heads/main', 'refs/tags/') && 'tag' || 'branch') == 'tag') && steps.nikatru-restore-20.outcome == 'success' }}
         shell: bash
         working-directory: ${{ github.workspace }}
         env:
@@ -3027,7 +3064,7 @@ jobs:
           NIKATRU_HANDOFF_PREFIX: nikatru-handoff-symbols-${{ matrix.app }}-apple-${{ github.run_id }}-
         run: node tooling/ci/shell-handoff.mjs unseal
       - name: Place the symbols-${{ matrix.app }}-apple hand-off where download-artifact put it (generated)
-        if: ${{ ((startsWith(github.event.client_payload.ref || 'refs/heads/main', 'refs/tags/') && 'tag' || 'branch') == 'tag') && steps.nikatru-unseal-19.outcome == 'success' }}
+        if: ${{ ((startsWith(github.event.client_payload.ref || 'refs/heads/main', 'refs/tags/') && 'tag' || 'branch') == 'tag') && steps.nikatru-unseal-20.outcome == 'success' }}
         shell: bash
         working-directory: ${{ github.workspace }}
         env:
@@ -3064,7 +3101,7 @@ jobs:
             exit 1
           fi
       - name: Restore the store-${{ matrix.app }}-linux-snap hand-off from this run (generated)
-        id: nikatru-restore-20
+        id: nikatru-restore-21
         if: (startsWith(github.event.client_payload.ref || 'refs/heads/main', 'refs/tags/') && 'tag' || 'branch') == 'tag'
         timeout-minutes: 6
         continue-on-error: true
@@ -3073,8 +3110,8 @@ jobs:
           name: nikatru-handoff-store-${{ matrix.app }}-linux-snap
           path: .nikatru-handoff/sealed
       - name: Unseal the store-${{ matrix.app }}-linux-snap hand-off (generated)
-        id: nikatru-unseal-20
-        if: ${{ ((startsWith(github.event.client_payload.ref || 'refs/heads/main', 'refs/tags/') && 'tag' || 'branch') == 'tag') && steps.nikatru-restore-20.outcome == 'success' }}
+        id: nikatru-unseal-21
+        if: ${{ ((startsWith(github.event.client_payload.ref || 'refs/heads/main', 'refs/tags/') && 'tag' || 'branch') == 'tag') && steps.nikatru-restore-21.outcome == 'success' }}
         shell: bash
         working-directory: ${{ github.workspace }}
         env:
@@ -3083,7 +3120,7 @@ jobs:
           NIKATRU_HANDOFF_PREFIX: nikatru-handoff-store-${{ matrix.app }}-linux-snap-${{ github.run_id }}-
         run: node tooling/ci/shell-handoff.mjs unseal
       - name: Place the store-${{ matrix.app }}-linux-snap hand-off where download-artifact put it (generated)
-        if: ${{ ((startsWith(github.event.client_payload.ref || 'refs/heads/main', 'refs/tags/') && 'tag' || 'branch') == 'tag') && steps.nikatru-unseal-20.outcome == 'success' }}
+        if: ${{ ((startsWith(github.event.client_payload.ref || 'refs/heads/main', 'refs/tags/') && 'tag' || 'branch') == 'tag') && steps.nikatru-unseal-21.outcome == 'success' }}
         shell: bash
         working-directory: ${{ github.workspace }}
         env:
@@ -3093,7 +3130,7 @@ jobs:
           cp -a .nikatru-handoff/x/. "$NIKATRU_TO/"
           rm -rf .nikatru-handoff/x
       - name: Restore the store-${{ matrix.app }}-linux-snap-arm64 hand-off from this run (generated)
-        id: nikatru-restore-21
+        id: nikatru-restore-22
         if: (startsWith(github.event.client_payload.ref || 'refs/heads/main', 'refs/tags/') && 'tag' || 'branch') == 'tag'
         timeout-minutes: 6
         continue-on-error: true
@@ -3102,8 +3139,8 @@ jobs:
           name: nikatru-handoff-store-${{ matrix.app }}-linux-snap-arm64
           path: .nikatru-handoff/sealed
       - name: Unseal the store-${{ matrix.app }}-linux-snap-arm64 hand-off (generated)
-        id: nikatru-unseal-21
-        if: ${{ ((startsWith(github.event.client_payload.ref || 'refs/heads/main', 'refs/tags/') && 'tag' || 'branch') == 'tag') && steps.nikatru-restore-21.outcome == 'success' }}
+        id: nikatru-unseal-22
+        if: ${{ ((startsWith(github.event.client_payload.ref || 'refs/heads/main', 'refs/tags/') && 'tag' || 'branch') == 'tag') && steps.nikatru-restore-22.outcome == 'success' }}
         shell: bash
         working-directory: ${{ github.workspace }}
         env:
@@ -3112,7 +3149,7 @@ jobs:
           NIKATRU_HANDOFF_PREFIX: nikatru-handoff-store-${{ matrix.app }}-linux-snap-arm64-${{ github.run_id }}-
         run: node tooling/ci/shell-handoff.mjs unseal
       - name: Place the store-${{ matrix.app }}-linux-snap-arm64 hand-off where download-artifact put it (generated)
-        if: ${{ ((startsWith(github.event.client_payload.ref || 'refs/heads/main', 'refs/tags/') && 'tag' || 'branch') == 'tag') && steps.nikatru-unseal-21.outcome == 'success' }}
+        if: ${{ ((startsWith(github.event.client_payload.ref || 'refs/heads/main', 'refs/tags/') && 'tag' || 'branch') == 'tag') && steps.nikatru-unseal-22.outcome == 'success' }}
         shell: bash
         working-directory: ${{ github.workspace }}
         env:
@@ -3122,7 +3159,7 @@ jobs:
           cp -a .nikatru-handoff/x/. "$NIKATRU_TO/"
           rm -rf .nikatru-handoff/x
       - name: Restore the store-${{ matrix.app }}-windows-msixbundle hand-off from this run (generated)
-        id: nikatru-restore-22
+        id: nikatru-restore-23
         if: (startsWith(github.event.client_payload.ref || 'refs/heads/main', 'refs/tags/') && 'tag' || 'branch') == 'tag'
         timeout-minutes: 6
         continue-on-error: true
@@ -3131,8 +3168,8 @@ jobs:
           name: nikatru-handoff-store-${{ matrix.app }}-windows-msixbundle
           path: .nikatru-handoff/sealed
       - name: Unseal the store-${{ matrix.app }}-windows-msixbundle hand-off (generated)
-        id: nikatru-unseal-22
-        if: ${{ ((startsWith(github.event.client_payload.ref || 'refs/heads/main', 'refs/tags/') && 'tag' || 'branch') == 'tag') && steps.nikatru-restore-22.outcome == 'success' }}
+        id: nikatru-unseal-23
+        if: ${{ ((startsWith(github.event.client_payload.ref || 'refs/heads/main', 'refs/tags/') && 'tag' || 'branch') == 'tag') && steps.nikatru-restore-23.outcome == 'success' }}
         shell: bash
         working-directory: ${{ github.workspace }}
         env:
@@ -3141,7 +3178,7 @@ jobs:
           NIKATRU_HANDOFF_PREFIX: nikatru-handoff-store-${{ matrix.app }}-windows-msixbundle-${{ github.run_id }}-
         run: node tooling/ci/shell-handoff.mjs unseal
       - name: Place the store-${{ matrix.app }}-windows-msixbundle hand-off where download-artifact put it (generated)
-        if: ${{ ((startsWith(github.event.client_payload.ref || 'refs/heads/main', 'refs/tags/') && 'tag' || 'branch') == 'tag') && steps.nikatru-unseal-22.outcome == 'success' }}
+        if: ${{ ((startsWith(github.event.client_payload.ref || 'refs/heads/main', 'refs/tags/') && 'tag' || 'branch') == 'tag') && steps.nikatru-unseal-23.outcome == 'success' }}
         shell: bash
         working-directory: ${{ github.workspace }}
         env:
@@ -3151,7 +3188,7 @@ jobs:
           cp -a .nikatru-handoff/x/. "$NIKATRU_TO/"
           rm -rf .nikatru-handoff/x
       - name: Restore the store-${{ matrix.app }}-macos-pkg hand-off from this run (generated)
-        id: nikatru-restore-23
+        id: nikatru-restore-24
         if: (startsWith(github.event.client_payload.ref || 'refs/heads/main', 'refs/tags/') && 'tag' || 'branch') == 'tag'
         timeout-minutes: 6
         continue-on-error: true
@@ -3160,8 +3197,8 @@ jobs:
           name: nikatru-handoff-store-${{ matrix.app }}-macos-pkg
           path: .nikatru-handoff/sealed
       - name: Unseal the store-${{ matrix.app }}-macos-pkg hand-off (generated)
-        id: nikatru-unseal-23
-        if: ${{ ((startsWith(github.event.client_payload.ref || 'refs/heads/main', 'refs/tags/') && 'tag' || 'branch') == 'tag') && steps.nikatru-restore-23.outcome == 'success' }}
+        id: nikatru-unseal-24
+        if: ${{ ((startsWith(github.event.client_payload.ref || 'refs/heads/main', 'refs/tags/') && 'tag' || 'branch') == 'tag') && steps.nikatru-restore-24.outcome == 'success' }}
         shell: bash
         working-directory: ${{ github.workspace }}
         env:
@@ -3170,7 +3207,7 @@ jobs:
           NIKATRU_HANDOFF_PREFIX: nikatru-handoff-store-${{ matrix.app }}-macos-pkg-${{ github.run_id }}-
         run: node tooling/ci/shell-handoff.mjs unseal
       - name: Place the store-${{ matrix.app }}-macos-pkg hand-off where download-artifact put it (generated)
-        if: ${{ ((startsWith(github.event.client_payload.ref || 'refs/heads/main', 'refs/tags/') && 'tag' || 'branch') == 'tag') && steps.nikatru-unseal-23.outcome == 'success' }}
+        if: ${{ ((startsWith(github.event.client_payload.ref || 'refs/heads/main', 'refs/tags/') && 'tag' || 'branch') == 'tag') && steps.nikatru-unseal-24.outcome == 'success' }}
         shell: bash
         working-directory: ${{ github.workspace }}
         env:
@@ -3180,7 +3217,7 @@ jobs:
           cp -a .nikatru-handoff/x/. "$NIKATRU_TO/"
           rm -rf .nikatru-handoff/x
       - name: Restore the store-${{ matrix.app }}-ios-release-signed hand-off from this run (generated)
-        id: nikatru-restore-24
+        id: nikatru-restore-25
         if: (startsWith(github.event.client_payload.ref || 'refs/heads/main', 'refs/tags/') && 'tag' || 'branch') == 'tag'
         timeout-minutes: 6
         continue-on-error: true
@@ -3189,8 +3226,8 @@ jobs:
           name: nikatru-handoff-store-${{ matrix.app }}-ios-release-signed
           path: .nikatru-handoff/sealed
       - name: Unseal the store-${{ matrix.app }}-ios-release-signed hand-off (generated)
-        id: nikatru-unseal-24
-        if: ${{ ((startsWith(github.event.client_payload.ref || 'refs/heads/main', 'refs/tags/') && 'tag' || 'branch') == 'tag') && steps.nikatru-restore-24.outcome == 'success' }}
+        id: nikatru-unseal-25
+        if: ${{ ((startsWith(github.event.client_payload.ref || 'refs/heads/main', 'refs/tags/') && 'tag' || 'branch') == 'tag') && steps.nikatru-restore-25.outcome == 'success' }}
         shell: bash
         working-directory: ${{ github.workspace }}
         env:
@@ -3199,7 +3236,7 @@ jobs:
           NIKATRU_HANDOFF_PREFIX: nikatru-handoff-store-${{ matrix.app }}-ios-release-signed-${{ github.run_id }}-
         run: node tooling/ci/shell-handoff.mjs unseal
       - name: Place the store-${{ matrix.app }}-ios-release-signed hand-off where download-artifact put it (generated)
-        if: ${{ ((startsWith(github.event.client_payload.ref || 'refs/heads/main', 'refs/tags/') && 'tag' || 'branch') == 'tag') && steps.nikatru-unseal-24.outcome == 'success' }}
+        if: ${{ ((startsWith(github.event.client_payload.ref || 'refs/heads/main', 'refs/tags/') && 'tag' || 'branch') == 'tag') && steps.nikatru-unseal-25.outcome == 'success' }}
         shell: bash
         working-directory: ${{ github.workspace }}
         env:
@@ -3208,10 +3245,39 @@ jobs:
           mkdir -p "$NIKATRU_TO"
           cp -a .nikatru-handoff/x/. "$NIKATRU_TO/"
           rm -rf .nikatru-handoff/x
+      - name: Restore the store-${{ matrix.app }}-android-aab-release-signed hand-off from this run (generated)
+        id: nikatru-restore-26
+        if: (startsWith(github.event.client_payload.ref || 'refs/heads/main', 'refs/tags/') && 'tag' || 'branch') == 'tag'
+        timeout-minutes: 6
+        continue-on-error: true
+        uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333
+        with:
+          name: nikatru-handoff-store-${{ matrix.app }}-android-aab-release-signed
+          path: .nikatru-handoff/sealed
+      - name: Unseal the store-${{ matrix.app }}-android-aab-release-signed hand-off (generated)
+        id: nikatru-unseal-26
+        if: ${{ ((startsWith(github.event.client_payload.ref || 'refs/heads/main', 'refs/tags/') && 'tag' || 'branch') == 'tag') && steps.nikatru-restore-26.outcome == 'success' }}
+        shell: bash
+        working-directory: ${{ github.workspace }}
+        env:
+          NIKATRU_DETAIL_KEY: ${{ secrets.NIKATRU_DETAIL_KEY }}
+          NIKATRU_HANDOFF_KEY: nikatru-handoff-store-${{ matrix.app }}-android-aab-release-signed-${{ github.run_id }}-run
+          NIKATRU_HANDOFF_PREFIX: nikatru-handoff-store-${{ matrix.app }}-android-aab-release-signed-${{ github.run_id }}-
+        run: node tooling/ci/shell-handoff.mjs unseal
+      - name: Place the store-${{ matrix.app }}-android-aab-release-signed hand-off where download-artifact put it (generated)
+        if: ${{ ((startsWith(github.event.client_payload.ref || 'refs/heads/main', 'refs/tags/') && 'tag' || 'branch') == 'tag') && steps.nikatru-unseal-26.outcome == 'success' }}
+        shell: bash
+        working-directory: ${{ github.workspace }}
+        env:
+          NIKATRU_TO: store-in/store-${{ matrix.app }}-android-aab-release-signed
+        run: |
+          mkdir -p "$NIKATRU_TO"
+          cp -a .nikatru-handoff/x/. "$NIKATRU_TO/"
+          rm -rf .nikatru-handoff/x
       - name: Copy this tag's store files to the release store (R2), and record them
         id: copy
         if: (startsWith(github.event.client_payload.ref || 'refs/heads/main', 'refs/tags/') && 'tag' || 'branch') == 'tag'
-        timeout-minutes: 20
+        timeout-minutes: 24
         env:
           APP: ${{ matrix.app }}
           TAG: ${{ env.NIKATRU_REF_NAME }}
@@ -3279,7 +3345,7 @@ jobs:
             echo "NIKATRU_DRAFT=$NIKATRU_P_DRAFT"
           } >> "$GITHUB_ENV"
       - name: Restore the apps-gov-in-${{ matrix.app }}-apk hand-off from this run (generated)
-        id: nikatru-restore-25
+        id: nikatru-restore-27
         timeout-minutes: 6
         continue-on-error: true
         uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333
@@ -3287,8 +3353,8 @@ jobs:
           name: nikatru-handoff-apps-gov-in-${{ matrix.app }}-apk
           path: .nikatru-handoff/sealed
       - name: Unseal the apps-gov-in-${{ matrix.app }}-apk hand-off (generated)
-        id: nikatru-unseal-25
-        if: ${{ (success()) && steps.nikatru-restore-25.outcome == 'success' }}
+        id: nikatru-unseal-27
+        if: ${{ (success()) && steps.nikatru-restore-27.outcome == 'success' }}
         shell: bash
         working-directory: ${{ github.workspace }}
         env:
@@ -3297,7 +3363,7 @@ jobs:
           NIKATRU_HANDOFF_PREFIX: nikatru-handoff-apps-gov-in-${{ matrix.app }}-apk-${{ github.run_id }}-
         run: node tooling/ci/shell-handoff.mjs unseal
       - name: Place the apps-gov-in-${{ matrix.app }}-apk hand-off where download-artifact put it (generated)
-        if: ${{ (success()) && steps.nikatru-unseal-25.outcome == 'success' }}
+        if: ${{ (success()) && steps.nikatru-unseal-27.outcome == 'success' }}
         shell: bash
         working-directory: ${{ github.workspace }}
         env:
@@ -3445,11 +3511,12 @@ jobs:
             dist/SHA256SUMS
           NIKATRU_ARTIFACT_NAME: release-record-${{ matrix.app }}
           NIKATRU_IF_NO_FILES: warn
+          NIKATRU_RETENTION_CLASS: release
           BRIDGE_ARTIFACT_SECRET: ${{ secrets.BRIDGE_ARTIFACT_SECRET }}
           NIKATRU_BRIDGE_ARTIFACT_URL: https://gh-bridge.nikatru.workers.dev/artifact
         run: node tooling/ops/bridge-artifact.mjs upload
       - name: Stage release-dist-${{ matrix.app }} for this run's later jobs (generated)
-        id: nikatru-stage-26
+        id: nikatru-stage-28
         if: steps.stage.outputs.nothing_owed != matrix.app
         shell: bash
         working-directory: ${{ github.workspace }}
@@ -3458,8 +3525,8 @@ jobs:
           NIKATRU_IF_NO_FILES: error
         run: node tooling/ci/shell-handoff.mjs stage
       - name: Seal release-dist-${{ matrix.app }} for this run's later jobs (generated)
-        id: nikatru-seal-26
-        if: ${{ (steps.stage.outputs.nothing_owed != matrix.app) && steps.nikatru-stage-26.outputs.has == 'true' }}
+        id: nikatru-seal-28
+        if: ${{ (steps.stage.outputs.nothing_owed != matrix.app) && steps.nikatru-stage-28.outputs.has == 'true' }}
         shell: bash
         working-directory: ${{ github.workspace }}
         env:
@@ -3467,7 +3534,7 @@ jobs:
           NIKATRU_HANDOFF_KEY: nikatru-handoff-release-dist-${{ matrix.app }}-${{ github.run_id }}-run
         run: node tooling/ci/shell-handoff.mjs seal
       - name: Hand off release-dist-${{ matrix.app }} to this run's later jobs, sealed (generated)
-        if: ${{ (steps.stage.outputs.nothing_owed != matrix.app) && steps.nikatru-seal-26.outcome == 'success' }}
+        if: ${{ (steps.stage.outputs.nothing_owed != matrix.app) && steps.nikatru-seal-28.outcome == 'success' }}
         uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9
         with:
           name: nikatru-handoff-release-dist-${{ matrix.app }}

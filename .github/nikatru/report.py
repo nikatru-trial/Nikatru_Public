@@ -301,6 +301,16 @@ RETRY_JITTER = 0.25
 # one minute could 429 a green run's statuses (`x … -> HTTP 429`, report.py exit 1). A 429 is retried after
 # RATE_DELAYS seconds — together past one whole bucket period (60 s), so the next attempt meets a fresh bucket.
 RATE_DELAYS = (20, 45)
+# ⏱ 2026-11-17 · O-REPORT-403-ONE-OF-NINE-REDS-THE-RUN (public run 44081727486 attempt 4, head fd419bdf): every lane and
+# the gate were success, 8 of 9 reports got 200, and ONE got 403 NO_REPORT_JOB — the bridge's own re-read of GitHub's
+# lagging jobs list (services/gh-bridge/src/report.ts REPORT_JOB_REREAD_MS, 1+2+4 s) ran out — so the step went red.
+# post() now re-sends THAT refusal, and only that exact text, ONCE after NO_REPORT_JOB_WAIT_S, inside RETRY_WINDOW_S
+# (so post_worst_s and the send budget are unchanged). A refusal that stands after it is red as before, EXCEPT a lane's
+# `success` while this send already posted ci-gate `success`: a `::warning` naming the context, and the run stays
+# green (send). A red or unposted gate keeps every refusal red. NO_REPORT_JOB is report.ts's text, byte for byte
+# (shell-report.test.mjs reads it from there); any other 403 is never re-sent.
+NO_REPORT_JOB = 'the run has no report job in progress'
+NO_REPORT_JOB_WAIT_S = 10
 
 
 class Lost(Exception):
@@ -1396,19 +1406,33 @@ def post(url, secret, body, timeout, opener=urllib.request.urlopen, sleep=None, 
     `ts` (epoch seconds, `now`) and is signed afresh, so the bridge refuses a captured body outside its window and a replay of it (409), and a retry is
     a new body, never a replay. A 409 is the bridge saying this body was already delivered (send counts it).
     ⏱ 2026-11-09 · review52-platform-002: `oidc`, when given, is called before every attempt and its token (or None)
-    goes as X-Bridge-OIDC, so the bridge binds the report to THIS job (services/gh-bridge/src/report.ts)."""
+    goes as X-Bridge-OIDC, so the bridge binds the report to THIS job (services/gh-bridge/src/report.ts).
+    ⏱ 2026-11-14 · sec-audit-1114 SEC-M1: an `oidc` that raises OidcMintFailed (the job offers the endpoint and it
+    would not mint) ends the post there: (0, 'X-Bridge-OIDC: <why>; not posted unbound'), and nothing is sent. Never a
+    post with no token in place of a bound one, and never retried (the window would only re-ask a runner that said no).
+    ⏱ 2026-11-17 · O-REPORT-403-ONE-OF-NINE-REDS-THE-RUN: a 403 whose error is exactly NO_REPORT_JOB is re-sent ONCE,
+    after NO_REPORT_JOB_WAIT_S (unjittered, cut to the window like any wait); a second one is the answer."""
     sleep = sleep or time.sleep
     now = now or time.time
     clock = clock or time.monotonic
     jitter = jitter or random.random
     started, waited = clock(), 0.0
+    reread = False
     for attempt in range(len(RETRY_DELAYS) + 1):
         raw = json.dumps({**body, 'ts': int(now())} if stamp else body, ensure_ascii=False).encode('utf-8')
-        status, why, upstream = post_once(url, secret, raw, opener, timeout, oidc() if oidc else None)
-        transient = status == 429 or (status in RETRY_STATUSES and (status != 502 or upstream is None or upstream in RETRY_UPSTREAMS))
+        try:
+            token = oidc() if oidc else None
+        except OidcMintFailed as e:
+            return 0, f'X-Bridge-OIDC: {e}; not posted unbound'
+        status, why, upstream = post_once(url, secret, raw, opener, timeout, token)
+        lagging = status == 403 and why == NO_REPORT_JOB and not reread
+        transient = lagging or status == 429 or (status in RETRY_STATUSES and (status != 502 or upstream is None or upstream in RETRY_UPSTREAMS))
         if not transient or attempt == len(RETRY_DELAYS) or (status == 429 and attempt >= len(RATE_DELAYS)):
             return status, why
-        if status == 429:
+        if lagging:
+            reread = True
+            wait = NO_REPORT_JOB_WAIT_S
+        elif status == 429:
             wait = RATE_DELAYS[attempt]
         else:
             wait = round(RETRY_DELAYS[attempt] * (1 + RETRY_JITTER * (2 * jitter() - 1)), 1)
@@ -1418,7 +1442,10 @@ def post(url, secret, body, timeout, opener=urllib.request.urlopen, sleep=None, 
         if left <= 0:
             return status, why
         wait = min(wait, round(left, 1))
-        print(f'-- HTTP {status} is transient; retrying in {wait} s', file=sys.stderr)
+        if lagging:
+            print(f'-- HTTP 403 ({NO_REPORT_JOB}): GitHub\'s jobs list may still lag this job; re-sending ONCE in {wait} s', file=sys.stderr)
+        else:
+            print(f'-- HTTP {status} is transient; retrying in {wait} s', file=sys.stderr)
         sleep(wait)
         waited += wait
 
@@ -1730,16 +1757,25 @@ def send_dispatch(env, cfg, opener=urllib.request.urlopen, clock=time.monotonic)
 
 # ⏱ 2026-11-09 · review52-platform-002: the report job holds `id-token: write` (gen-public-shell.mjs reportJob), and
 # every /report attempt carries a FRESH token of it (a retry may outlive one), so the bridge binds the report to this
-# job, not to whoever holds REPORT_SECRET. A token that cannot be minted is SAID and the post goes without one: the
-# bridge decides (it accepts none until its REPORT_OIDC.required flips, then refuses it 403 with its reason).
+# job, not to whoever holds REPORT_SECRET.
+# ⏱ 2026-11-14 · sec-audit-1114 SEC-M1: a token that cannot be minted FAILS the report
+# (OidcMintFailed: post() sends nothing, send counts it red and exits 1); it no longer goes out unbound for the bridge
+# to decide. A job that offers no OIDC endpoint at all (no id-token: write) still posts with none, and the bridge,
+# once REPORT_OIDC.required is true, refuses it 403 with its reason: that answer is red here too.
 REPORT_OIDC_TIMEOUT_S = 10
 
 
+class OidcMintFailed(Exception):
+    """The job offers the OIDC endpoint and it would not mint a token: its why, which never carries a token."""
+
+
 def report_token(env, opener=urllib.request.urlopen):
-    """This job's OIDC token for one /report attempt, or None (printed when the runner would not mint one)."""
+    """This job's OIDC token for one /report attempt, or None when the job offers no OIDC endpoint. Raises
+    OidcMintFailed (said here) when the endpoint is offered and will not mint one."""
     token, why = caller_token(env, opener, REPORT_OIDC_TIMEOUT_S)
     if why:
-        print(f'-- X-Bridge-OIDC: {why}; this report goes without one', file=sys.stderr)
+        print(f'x X-Bridge-OIDC: {why}; this report is NOT posted unbound', file=sys.stderr)
+        raise OidcMintFailed(why)
     return token
 
 
@@ -1819,6 +1855,63 @@ def lost_detail(item, cfg, results, detail):
     return held_to_detail(item, cfg, results) and not has_detail(detail)
 
 
+# ⏱ 2026-11-14 · O-CI-REPORTER-RED-ON-ALREADY-POSTED (lead acct1 03:02Z; owner spotted it on #1431 CI #4107 attempt 2).
+# Every lane and the gate were success, and this job went RED: three GitHub 502s spent the send's budget, so
+# ci/as-if-main and ci/extensions were `NOT reported` — although both were ALREADY success at that sha (attempt 1).
+# So the send first READS the commit's statuses (the bridge's read-only `{op: "statuses"}` probe on POST /report,
+# services/gh-bridge/src/report.ts answerProbe, bound like a report) and a LANE whose status there is already
+# `success`, and would be posted `success` again, is skipped: `ok <context> success -> already reported`. The gate is
+# posted as before, first; a red or held lane is posted as before (its detail is this attempt's). The job is red
+# only when a context it still NEEDED to post stayed unposted. Any answer that is not a 200 with the statuses map
+# (a bridge without the probe answers 400; a GitHub outage, 502; no answer at all) is UNKNOWN: nothing is skipped,
+# every context is posted, as before this change — never a guess that a status is there. A skipped lane keeps the
+# description and link of the run that posted it (the state is the same; only the older run is named).
+ALREADY_STATE = 'success'
+
+
+def read_statuses(url, secret, env, cfg, opener=urllib.request.urlopen):
+    """({context: state}, None) as the bridge reads the dispatched sha now, or (None, why) when unknown. ONE attempt,
+    at the config's postTimeoutS: a retry here would only spend the budget the posts need."""
+    try:
+        body = {'op': 'statuses', 'run_id': int(env['GITHUB_RUN_ID']), 'run_attempt': int(env['GITHUB_RUN_ATTEMPT']),
+                'sha': env['NIKATRU_HEAD_SHA'], 'ts': int(time.time())}
+    except (KeyError, ValueError):
+        return None, 'no run id or attempt to bind the read to'
+    raw = json.dumps(body).encode('utf-8')
+    headers = {'content-type': 'application/json', 'user-agent': USER_AGENT, 'x-bridge-signature': signature(secret, raw)}
+    try:
+        # Inside the try: a garbled answer from the runner's token endpoint is unknown too, never a crash of send().
+        token = report_token(env, opener)
+        if token:
+            headers['x-bridge-oidc'] = token
+        req = urllib.request.Request(url, data=raw, method='POST', headers=headers)
+        with opener(req, timeout=cfg['postTimeoutS']) as r:
+            answer = json.loads(r.read().decode('utf-8'))
+            status = r.status
+    except urllib.error.HTTPError as e:
+        return None, f'HTTP {e.code}'
+    except (urllib.error.URLError, OSError, ValueError) as e:
+        return None, f'no answer ({str(e)[:80]})'
+    except Exception as e:  # http.client.HTTPException (a garbled answer) is neither: still only unknown
+        return None, f'no answer ({type(e).__name__})'
+    got = answer.get('statuses') if isinstance(answer, dict) else None
+    if status != 200 or not isinstance(got, dict) or not all(isinstance(k, str) and isinstance(v, str) for k, v in got.items()):
+        return None, f'HTTP {status} without a statuses map'
+    return got, None
+
+
+def already_reported(item, cfg, state, already):
+    """True when this context need not be posted: a LANE (never the gate) going out `success` whose status on the
+    dispatched sha is `success` already. `already` None (unknown) skips nothing."""
+    return already is not None and not is_gate(item, cfg) and state == ALREADY_STATE and already.get(item['context']) == ALREADY_STATE
+
+
+def refused_on_green(item, cfg, state, status, why, gate_green):
+    """True when a refused post need not redden the run: a LANE (never the gate) going out `success`, refused 403
+    NO_REPORT_JOB after post()'s one re-send, while this send already posted ci-gate `success` (`gate_green`)."""
+    return gate_green and not is_gate(item, cfg) and state == 'success' and status == 403 and why == NO_REPORT_JOB
+
+
 def send(env, cfg, opener=urllib.request.urlopen, clock=time.monotonic):
     if env.get('GITHUB_EVENT_NAME') in UNDISPATCHED_EVENTS:
         return send_dispatch(env, cfg, opener, clock)
@@ -1856,10 +1949,24 @@ def send(env, cfg, opener=urllib.request.urlopen, clock=time.monotonic):
     # job's timeout (22 contexts x a hung bridge used to be ~36 min against 10); a post starts only while a whole
     # one still fits, and every context left is named, not sent. The gate goes first (items), so it is the last to lose.
     # (`budget` and `started` are set above, before the red-log uploads.)
+    # O-CI-REPORTER-RED-ON-ALREADY-POSTED: one read before the posts, inside the budget, and only while the budget
+    # still fits it AND one whole post after it (the gate's); otherwise unknown, and every context is posted.
+    already, why = None, 'the send budget has no room for the read'
+    if budget is None or budget - post_worst_s(cfg) >= cfg['postTimeoutS'] + REPORT_OIDC_TIMEOUT_S:
+        already, why = read_statuses(url, secret, env, cfg, opener)
+    print(f'-- statuses at this sha: {"read, " + str(len(already)) + " context(s)" if already is not None else "unknown (" + why + "); every context is posted"}')
+    skipped = 0
+    # O-REPORT-403-ONE-OF-NINE-REDS-THE-RUN: True once THIS send posted the gate `success` and the bridge took it (the
+    # gate goes first, items()); a config with no gate, or a gate not posted success, never turns a refusal green.
+    gate_green, warned = False, 0
     for item in items(cfg):
         state = STATE_OF.get(results.get(item['job'], ''))
         if state is None:
             print(f"-- {item['context']}: {results.get(item['job'], 'absent')}, not reported")
+            continue
+        if already_reported(item, cfg, state, already):
+            skipped += 1
+            print(f"ok {item['context']} {state} -> already reported (its status at this sha is {state} already; not posted again)")
             continue
         if budget is not None and clock() - started + post_worst_s(cfg) > budget:
             failed += 1
@@ -1899,8 +2006,21 @@ def send(env, cfg, opener=urllib.request.urlopen, clock=time.monotonic):
                            oidc=lambda: report_token(env, opener))
         # A 409 is this very body already delivered (the bridge's seen-key, O-BRIDGE-REPORT-REPLAY-WINDOW): not a failure.
         ok = 200 <= status < 300 or status == 409
+        if is_gate(item, cfg):
+            gate_green = ok and state == 'success'
+        if not ok and refused_on_green(item, cfg, state, status, why, gate_green):
+            # O-REPORT-403-ONE-OF-NINE-REDS-THE-RUN: a lane's success the bridge still refuses NO_REPORT_JOB after post()'s
+            # one re-send, while ci-gate (the status the landers gate on) went out success in this send: said, not red.
+            warned += 1
+            print(f"::warning title=report refused, run stays green::WARNING {item['context']} {state} NOT reported -> HTTP {status} ({why}) "
+                  f"after one re-send; ci-gate is success at this sha, so the run stays green (re-run the report job to post it)")
+            continue
         failed += 0 if ok else 1
         print(f"{'ok' if ok else 'x '} {item['context']} {state} -> HTTP {status}{f' ({why})' if why and not ok else ''}")
+    if skipped:
+        print(f'-- {skipped} context(s) already reported at this sha, not posted again')
+    if warned:
+        print(f'-- WARNING: {warned} lane status(es) refused `{NO_REPORT_JOB}` with ci-gate success; named above, not posted')
     # Every status was attempted: the report job's fallback step (no detail) need not run.
     if env.get('GITHUB_OUTPUT'):
         with open(env['GITHUB_OUTPUT'], 'a', encoding='utf-8') as f:
@@ -1941,7 +2061,8 @@ RUNNER_SOURCES = ('tooling/ci/quiet-step.mjs', 'tooling/ci/shell-report.py', 'to
                   'tooling/ci/github-api-base.mjs', 'tooling/ci/previous-ci-history.mjs',
                   'tooling/ci/record-deployment.mjs', 'tooling/ci/run-context.mjs', 'tooling/ci/shell-handoff.mjs',
                   'tooling/ci/tree-walk.mjs', 'tooling/ci/workflow-scan.mjs', 'tooling/generated/codehost.mjs',
-                  'tooling/ops/actions-oidc.mjs', 'tooling/ops/bounded-retry.mjs', 'tooling/ops/run-jobs.mjs')
+                  'tooling/ops/actions-oidc.mjs', 'tooling/ops/bounded-retry.mjs',
+                  'tooling/ops/retention-classes.mjs', 'tooling/ops/run-jobs.mjs')
 # ⏱ 2026-10-09 · PR #213 review finding 5. THE LABEL IS ADVISORY. The bridge returns label NAMES, and every lane and
 # every lead writes to the private repo as the one GitHub identity, so who applied a label proves nothing and an
 # allow-list of appliers would admit everyone it lists. Any writer can add it to its own PR. What the label buys is
@@ -1955,6 +2076,20 @@ PR_META_TIMEOUT_S = 30
 OIDC_AUDIENCE = 'nikatru-gh-bridge-propose'
 # A JWT's shape: what an Actions OIDC token is, and nothing that could carry a header break.
 JWT = re.compile(r'^[A-Za-z0-9_-]+\.[A-Za-z0-9_-]+\.[A-Za-z0-9_-]+$')
+# ⏱ 2026-11-17 · bl-cigate-1 (O-1421-RUNNER-REVIEW-MINORS, minor 1): the shell-own job's closure is a runner source too.
+# ops-watch's page step runs these byte copies holding OWNER_PAGE_PUSH_TOKEN, BRIDGE_OPS_SECRET and BRIDGE_READ_SECRET,
+# so a PR that changes a source, a copy or the zone pair waits on RUNNER_LABEL like the wrapper does. The generator's
+# shellJobRunnerSources() (gen-public-shell.mjs) is the one list; shell-report.test.mjs holds this tuple equal to it.
+# actions-oidc.mjs and bounded-retry.mjs are already above (GENERATOR_IMPORTS), so they are not repeated.
+RUNNER_SOURCES = RUNNER_SOURCES + ('tooling/ops/ops-issue.mjs', 'tooling/ops/bridge-ops.mjs', 'tooling/ops/fit-ops-body.mjs',
+                                   'tooling/ops/bridge-read.mjs', 'tooling/ops/owner-page-watch.mjs',
+                                   'tooling/ops/live-probe.mjs', 'shell/.github/nikatru/ops/ops-issue.mjs',
+                                   'shell/.github/nikatru/ops/bridge-ops.mjs', 'shell/.github/nikatru/ops/fit-ops-body.mjs',
+                                   'shell/.github/nikatru/ops/bridge-read.mjs', 'shell/.github/nikatru/ops/actions-oidc.mjs',
+                                   'shell/.github/nikatru/ops/bounded-retry.mjs',
+                                   'shell/.github/nikatru/ops/owner-page-watch.mjs',
+                                   'shell/.github/nikatru/ops/live-probe.mjs', 'tooling/edge/zone.json',
+                                   'shell/.github/nikatru/edge/zone.json')
 
 
 def pr_meta_message(number, sha, ts):

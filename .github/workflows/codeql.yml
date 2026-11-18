@@ -10,7 +10,7 @@ run-name: "${{ !(github.event.client_payload.pr) && (startsWith(github.event.cli
 
 on:
   repository_dispatch:
-    types: [ci, main]
+    types: [ci, rehearsal, main]
   workflow_dispatch:
     inputs:
       worker_slot:

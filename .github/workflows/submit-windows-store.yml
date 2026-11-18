@@ -613,6 +613,7 @@ jobs:
       artifact: ${{ steps.bytes.outputs.artifact }}
       sha256: ${{ steps.bytes.outputs.sha256 }}
       build_number: ${{ steps.buildno.outputs.build_number }}
+      msix_version: ${{ steps.ver.outputs.release_line }}.${{ steps.buildno.outputs.build_number }}.0
     env:
       APP: ${{ needs.gate.outputs.app }}
     steps:
@@ -1273,8 +1274,9 @@ jobs:
           GITHUB_REPOSITORY: ${{ github.repository }}
           LISTING_URL: ${{ inputs.listing_url }}
           BUILD_NUMBER: ${{ needs.dry-run.outputs.build_number }}
+          MSIX_VERSION: ${{ needs.dry-run.outputs.msix_version }}
           MSIX: apps/${{ needs.gate.outputs.app }}/build/windows/msix/${{ needs.gate.outputs.app }}.msixbundle
-        run: node tooling/ci/record-deployment.mjs "${APP}-windows-store" --state certifying --listing-url "$LISTING_URL" --mode production --artifact "$MSIX" --build-number "$BUILD_NUMBER" --symbols-record "${RUNNER_TEMP}/symbols-record.json"
+        run: node tooling/ci/record-deployment.mjs "${APP}-windows-store" --state certifying --listing-url "$LISTING_URL" --release-version "$MSIX_VERSION" --mode production --artifact "$MSIX" --build-number "$BUILD_NUMBER" --symbols-record "${RUNNER_TEMP}/symbols-record.json"
 
   promote:
     name: Move the Microsoft Store package rollout (owner-approved)

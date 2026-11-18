@@ -6,7 +6,7 @@ env:
 
 name: Claude review
 
-run-name: "Claude review · ${{ github.event.client_payload.sha }}${{ github.event.client_payload.pr && format(' (PR #{0})', github.event.client_payload.pr) || '' }}"
+run-name: "${{ !(github.event.client_payload.pr) && (startsWith(github.event.client_payload.ref, 'refs/tags/') && '[tag] ' || '[main] ') || startsWith(github.event.client_payload.ref, 'refs/heads/rehearsal/') && '[rehearsal] ' || startsWith(github.event.client_payload.ref, 'refs/heads/club/') && '[club] ' || startsWith(github.event.client_payload.ref, 'refs/heads/train/') && '[club] ' || startsWith(github.event.client_payload.ref, 'refs/heads/integ/') && '[club] ' || startsWith(github.event.client_payload.ref, 'refs/heads/renovate/') && '[bot] ' || startsWith(github.event.client_payload.ref, 'refs/heads/dependabot/') && '[bot] ' || '[single] ' }}Claude review · ${{ github.event.client_payload.sha }}${{ github.event.client_payload.pr && format(' (PR #{0})', github.event.client_payload.pr) || '' }}"
 
 on:
   repository_dispatch:
@@ -14,14 +14,12 @@ on:
   workflow_dispatch:
     inputs:
       review_account:
-        description: 'The Claude account whose subscription token reviews this run: acct1..acct4. A bridge dispatch with none takes the evidence pack''s reviewAccount.'
+        description: 'The Claude account whose subscription token reviews this run: acct1..acct4, less any with an endedOn in tooling/ci/claude-accounts.json (tooling/ops/claude-accounts.mjs dispatchableAccountIds). A bridge dispatch with none takes the evidence pack''s reviewAccount.'
         required: false
         type: choice
         options:
-          - acct1
           - acct2
           - acct3
-          - acct4
       red_drill:
         description: 'A drill: the quiet step of this exact name (e.g. build-platforms.gate.2) goes red after it runs green, so its red detail must reach the private home. Empty: no drill.'
         required: false
@@ -137,9 +135,12 @@ jobs:
     needs: [nikatru-pin]
     name: The test files the PR touches (no secrets)
     runs-on: ubuntu-24.04
-    timeout-minutes: 40
+    timeout-minutes: 51
+    continue-on-error: true
     permissions:
       contents: read
+    outputs:
+      result: ${{ steps.own-result.outputs.result }}
     steps:
       - name: Check out the private tree (generated)
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
@@ -215,6 +216,7 @@ jobs:
         working-directory: ${{ github.workspace }}
         run: printf '/.nikatru-trusted/\n' >> "$(git rev-parse --git-path info/exclude)"
       - uses: ./.nikatru-trusted/.github/actions/setup-node
+        timeout-minutes: 2
         env:
           NIKATRU_REF: ${{ github.event.client_payload.ref || 'refs/heads/main' }}
           NIKATRU_EVENT_NAME: ${{ github.event.client_payload.event || github.event_name }}
@@ -256,6 +258,19 @@ jobs:
           retention-days: 1
           include-hidden-files: true
           overwrite: true
+      - name: Hand this job's own status to the report
+        id: own-result
+        if: always()
+        timeout-minutes: 1
+        env:
+          STATUS: ${{ job.status }}
+        run: |
+          NIKATRU_QUIET="$(mktemp "${RUNNER_TEMP:-/tmp}/nikatru-step.XXXXXX")"
+          cat > "$NIKATRU_QUIET" <<'NIKATRU_QUIET_EOF'
+          echo "result=$STATUS" >> "$GITHUB_OUTPUT"
+          NIKATRU_QUIET_EOF
+          NIKATRU_SHELL="${BASH:-bash}"; if command -v cygpath >/dev/null 2>&1; then NIKATRU_SHELL="$(cygpath -w "$NIKATRU_SHELL")"; fi
+          node "$GITHUB_WORKSPACE/../.nikatru-shell/quiet-step.mjs" --name claude-review.tests.5 -- "$NIKATRU_SHELL" -e "$NIKATRU_QUIET"
       - name: Hand this job's red detail to the report job, sealed (generated)
         id: nikatru-handoff
         if: always()
@@ -448,6 +463,7 @@ jobs:
           NIKATRU_PATHS: ${{ runner.temp }}/review-verdict/claude-review-*.md
           NIKATRU_ARTIFACT_NAME: claude-review-verdict
           NIKATRU_IF_NO_FILES: ignore
+          NIKATRU_RETENTION_CLASS: diag
           BRIDGE_ARTIFACT_SECRET: ${{ secrets.BRIDGE_ARTIFACT_SECRET }}
           NIKATRU_BRIDGE_ARTIFACT_URL: https://gh-bridge.nikatru.workers.dev/artifact
         run: node tooling/ops/bridge-artifact.mjs upload
@@ -1536,7 +1552,7 @@ jobs:
           NIKATRU_P_EVENT: ${{ github.event.client_payload.event }}
           NIKATRU_P_PR: ${{ github.event.client_payload.pr }}
           NIKATRU_P_REF: ${{ github.event.client_payload.ref }}
-          NIKATRU_RESULTS: '{"tests": "${{ needs.tests.result }}", "review": "${{ needs.review.result }}"}'
+          NIKATRU_RESULTS: '{"tests": "${{ (needs.tests.outputs.result == ''success'' && ''success'') || (needs.tests.outputs.result == ''failure'' && ''failure'') || (needs.tests.outputs.result == ''cancelled'' && ''cancelled'') || (needs.tests.outputs.result == ''skipped'' && ''skipped'') || (needs.tests.result == ''success'' && ''failure'') || needs.tests.result }}", "review": "${{ needs.review.result }}"}'
         run: /usr/bin/python3 -I .github/nikatru/report.py send .github/nikatru/claude-review.json
       - name: Report every lane and the gate without detail, as the step above did not run to its end (generated)
         if: always() && steps.send.outputs.reported != 'true'
@@ -1546,5 +1562,5 @@ jobs:
           NIKATRU_P_EVENT: ${{ github.event.client_payload.event }}
           NIKATRU_P_PR: ${{ github.event.client_payload.pr }}
           NIKATRU_P_REF: ${{ github.event.client_payload.ref }}
-          NIKATRU_RESULTS: '{"tests": "${{ needs.tests.result }}", "review": "${{ needs.review.result }}"}'
+          NIKATRU_RESULTS: '{"tests": "${{ (needs.tests.outputs.result == ''success'' && ''success'') || (needs.tests.outputs.result == ''failure'' && ''failure'') || (needs.tests.outputs.result == ''cancelled'' && ''cancelled'') || (needs.tests.outputs.result == ''skipped'' && ''skipped'') || (needs.tests.result == ''success'' && ''failure'') || needs.tests.result }}", "review": "${{ needs.review.result }}"}'
         run: /usr/bin/python3 -I .github/nikatru/report.py send .github/nikatru/claude-review.json

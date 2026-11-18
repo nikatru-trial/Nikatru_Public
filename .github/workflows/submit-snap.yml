@@ -293,6 +293,7 @@ jobs:
       artifact: ${{ steps.bytes.outputs.artifact }}
       sha256: ${{ steps.bytes.outputs.sha256 }}
       release_line: ${{ steps.ver.outputs.release_line }}
+      snap_version: ${{ steps.ver.outputs.release_line }}.${{ github.run_number }}
       snapcraft_version: ${{ steps.snapcraft.outputs.version }}
       snapcraft_revision: ${{ steps.snapcraft.outputs.revision }}
     env:
@@ -1583,9 +1584,10 @@ jobs:
           GITHUB_REPOSITORY: ${{ github.repository }}
           LISTING_URL: ${{ inputs.listing_url }}
           RUN_NUMBER: ${{ github.run_number }}
+          SNAP_VERSION: ${{ needs.dry-run.outputs.snap_version }}
           SNAP: apps/${{ needs.gate.outputs.app }}/build/linux/snap/${{ needs.gate.outputs.app }}.snap
           SNAP_ARM64: apps/${{ needs.gate.outputs.app }}/build/linux/snap/${{ needs.gate.outputs.app }}-arm64.snap
-        run: node tooling/ci/record-deployment.mjs "${APP}-linux-snap" --state released --listing-url "$LISTING_URL" --mode production --artifact "$SNAP" --artifact "$SNAP_ARM64" --build-number "$RUN_NUMBER" --symbols-record "${RUNNER_TEMP}/symbols-record.json"
+        run: node tooling/ci/record-deployment.mjs "${APP}-linux-snap" --state released --listing-url "$LISTING_URL" --release-version "$SNAP_VERSION" --mode production --artifact "$SNAP" --artifact "$SNAP_ARM64" --build-number "$RUN_NUMBER" --symbols-record "${RUNNER_TEMP}/symbols-record.json"
 
   nikatru-ran:
     name: Fail this run if it ran nothing (generated)

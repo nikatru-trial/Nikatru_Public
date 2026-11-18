@@ -9,7 +9,7 @@ run-name: "${{ !(github.event.client_payload.pr) && (startsWith(github.event.cli
 
 on:
   repository_dispatch:
-    types: [ci]
+    types: [ci, rehearsal]
 
 permissions:
   contents: read

@@ -546,6 +546,7 @@ jobs:
           NIKATRU_PATHS: ${{ runner.temp }}/money-evidence/
           NIKATRU_ARTIFACT_NAME: money-sandbox-evidence-${{ matrix.rail }}
           NIKATRU_IF_NO_FILES: error
+          NIKATRU_RETENTION_CLASS: release
           BRIDGE_ARTIFACT_SECRET: ${{ secrets.BRIDGE_ARTIFACT_SECRET }}
           NIKATRU_BRIDGE_ARTIFACT_URL: https://gh-bridge.nikatru.workers.dev/artifact
         run: node tooling/ops/bridge-artifact.mjs upload

@@ -68,6 +68,20 @@
       "members": [
         "extensions-ci."
       ]
+    },
+    {
+      "job": "main-only-setup-plan",
+      "context": "ci/main-only-setup-plan",
+      "members": [
+        "ci.main-only-setup-plan."
+      ]
+    },
+    {
+      "job": "main-only-setup",
+      "context": "ci/main-only-setup",
+      "members": [
+        "ci.main-only-setup."
+      ]
     }
   ],
   "gateMeta": true,
