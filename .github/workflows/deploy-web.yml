@@ -2,7 +2,7 @@
 # Do not edit: `node tooling/ci/gen-public-shell.mjs --check` re-generates it and fails on any difference.
 env:
   NIKATRU_PRIVATE_REPO: com-nikatru/Nikatru_Private
-  NIKATRU_SHELL_FINGERPRINT: 4715ef39164c63bb031918da160db744f19d52cbb2485f5301c00f353f85ea37
+  NIKATRU_SHELL_FINGERPRINT: 070e4c372098eb15b055b79840d8253d232b45443aa6bb62b7b6efb506423148
 
 name: Part of CI · Deploy web
 
@@ -208,6 +208,28 @@ jobs:
             echo "NIKATRU_PR_CREATED_AT=$NIKATRU_P_PR_CREATED_AT"
             echo "NIKATRU_DRAFT=$NIKATRU_P_DRAFT"
           } >> "$GITHUB_ENV"
+      - name: Check out private main's composite actions (generated)
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
+        with:
+          repository: ${{ env.NIKATRU_PRIVATE_REPO }}
+          ref: refs/heads/main
+          path: .nikatru-trusted
+          sparse-checkout: .github/actions
+          ssh-key: ${{ secrets.PRIVATE_DEPLOY_KEY }}
+          persist-credentials: false
+      - name: Keep private main's composite actions out of the branch's tree (generated)
+        id: nikatru-trusted-tree
+        shell: bash
+        working-directory: ${{ github.workspace }}
+        run: |
+          if x="$(git rev-parse --git-path info/exclude 2>/dev/null)"; then mkdir -p "${x%/*}"; grep -qxF '/.nikatru-trusted/' "$x" 2>/dev/null || printf '/.nikatru-trusted/\n' >> "$x"; fi
+          NIKATRU_TRUSTED_GIT="$(command -v git)"; case "$NIKATRU_TRUSTED_GIT" in /*) ;; *) echo "::error::git does not resolve to an absolute path ($NIKATRU_TRUSTED_GIT)"; exit 1 ;; esac
+          tree="$(for v in $(compgen -e); do case "$v" in (GIT_*) unset "$v" ;; esac; done && d="$RUNNER_TEMP/nikatru-trusted.$$.$RANDOM" && [ ! -e "$d.git" ] && [ ! -e "$d.index" ] && export GIT_DIR="$d.git" GIT_INDEX_FILE="$d.index" GIT_CONFIG_GLOBAL=/dev/null GIT_CONFIG_NOSYSTEM=1 && "$NIKATRU_TRUSTED_GIT" init -q --bare --template= "$GIT_DIR" && "$NIKATRU_TRUSTED_GIT" -C .nikatru-trusted --work-tree=. add -A -f .github/actions && "$NIKATRU_TRUSTED_GIT" write-tree --prefix=.github/actions/)"
+          main="$(git -C .nikatru-trusted rev-parse HEAD:.github/actions)"
+          if [ -z "$tree" ] || [ "$tree" != "$main" ]; then echo "::error::.nikatru-trusted: the working tree ($tree) is not private main's .github/actions ($main)"; exit 1; fi
+          rm -rf "$RUNNER_TEMP/nikatru-trusted-actions" && mkdir -p "$RUNNER_TEMP/nikatru-trusted-actions" && cp -R .nikatru-trusted/.github "$RUNNER_TEMP/nikatru-trusted-actions/"
+          echo "tree=$tree" >> "$GITHUB_OUTPUT"
+          echo "git=$NIKATRU_TRUSTED_GIT" >> "$GITHUB_OUTPUT"
       - name: Refuse any ref but main
         working-directory: .
         run: node tooling/ci/assert-deploy-ref.mjs --allow main
@@ -235,21 +257,19 @@ jobs:
           SUPABASE_URL: ${{ secrets.SUPABASE_URL }}
           GLITCHTIP_DSN: ${{ secrets.GLITCHTIP_DSN }}
         run: node tooling/web/connect-origins.mjs --app ${{ matrix.app }} --check --emit-connect >> "$GITHUB_OUTPUT"
-      - name: Check out private main's composite actions (generated)
-        if: steps.plan.outputs.deploy == 'true'
-        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
-        with:
-          repository: ${{ env.NIKATRU_PRIVATE_REPO }}
-          ref: refs/heads/main
-          path: .nikatru-trusted
-          sparse-checkout: .github/actions
-          ssh-key: ${{ secrets.PRIVATE_DEPLOY_KEY }}
-          persist-credentials: false
-      - name: Keep private main's composite actions out of the branch's tree (generated)
+      - name: Verify private main's composite actions are the checked-out tree (generated)
         if: steps.plan.outputs.deploy == 'true'
         shell: bash
         working-directory: ${{ github.workspace }}
-        run: printf '/.nikatru-trusted/\n' >> "$(git rev-parse --git-path info/exclude)"
+        env:
+          NIKATRU_TRUSTED_TREE: ${{ steps.nikatru-trusted-tree.outputs.tree }}
+          NIKATRU_TRUSTED_GIT: ${{ steps.nikatru-trusted-tree.outputs.git }}
+        run: |
+          case "$NIKATRU_TRUSTED_GIT" in /*) ;; *) echo "::error::.nikatru-trusted: no git path was recorded before the job's own steps ($NIKATRU_TRUSTED_GIT)"; exit 1 ;; esac
+          rm -rf .nikatru-trusted/.github && mkdir -p .nikatru-trusted && cp -R "$RUNNER_TEMP/nikatru-trusted-actions/.github" .nikatru-trusted/
+          if x="$(git rev-parse --git-path info/exclude 2>/dev/null)"; then mkdir -p "${x%/*}"; grep -qxF '/.nikatru-trusted/' "$x" 2>/dev/null || printf '/.nikatru-trusted/\n' >> "$x"; fi
+          tree="$(for v in $(compgen -e); do case "$v" in (GIT_*) unset "$v" ;; esac; done && d="$RUNNER_TEMP/nikatru-trusted.$$.$RANDOM" && [ ! -e "$d.git" ] && [ ! -e "$d.index" ] && export GIT_DIR="$d.git" GIT_INDEX_FILE="$d.index" GIT_CONFIG_GLOBAL=/dev/null GIT_CONFIG_NOSYSTEM=1 && "$NIKATRU_TRUSTED_GIT" init -q --bare --template= "$GIT_DIR" && "$NIKATRU_TRUSTED_GIT" -C .nikatru-trusted --work-tree=. add -A -f .github/actions && "$NIKATRU_TRUSTED_GIT" write-tree --prefix=.github/actions/)"
+          if [ -z "$NIKATRU_TRUSTED_TREE" ] || [ "$tree" != "$NIKATRU_TRUSTED_TREE" ]; then echo "::error::.nikatru-trusted is not the tree checked out from private main ($NIKATRU_TRUSTED_TREE, now $tree): a step of this job edited its copy"; exit 1; fi
       - uses: ./.nikatru-trusted/.github/actions/setup-flutter
         if: steps.plan.outputs.deploy == 'true'
         with:
@@ -285,21 +305,19 @@ jobs:
           GLITCHTIP_DSN: ${{ secrets.GLITCHTIP_DSN }}
           TURNSTILE_SITE_KEY: ${{ vars.TURNSTILE_SITE_KEY }}
         run: node tooling/ci/flutter-release-build.mjs ${{ matrix.app }} web web
-      - name: Check out private main's composite actions (generated)
-        if: steps.plan.outputs.deploy == 'true'
-        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
-        with:
-          repository: ${{ env.NIKATRU_PRIVATE_REPO }}
-          ref: refs/heads/main
-          path: .nikatru-trusted
-          sparse-checkout: .github/actions
-          ssh-key: ${{ secrets.PRIVATE_DEPLOY_KEY }}
-          persist-credentials: false
-      - name: Keep private main's composite actions out of the branch's tree (generated)
+      - name: Verify private main's composite actions are the checked-out tree (generated)
         if: steps.plan.outputs.deploy == 'true'
         shell: bash
         working-directory: ${{ github.workspace }}
-        run: printf '/.nikatru-trusted/\n' >> "$(git rev-parse --git-path info/exclude)"
+        env:
+          NIKATRU_TRUSTED_TREE: ${{ steps.nikatru-trusted-tree.outputs.tree }}
+          NIKATRU_TRUSTED_GIT: ${{ steps.nikatru-trusted-tree.outputs.git }}
+        run: |
+          case "$NIKATRU_TRUSTED_GIT" in /*) ;; *) echo "::error::.nikatru-trusted: no git path was recorded before the job's own steps ($NIKATRU_TRUSTED_GIT)"; exit 1 ;; esac
+          rm -rf .nikatru-trusted/.github && mkdir -p .nikatru-trusted && cp -R "$RUNNER_TEMP/nikatru-trusted-actions/.github" .nikatru-trusted/
+          if x="$(git rev-parse --git-path info/exclude 2>/dev/null)"; then mkdir -p "${x%/*}"; grep -qxF '/.nikatru-trusted/' "$x" 2>/dev/null || printf '/.nikatru-trusted/\n' >> "$x"; fi
+          tree="$(for v in $(compgen -e); do case "$v" in (GIT_*) unset "$v" ;; esac; done && d="$RUNNER_TEMP/nikatru-trusted.$$.$RANDOM" && [ ! -e "$d.git" ] && [ ! -e "$d.index" ] && export GIT_DIR="$d.git" GIT_INDEX_FILE="$d.index" GIT_CONFIG_GLOBAL=/dev/null GIT_CONFIG_NOSYSTEM=1 && "$NIKATRU_TRUSTED_GIT" init -q --bare --template= "$GIT_DIR" && "$NIKATRU_TRUSTED_GIT" -C .nikatru-trusted --work-tree=. add -A -f .github/actions && "$NIKATRU_TRUSTED_GIT" write-tree --prefix=.github/actions/)"
+          if [ -z "$NIKATRU_TRUSTED_TREE" ] || [ "$tree" != "$NIKATRU_TRUSTED_TREE" ]; then echo "::error::.nikatru-trusted is not the tree checked out from private main ($NIKATRU_TRUSTED_TREE, now $tree): a step of this job edited its copy"; exit 1; fi
       - uses: ./.nikatru-trusted/.github/actions/setup-node
         if: steps.plan.outputs.deploy == 'true'
         env:
@@ -547,15 +565,6 @@ jobs:
             echo "NIKATRU_PR_CREATED_AT=$NIKATRU_P_PR_CREATED_AT"
             echo "NIKATRU_DRAFT=$NIKATRU_P_DRAFT"
           } >> "$GITHUB_ENV"
-      - name: Refuse any ref but main
-        run: node tooling/ci/assert-deploy-ref.mjs --allow main
-      - name: The shell running this deploy was generated from this commit
-        run: node tooling/ci/assert-shell-current.mjs deploy-web.yml
-      - name: Plan from the Deployment ledger
-        id: plan
-        env:
-          GH_TOKEN: ${{ github.token }}
-        run: node tooling/ci/plan-deploy.mjs nikatru-site --recipe deploy-web.yml
       - name: Check out private main's composite actions (generated)
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
         with:
@@ -566,9 +575,39 @@ jobs:
           ssh-key: ${{ secrets.PRIVATE_DEPLOY_KEY }}
           persist-credentials: false
       - name: Keep private main's composite actions out of the branch's tree (generated)
+        id: nikatru-trusted-tree
         shell: bash
         working-directory: ${{ github.workspace }}
-        run: printf '/.nikatru-trusted/\n' >> "$(git rev-parse --git-path info/exclude)"
+        run: |
+          if x="$(git rev-parse --git-path info/exclude 2>/dev/null)"; then mkdir -p "${x%/*}"; grep -qxF '/.nikatru-trusted/' "$x" 2>/dev/null || printf '/.nikatru-trusted/\n' >> "$x"; fi
+          NIKATRU_TRUSTED_GIT="$(command -v git)"; case "$NIKATRU_TRUSTED_GIT" in /*) ;; *) echo "::error::git does not resolve to an absolute path ($NIKATRU_TRUSTED_GIT)"; exit 1 ;; esac
+          tree="$(for v in $(compgen -e); do case "$v" in (GIT_*) unset "$v" ;; esac; done && d="$RUNNER_TEMP/nikatru-trusted.$$.$RANDOM" && [ ! -e "$d.git" ] && [ ! -e "$d.index" ] && export GIT_DIR="$d.git" GIT_INDEX_FILE="$d.index" GIT_CONFIG_GLOBAL=/dev/null GIT_CONFIG_NOSYSTEM=1 && "$NIKATRU_TRUSTED_GIT" init -q --bare --template= "$GIT_DIR" && "$NIKATRU_TRUSTED_GIT" -C .nikatru-trusted --work-tree=. add -A -f .github/actions && "$NIKATRU_TRUSTED_GIT" write-tree --prefix=.github/actions/)"
+          main="$(git -C .nikatru-trusted rev-parse HEAD:.github/actions)"
+          if [ -z "$tree" ] || [ "$tree" != "$main" ]; then echo "::error::.nikatru-trusted: the working tree ($tree) is not private main's .github/actions ($main)"; exit 1; fi
+          rm -rf "$RUNNER_TEMP/nikatru-trusted-actions" && mkdir -p "$RUNNER_TEMP/nikatru-trusted-actions" && cp -R .nikatru-trusted/.github "$RUNNER_TEMP/nikatru-trusted-actions/"
+          echo "tree=$tree" >> "$GITHUB_OUTPUT"
+          echo "git=$NIKATRU_TRUSTED_GIT" >> "$GITHUB_OUTPUT"
+      - name: Refuse any ref but main
+        run: node tooling/ci/assert-deploy-ref.mjs --allow main
+      - name: The shell running this deploy was generated from this commit
+        run: node tooling/ci/assert-shell-current.mjs deploy-web.yml
+      - name: Plan from the Deployment ledger
+        id: plan
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: node tooling/ci/plan-deploy.mjs nikatru-site --recipe deploy-web.yml
+      - name: Verify private main's composite actions are the checked-out tree (generated)
+        shell: bash
+        working-directory: ${{ github.workspace }}
+        env:
+          NIKATRU_TRUSTED_TREE: ${{ steps.nikatru-trusted-tree.outputs.tree }}
+          NIKATRU_TRUSTED_GIT: ${{ steps.nikatru-trusted-tree.outputs.git }}
+        run: |
+          case "$NIKATRU_TRUSTED_GIT" in /*) ;; *) echo "::error::.nikatru-trusted: no git path was recorded before the job's own steps ($NIKATRU_TRUSTED_GIT)"; exit 1 ;; esac
+          rm -rf .nikatru-trusted/.github && mkdir -p .nikatru-trusted && cp -R "$RUNNER_TEMP/nikatru-trusted-actions/.github" .nikatru-trusted/
+          if x="$(git rev-parse --git-path info/exclude 2>/dev/null)"; then mkdir -p "${x%/*}"; grep -qxF '/.nikatru-trusted/' "$x" 2>/dev/null || printf '/.nikatru-trusted/\n' >> "$x"; fi
+          tree="$(for v in $(compgen -e); do case "$v" in (GIT_*) unset "$v" ;; esac; done && d="$RUNNER_TEMP/nikatru-trusted.$$.$RANDOM" && [ ! -e "$d.git" ] && [ ! -e "$d.index" ] && export GIT_DIR="$d.git" GIT_INDEX_FILE="$d.index" GIT_CONFIG_GLOBAL=/dev/null GIT_CONFIG_NOSYSTEM=1 && "$NIKATRU_TRUSTED_GIT" init -q --bare --template= "$GIT_DIR" && "$NIKATRU_TRUSTED_GIT" -C .nikatru-trusted --work-tree=. add -A -f .github/actions && "$NIKATRU_TRUSTED_GIT" write-tree --prefix=.github/actions/)"
+          if [ -z "$NIKATRU_TRUSTED_TREE" ] || [ "$tree" != "$NIKATRU_TRUSTED_TREE" ]; then echo "::error::.nikatru-trusted is not the tree checked out from private main ($NIKATRU_TRUSTED_TREE, now $tree): a step of this job edited its copy"; exit 1; fi
       - uses: ./.nikatru-trusted/.github/actions/setup-node
         env:
           NIKATRU_REF: ${{ github.event.client_payload.ref || 'refs/heads/main' }}
@@ -750,17 +789,7 @@ jobs:
             echo "NIKATRU_PR_CREATED_AT=$NIKATRU_P_PR_CREATED_AT"
             echo "NIKATRU_DRAFT=$NIKATRU_P_DRAFT"
           } >> "$GITHUB_ENV"
-      - name: Refuse any ref but main
-        run: node tooling/ci/assert-deploy-ref.mjs --allow main
-      - name: The shell running this deploy was generated from this commit
-        run: node tooling/ci/assert-shell-current.mjs deploy-web.yml
-      - name: Plan from the Deployment ledger
-        id: plan
-        env:
-          GH_TOKEN: ${{ github.token }}
-        run: node tooling/ci/plan-deploy.mjs rajasekarselvam-site --recipe deploy-web.yml
       - name: Check out private main's composite actions (generated)
-        if: steps.plan.outputs.deploy == 'true'
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
         with:
           repository: ${{ env.NIKATRU_PRIVATE_REPO }}
@@ -770,10 +799,40 @@ jobs:
           ssh-key: ${{ secrets.PRIVATE_DEPLOY_KEY }}
           persist-credentials: false
       - name: Keep private main's composite actions out of the branch's tree (generated)
+        id: nikatru-trusted-tree
+        shell: bash
+        working-directory: ${{ github.workspace }}
+        run: |
+          if x="$(git rev-parse --git-path info/exclude 2>/dev/null)"; then mkdir -p "${x%/*}"; grep -qxF '/.nikatru-trusted/' "$x" 2>/dev/null || printf '/.nikatru-trusted/\n' >> "$x"; fi
+          NIKATRU_TRUSTED_GIT="$(command -v git)"; case "$NIKATRU_TRUSTED_GIT" in /*) ;; *) echo "::error::git does not resolve to an absolute path ($NIKATRU_TRUSTED_GIT)"; exit 1 ;; esac
+          tree="$(for v in $(compgen -e); do case "$v" in (GIT_*) unset "$v" ;; esac; done && d="$RUNNER_TEMP/nikatru-trusted.$$.$RANDOM" && [ ! -e "$d.git" ] && [ ! -e "$d.index" ] && export GIT_DIR="$d.git" GIT_INDEX_FILE="$d.index" GIT_CONFIG_GLOBAL=/dev/null GIT_CONFIG_NOSYSTEM=1 && "$NIKATRU_TRUSTED_GIT" init -q --bare --template= "$GIT_DIR" && "$NIKATRU_TRUSTED_GIT" -C .nikatru-trusted --work-tree=. add -A -f .github/actions && "$NIKATRU_TRUSTED_GIT" write-tree --prefix=.github/actions/)"
+          main="$(git -C .nikatru-trusted rev-parse HEAD:.github/actions)"
+          if [ -z "$tree" ] || [ "$tree" != "$main" ]; then echo "::error::.nikatru-trusted: the working tree ($tree) is not private main's .github/actions ($main)"; exit 1; fi
+          rm -rf "$RUNNER_TEMP/nikatru-trusted-actions" && mkdir -p "$RUNNER_TEMP/nikatru-trusted-actions" && cp -R .nikatru-trusted/.github "$RUNNER_TEMP/nikatru-trusted-actions/"
+          echo "tree=$tree" >> "$GITHUB_OUTPUT"
+          echo "git=$NIKATRU_TRUSTED_GIT" >> "$GITHUB_OUTPUT"
+      - name: Refuse any ref but main
+        run: node tooling/ci/assert-deploy-ref.mjs --allow main
+      - name: The shell running this deploy was generated from this commit
+        run: node tooling/ci/assert-shell-current.mjs deploy-web.yml
+      - name: Plan from the Deployment ledger
+        id: plan
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: node tooling/ci/plan-deploy.mjs rajasekarselvam-site --recipe deploy-web.yml
+      - name: Verify private main's composite actions are the checked-out tree (generated)
         if: steps.plan.outputs.deploy == 'true'
         shell: bash
         working-directory: ${{ github.workspace }}
-        run: printf '/.nikatru-trusted/\n' >> "$(git rev-parse --git-path info/exclude)"
+        env:
+          NIKATRU_TRUSTED_TREE: ${{ steps.nikatru-trusted-tree.outputs.tree }}
+          NIKATRU_TRUSTED_GIT: ${{ steps.nikatru-trusted-tree.outputs.git }}
+        run: |
+          case "$NIKATRU_TRUSTED_GIT" in /*) ;; *) echo "::error::.nikatru-trusted: no git path was recorded before the job's own steps ($NIKATRU_TRUSTED_GIT)"; exit 1 ;; esac
+          rm -rf .nikatru-trusted/.github && mkdir -p .nikatru-trusted && cp -R "$RUNNER_TEMP/nikatru-trusted-actions/.github" .nikatru-trusted/
+          if x="$(git rev-parse --git-path info/exclude 2>/dev/null)"; then mkdir -p "${x%/*}"; grep -qxF '/.nikatru-trusted/' "$x" 2>/dev/null || printf '/.nikatru-trusted/\n' >> "$x"; fi
+          tree="$(for v in $(compgen -e); do case "$v" in (GIT_*) unset "$v" ;; esac; done && d="$RUNNER_TEMP/nikatru-trusted.$$.$RANDOM" && [ ! -e "$d.git" ] && [ ! -e "$d.index" ] && export GIT_DIR="$d.git" GIT_INDEX_FILE="$d.index" GIT_CONFIG_GLOBAL=/dev/null GIT_CONFIG_NOSYSTEM=1 && "$NIKATRU_TRUSTED_GIT" init -q --bare --template= "$GIT_DIR" && "$NIKATRU_TRUSTED_GIT" -C .nikatru-trusted --work-tree=. add -A -f .github/actions && "$NIKATRU_TRUSTED_GIT" write-tree --prefix=.github/actions/)"
+          if [ -z "$NIKATRU_TRUSTED_TREE" ] || [ "$tree" != "$NIKATRU_TRUSTED_TREE" ]; then echo "::error::.nikatru-trusted is not the tree checked out from private main ($NIKATRU_TRUSTED_TREE, now $tree): a step of this job edited its copy"; exit 1; fi
       - uses: ./.nikatru-trusted/.github/actions/setup-node
         if: steps.plan.outputs.deploy == 'true'
         env:
@@ -893,6 +952,28 @@ jobs:
             echo "NIKATRU_PR_CREATED_AT=$NIKATRU_P_PR_CREATED_AT"
             echo "NIKATRU_DRAFT=$NIKATRU_P_DRAFT"
           } >> "$GITHUB_ENV"
+      - name: Check out private main's composite actions (generated)
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
+        with:
+          repository: ${{ env.NIKATRU_PRIVATE_REPO }}
+          ref: refs/heads/main
+          path: .nikatru-trusted
+          sparse-checkout: .github/actions
+          ssh-key: ${{ secrets.PRIVATE_DEPLOY_KEY }}
+          persist-credentials: false
+      - name: Keep private main's composite actions out of the branch's tree (generated)
+        id: nikatru-trusted-tree
+        shell: bash
+        working-directory: ${{ github.workspace }}
+        run: |
+          if x="$(git rev-parse --git-path info/exclude 2>/dev/null)"; then mkdir -p "${x%/*}"; grep -qxF '/.nikatru-trusted/' "$x" 2>/dev/null || printf '/.nikatru-trusted/\n' >> "$x"; fi
+          NIKATRU_TRUSTED_GIT="$(command -v git)"; case "$NIKATRU_TRUSTED_GIT" in /*) ;; *) echo "::error::git does not resolve to an absolute path ($NIKATRU_TRUSTED_GIT)"; exit 1 ;; esac
+          tree="$(for v in $(compgen -e); do case "$v" in (GIT_*) unset "$v" ;; esac; done && d="$RUNNER_TEMP/nikatru-trusted.$$.$RANDOM" && [ ! -e "$d.git" ] && [ ! -e "$d.index" ] && export GIT_DIR="$d.git" GIT_INDEX_FILE="$d.index" GIT_CONFIG_GLOBAL=/dev/null GIT_CONFIG_NOSYSTEM=1 && "$NIKATRU_TRUSTED_GIT" init -q --bare --template= "$GIT_DIR" && "$NIKATRU_TRUSTED_GIT" -C .nikatru-trusted --work-tree=. add -A -f .github/actions && "$NIKATRU_TRUSTED_GIT" write-tree --prefix=.github/actions/)"
+          main="$(git -C .nikatru-trusted rev-parse HEAD:.github/actions)"
+          if [ -z "$tree" ] || [ "$tree" != "$main" ]; then echo "::error::.nikatru-trusted: the working tree ($tree) is not private main's .github/actions ($main)"; exit 1; fi
+          rm -rf "$RUNNER_TEMP/nikatru-trusted-actions" && mkdir -p "$RUNNER_TEMP/nikatru-trusted-actions" && cp -R .nikatru-trusted/.github "$RUNNER_TEMP/nikatru-trusted-actions/"
+          echo "tree=$tree" >> "$GITHUB_OUTPUT"
+          echo "git=$NIKATRU_TRUSTED_GIT" >> "$GITHUB_OUTPUT"
       - name: Refuse any ref but main
         run: node tooling/ci/assert-deploy-ref.mjs --allow main
       - name: The shell running this deploy was generated from this commit
@@ -916,21 +997,19 @@ jobs:
             echo "status-site: not deployed this run — plan deploy=${PLAN_DEPLOY}"
             node tooling/status/inert-until.mjs --live "$STATUS_PAGE_LIVE"
           fi
-      - name: Check out private main's composite actions (generated)
-        if: steps.live.outputs.go == 'true'
-        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
-        with:
-          repository: ${{ env.NIKATRU_PRIVATE_REPO }}
-          ref: refs/heads/main
-          path: .nikatru-trusted
-          sparse-checkout: .github/actions
-          ssh-key: ${{ secrets.PRIVATE_DEPLOY_KEY }}
-          persist-credentials: false
-      - name: Keep private main's composite actions out of the branch's tree (generated)
+      - name: Verify private main's composite actions are the checked-out tree (generated)
         if: steps.live.outputs.go == 'true'
         shell: bash
         working-directory: ${{ github.workspace }}
-        run: printf '/.nikatru-trusted/\n' >> "$(git rev-parse --git-path info/exclude)"
+        env:
+          NIKATRU_TRUSTED_TREE: ${{ steps.nikatru-trusted-tree.outputs.tree }}
+          NIKATRU_TRUSTED_GIT: ${{ steps.nikatru-trusted-tree.outputs.git }}
+        run: |
+          case "$NIKATRU_TRUSTED_GIT" in /*) ;; *) echo "::error::.nikatru-trusted: no git path was recorded before the job's own steps ($NIKATRU_TRUSTED_GIT)"; exit 1 ;; esac
+          rm -rf .nikatru-trusted/.github && mkdir -p .nikatru-trusted && cp -R "$RUNNER_TEMP/nikatru-trusted-actions/.github" .nikatru-trusted/
+          if x="$(git rev-parse --git-path info/exclude 2>/dev/null)"; then mkdir -p "${x%/*}"; grep -qxF '/.nikatru-trusted/' "$x" 2>/dev/null || printf '/.nikatru-trusted/\n' >> "$x"; fi
+          tree="$(for v in $(compgen -e); do case "$v" in (GIT_*) unset "$v" ;; esac; done && d="$RUNNER_TEMP/nikatru-trusted.$$.$RANDOM" && [ ! -e "$d.git" ] && [ ! -e "$d.index" ] && export GIT_DIR="$d.git" GIT_INDEX_FILE="$d.index" GIT_CONFIG_GLOBAL=/dev/null GIT_CONFIG_NOSYSTEM=1 && "$NIKATRU_TRUSTED_GIT" init -q --bare --template= "$GIT_DIR" && "$NIKATRU_TRUSTED_GIT" -C .nikatru-trusted --work-tree=. add -A -f .github/actions && "$NIKATRU_TRUSTED_GIT" write-tree --prefix=.github/actions/)"
+          if [ -z "$NIKATRU_TRUSTED_TREE" ] || [ "$tree" != "$NIKATRU_TRUSTED_TREE" ]; then echo "::error::.nikatru-trusted is not the tree checked out from private main ($NIKATRU_TRUSTED_TREE, now $tree): a step of this job edited its copy"; exit 1; fi
       - uses: ./.nikatru-trusted/.github/actions/setup-node
         if: steps.live.outputs.go == 'true'
         env:

@@ -111,9 +111,30 @@ jobs:
           ssh-key: ${{ secrets.PRIVATE_DEPLOY_KEY }}
           persist-credentials: false
       - name: Keep private main's composite actions out of the branch's tree (generated)
+        id: nikatru-trusted-tree
         shell: bash
         working-directory: ${{ github.workspace }}
-        run: printf '/.nikatru-trusted/\n' >> "$(git rev-parse --git-path info/exclude)"
+        run: |
+          if x="$(git rev-parse --git-path info/exclude 2>/dev/null)"; then mkdir -p "${x%/*}"; grep -qxF '/.nikatru-trusted/' "$x" 2>/dev/null || printf '/.nikatru-trusted/\n' >> "$x"; fi
+          NIKATRU_TRUSTED_GIT="$(command -v git)"; case "$NIKATRU_TRUSTED_GIT" in /*) ;; *) echo "::error::git does not resolve to an absolute path ($NIKATRU_TRUSTED_GIT)"; exit 1 ;; esac
+          tree="$(for v in $(compgen -e); do case "$v" in (GIT_*) unset "$v" ;; esac; done && d="$RUNNER_TEMP/nikatru-trusted.$$.$RANDOM" && [ ! -e "$d.git" ] && [ ! -e "$d.index" ] && export GIT_DIR="$d.git" GIT_INDEX_FILE="$d.index" GIT_CONFIG_GLOBAL=/dev/null GIT_CONFIG_NOSYSTEM=1 && "$NIKATRU_TRUSTED_GIT" init -q --bare --template= "$GIT_DIR" && "$NIKATRU_TRUSTED_GIT" -C .nikatru-trusted --work-tree=. add -A -f .github/actions && "$NIKATRU_TRUSTED_GIT" write-tree --prefix=.github/actions/)"
+          main="$(git -C .nikatru-trusted rev-parse HEAD:.github/actions)"
+          if [ -z "$tree" ] || [ "$tree" != "$main" ]; then echo "::error::.nikatru-trusted: the working tree ($tree) is not private main's .github/actions ($main)"; exit 1; fi
+          rm -rf "$RUNNER_TEMP/nikatru-trusted-actions" && mkdir -p "$RUNNER_TEMP/nikatru-trusted-actions" && cp -R .nikatru-trusted/.github "$RUNNER_TEMP/nikatru-trusted-actions/"
+          echo "tree=$tree" >> "$GITHUB_OUTPUT"
+          echo "git=$NIKATRU_TRUSTED_GIT" >> "$GITHUB_OUTPUT"
+      - name: Verify private main's composite actions are the checked-out tree (generated)
+        shell: bash
+        working-directory: ${{ github.workspace }}
+        env:
+          NIKATRU_TRUSTED_TREE: ${{ steps.nikatru-trusted-tree.outputs.tree }}
+          NIKATRU_TRUSTED_GIT: ${{ steps.nikatru-trusted-tree.outputs.git }}
+        run: |
+          case "$NIKATRU_TRUSTED_GIT" in /*) ;; *) echo "::error::.nikatru-trusted: no git path was recorded before the job's own steps ($NIKATRU_TRUSTED_GIT)"; exit 1 ;; esac
+          rm -rf .nikatru-trusted/.github && mkdir -p .nikatru-trusted && cp -R "$RUNNER_TEMP/nikatru-trusted-actions/.github" .nikatru-trusted/
+          if x="$(git rev-parse --git-path info/exclude 2>/dev/null)"; then mkdir -p "${x%/*}"; grep -qxF '/.nikatru-trusted/' "$x" 2>/dev/null || printf '/.nikatru-trusted/\n' >> "$x"; fi
+          tree="$(for v in $(compgen -e); do case "$v" in (GIT_*) unset "$v" ;; esac; done && d="$RUNNER_TEMP/nikatru-trusted.$$.$RANDOM" && [ ! -e "$d.git" ] && [ ! -e "$d.index" ] && export GIT_DIR="$d.git" GIT_INDEX_FILE="$d.index" GIT_CONFIG_GLOBAL=/dev/null GIT_CONFIG_NOSYSTEM=1 && "$NIKATRU_TRUSTED_GIT" init -q --bare --template= "$GIT_DIR" && "$NIKATRU_TRUSTED_GIT" -C .nikatru-trusted --work-tree=. add -A -f .github/actions && "$NIKATRU_TRUSTED_GIT" write-tree --prefix=.github/actions/)"
+          if [ -z "$NIKATRU_TRUSTED_TREE" ] || [ "$tree" != "$NIKATRU_TRUSTED_TREE" ]; then echo "::error::.nikatru-trusted is not the tree checked out from private main ($NIKATRU_TRUSTED_TREE, now $tree): a step of this job edited its copy"; exit 1; fi
       - uses: ./.nikatru-trusted/.github/actions/setup-node
         env:
           NIKATRU_REF: ${{ github.event.client_payload.ref || 'refs/heads/main' }}
@@ -231,9 +252,30 @@ jobs:
           ssh-key: ${{ secrets.PRIVATE_DEPLOY_KEY }}
           persist-credentials: false
       - name: Keep private main's composite actions out of the branch's tree (generated)
+        id: nikatru-trusted-tree
         shell: bash
         working-directory: ${{ github.workspace }}
-        run: printf '/.nikatru-trusted/\n' >> "$(git rev-parse --git-path info/exclude)"
+        run: |
+          if x="$(git rev-parse --git-path info/exclude 2>/dev/null)"; then mkdir -p "${x%/*}"; grep -qxF '/.nikatru-trusted/' "$x" 2>/dev/null || printf '/.nikatru-trusted/\n' >> "$x"; fi
+          NIKATRU_TRUSTED_GIT="$(command -v git)"; case "$NIKATRU_TRUSTED_GIT" in /*) ;; *) echo "::error::git does not resolve to an absolute path ($NIKATRU_TRUSTED_GIT)"; exit 1 ;; esac
+          tree="$(for v in $(compgen -e); do case "$v" in (GIT_*) unset "$v" ;; esac; done && d="$RUNNER_TEMP/nikatru-trusted.$$.$RANDOM" && [ ! -e "$d.git" ] && [ ! -e "$d.index" ] && export GIT_DIR="$d.git" GIT_INDEX_FILE="$d.index" GIT_CONFIG_GLOBAL=/dev/null GIT_CONFIG_NOSYSTEM=1 && "$NIKATRU_TRUSTED_GIT" init -q --bare --template= "$GIT_DIR" && "$NIKATRU_TRUSTED_GIT" -C .nikatru-trusted --work-tree=. add -A -f .github/actions && "$NIKATRU_TRUSTED_GIT" write-tree --prefix=.github/actions/)"
+          main="$(git -C .nikatru-trusted rev-parse HEAD:.github/actions)"
+          if [ -z "$tree" ] || [ "$tree" != "$main" ]; then echo "::error::.nikatru-trusted: the working tree ($tree) is not private main's .github/actions ($main)"; exit 1; fi
+          rm -rf "$RUNNER_TEMP/nikatru-trusted-actions" && mkdir -p "$RUNNER_TEMP/nikatru-trusted-actions" && cp -R .nikatru-trusted/.github "$RUNNER_TEMP/nikatru-trusted-actions/"
+          echo "tree=$tree" >> "$GITHUB_OUTPUT"
+          echo "git=$NIKATRU_TRUSTED_GIT" >> "$GITHUB_OUTPUT"
+      - name: Verify private main's composite actions are the checked-out tree (generated)
+        shell: bash
+        working-directory: ${{ github.workspace }}
+        env:
+          NIKATRU_TRUSTED_TREE: ${{ steps.nikatru-trusted-tree.outputs.tree }}
+          NIKATRU_TRUSTED_GIT: ${{ steps.nikatru-trusted-tree.outputs.git }}
+        run: |
+          case "$NIKATRU_TRUSTED_GIT" in /*) ;; *) echo "::error::.nikatru-trusted: no git path was recorded before the job's own steps ($NIKATRU_TRUSTED_GIT)"; exit 1 ;; esac
+          rm -rf .nikatru-trusted/.github && mkdir -p .nikatru-trusted && cp -R "$RUNNER_TEMP/nikatru-trusted-actions/.github" .nikatru-trusted/
+          if x="$(git rev-parse --git-path info/exclude 2>/dev/null)"; then mkdir -p "${x%/*}"; grep -qxF '/.nikatru-trusted/' "$x" 2>/dev/null || printf '/.nikatru-trusted/\n' >> "$x"; fi
+          tree="$(for v in $(compgen -e); do case "$v" in (GIT_*) unset "$v" ;; esac; done && d="$RUNNER_TEMP/nikatru-trusted.$$.$RANDOM" && [ ! -e "$d.git" ] && [ ! -e "$d.index" ] && export GIT_DIR="$d.git" GIT_INDEX_FILE="$d.index" GIT_CONFIG_GLOBAL=/dev/null GIT_CONFIG_NOSYSTEM=1 && "$NIKATRU_TRUSTED_GIT" init -q --bare --template= "$GIT_DIR" && "$NIKATRU_TRUSTED_GIT" -C .nikatru-trusted --work-tree=. add -A -f .github/actions && "$NIKATRU_TRUSTED_GIT" write-tree --prefix=.github/actions/)"
+          if [ -z "$NIKATRU_TRUSTED_TREE" ] || [ "$tree" != "$NIKATRU_TRUSTED_TREE" ]; then echo "::error::.nikatru-trusted is not the tree checked out from private main ($NIKATRU_TRUSTED_TREE, now $tree): a step of this job edited its copy"; exit 1; fi
       - uses: ./.nikatru-trusted/.github/actions/setup-node
         with:
           cache-dependency-path: packages/tokens/package-lock.json
@@ -388,9 +430,30 @@ jobs:
           ssh-key: ${{ secrets.PRIVATE_DEPLOY_KEY }}
           persist-credentials: false
       - name: Keep private main's composite actions out of the branch's tree (generated)
+        id: nikatru-trusted-tree
         shell: bash
         working-directory: ${{ github.workspace }}
-        run: printf '/.nikatru-trusted/\n' >> "$(git rev-parse --git-path info/exclude)"
+        run: |
+          if x="$(git rev-parse --git-path info/exclude 2>/dev/null)"; then mkdir -p "${x%/*}"; grep -qxF '/.nikatru-trusted/' "$x" 2>/dev/null || printf '/.nikatru-trusted/\n' >> "$x"; fi
+          NIKATRU_TRUSTED_GIT="$(command -v git)"; case "$NIKATRU_TRUSTED_GIT" in /*) ;; *) echo "::error::git does not resolve to an absolute path ($NIKATRU_TRUSTED_GIT)"; exit 1 ;; esac
+          tree="$(for v in $(compgen -e); do case "$v" in (GIT_*) unset "$v" ;; esac; done && d="$RUNNER_TEMP/nikatru-trusted.$$.$RANDOM" && [ ! -e "$d.git" ] && [ ! -e "$d.index" ] && export GIT_DIR="$d.git" GIT_INDEX_FILE="$d.index" GIT_CONFIG_GLOBAL=/dev/null GIT_CONFIG_NOSYSTEM=1 && "$NIKATRU_TRUSTED_GIT" init -q --bare --template= "$GIT_DIR" && "$NIKATRU_TRUSTED_GIT" -C .nikatru-trusted --work-tree=. add -A -f .github/actions && "$NIKATRU_TRUSTED_GIT" write-tree --prefix=.github/actions/)"
+          main="$(git -C .nikatru-trusted rev-parse HEAD:.github/actions)"
+          if [ -z "$tree" ] || [ "$tree" != "$main" ]; then echo "::error::.nikatru-trusted: the working tree ($tree) is not private main's .github/actions ($main)"; exit 1; fi
+          rm -rf "$RUNNER_TEMP/nikatru-trusted-actions" && mkdir -p "$RUNNER_TEMP/nikatru-trusted-actions" && cp -R .nikatru-trusted/.github "$RUNNER_TEMP/nikatru-trusted-actions/"
+          echo "tree=$tree" >> "$GITHUB_OUTPUT"
+          echo "git=$NIKATRU_TRUSTED_GIT" >> "$GITHUB_OUTPUT"
+      - name: Verify private main's composite actions are the checked-out tree (generated)
+        shell: bash
+        working-directory: ${{ github.workspace }}
+        env:
+          NIKATRU_TRUSTED_TREE: ${{ steps.nikatru-trusted-tree.outputs.tree }}
+          NIKATRU_TRUSTED_GIT: ${{ steps.nikatru-trusted-tree.outputs.git }}
+        run: |
+          case "$NIKATRU_TRUSTED_GIT" in /*) ;; *) echo "::error::.nikatru-trusted: no git path was recorded before the job's own steps ($NIKATRU_TRUSTED_GIT)"; exit 1 ;; esac
+          rm -rf .nikatru-trusted/.github && mkdir -p .nikatru-trusted && cp -R "$RUNNER_TEMP/nikatru-trusted-actions/.github" .nikatru-trusted/
+          if x="$(git rev-parse --git-path info/exclude 2>/dev/null)"; then mkdir -p "${x%/*}"; grep -qxF '/.nikatru-trusted/' "$x" 2>/dev/null || printf '/.nikatru-trusted/\n' >> "$x"; fi
+          tree="$(for v in $(compgen -e); do case "$v" in (GIT_*) unset "$v" ;; esac; done && d="$RUNNER_TEMP/nikatru-trusted.$$.$RANDOM" && [ ! -e "$d.git" ] && [ ! -e "$d.index" ] && export GIT_DIR="$d.git" GIT_INDEX_FILE="$d.index" GIT_CONFIG_GLOBAL=/dev/null GIT_CONFIG_NOSYSTEM=1 && "$NIKATRU_TRUSTED_GIT" init -q --bare --template= "$GIT_DIR" && "$NIKATRU_TRUSTED_GIT" -C .nikatru-trusted --work-tree=. add -A -f .github/actions && "$NIKATRU_TRUSTED_GIT" write-tree --prefix=.github/actions/)"
+          if [ -z "$NIKATRU_TRUSTED_TREE" ] || [ "$tree" != "$NIKATRU_TRUSTED_TREE" ]; then echo "::error::.nikatru-trusted is not the tree checked out from private main ($NIKATRU_TRUSTED_TREE, now $tree): a step of this job edited its copy"; exit 1; fi
       - uses: ./.nikatru-trusted/.github/actions/setup-node
         env:
           NIKATRU_REF: ${{ github.event.client_payload.ref || 'refs/heads/main' }}
@@ -578,9 +641,30 @@ jobs:
           ssh-key: ${{ secrets.PRIVATE_DEPLOY_KEY }}
           persist-credentials: false
       - name: Keep private main's composite actions out of the branch's tree (generated)
+        id: nikatru-trusted-tree
         shell: bash
         working-directory: ${{ github.workspace }}
-        run: printf '/.nikatru-trusted/\n' >> "$(git rev-parse --git-path info/exclude)"
+        run: |
+          if x="$(git rev-parse --git-path info/exclude 2>/dev/null)"; then mkdir -p "${x%/*}"; grep -qxF '/.nikatru-trusted/' "$x" 2>/dev/null || printf '/.nikatru-trusted/\n' >> "$x"; fi
+          NIKATRU_TRUSTED_GIT="$(command -v git)"; case "$NIKATRU_TRUSTED_GIT" in /*) ;; *) echo "::error::git does not resolve to an absolute path ($NIKATRU_TRUSTED_GIT)"; exit 1 ;; esac
+          tree="$(for v in $(compgen -e); do case "$v" in (GIT_*) unset "$v" ;; esac; done && d="$RUNNER_TEMP/nikatru-trusted.$$.$RANDOM" && [ ! -e "$d.git" ] && [ ! -e "$d.index" ] && export GIT_DIR="$d.git" GIT_INDEX_FILE="$d.index" GIT_CONFIG_GLOBAL=/dev/null GIT_CONFIG_NOSYSTEM=1 && "$NIKATRU_TRUSTED_GIT" init -q --bare --template= "$GIT_DIR" && "$NIKATRU_TRUSTED_GIT" -C .nikatru-trusted --work-tree=. add -A -f .github/actions && "$NIKATRU_TRUSTED_GIT" write-tree --prefix=.github/actions/)"
+          main="$(git -C .nikatru-trusted rev-parse HEAD:.github/actions)"
+          if [ -z "$tree" ] || [ "$tree" != "$main" ]; then echo "::error::.nikatru-trusted: the working tree ($tree) is not private main's .github/actions ($main)"; exit 1; fi
+          rm -rf "$RUNNER_TEMP/nikatru-trusted-actions" && mkdir -p "$RUNNER_TEMP/nikatru-trusted-actions" && cp -R .nikatru-trusted/.github "$RUNNER_TEMP/nikatru-trusted-actions/"
+          echo "tree=$tree" >> "$GITHUB_OUTPUT"
+          echo "git=$NIKATRU_TRUSTED_GIT" >> "$GITHUB_OUTPUT"
+      - name: Verify private main's composite actions are the checked-out tree (generated)
+        shell: bash
+        working-directory: ${{ github.workspace }}
+        env:
+          NIKATRU_TRUSTED_TREE: ${{ steps.nikatru-trusted-tree.outputs.tree }}
+          NIKATRU_TRUSTED_GIT: ${{ steps.nikatru-trusted-tree.outputs.git }}
+        run: |
+          case "$NIKATRU_TRUSTED_GIT" in /*) ;; *) echo "::error::.nikatru-trusted: no git path was recorded before the job's own steps ($NIKATRU_TRUSTED_GIT)"; exit 1 ;; esac
+          rm -rf .nikatru-trusted/.github && mkdir -p .nikatru-trusted && cp -R "$RUNNER_TEMP/nikatru-trusted-actions/.github" .nikatru-trusted/
+          if x="$(git rev-parse --git-path info/exclude 2>/dev/null)"; then mkdir -p "${x%/*}"; grep -qxF '/.nikatru-trusted/' "$x" 2>/dev/null || printf '/.nikatru-trusted/\n' >> "$x"; fi
+          tree="$(for v in $(compgen -e); do case "$v" in (GIT_*) unset "$v" ;; esac; done && d="$RUNNER_TEMP/nikatru-trusted.$$.$RANDOM" && [ ! -e "$d.git" ] && [ ! -e "$d.index" ] && export GIT_DIR="$d.git" GIT_INDEX_FILE="$d.index" GIT_CONFIG_GLOBAL=/dev/null GIT_CONFIG_NOSYSTEM=1 && "$NIKATRU_TRUSTED_GIT" init -q --bare --template= "$GIT_DIR" && "$NIKATRU_TRUSTED_GIT" -C .nikatru-trusted --work-tree=. add -A -f .github/actions && "$NIKATRU_TRUSTED_GIT" write-tree --prefix=.github/actions/)"
+          if [ -z "$NIKATRU_TRUSTED_TREE" ] || [ "$tree" != "$NIKATRU_TRUSTED_TREE" ]; then echo "::error::.nikatru-trusted is not the tree checked out from private main ($NIKATRU_TRUSTED_TREE, now $tree): a step of this job edited its copy"; exit 1; fi
       - uses: ./.nikatru-trusted/.github/actions/setup-node
         env:
           NIKATRU_REF: ${{ github.event.client_payload.ref || 'refs/heads/main' }}
@@ -701,19 +785,18 @@ jobs:
           NIKATRU_QUIET_EOF
           NIKATRU_SHELL="${BASH:-bash}"; if command -v cygpath >/dev/null 2>&1; then NIKATRU_SHELL="$(cygpath -w "$NIKATRU_SHELL")"; fi
           node "$GITHUB_WORKSPACE/../.nikatru-shell/quiet-step.mjs" --name lane-sites.sites.14 -- "$NIKATRU_SHELL" --noprofile --norc -eo pipefail "$NIKATRU_QUIET"
-      - name: Check out private main's composite actions (generated)
-        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
-        with:
-          repository: ${{ env.NIKATRU_PRIVATE_REPO }}
-          ref: refs/heads/main
-          path: .nikatru-trusted
-          sparse-checkout: .github/actions
-          ssh-key: ${{ secrets.PRIVATE_DEPLOY_KEY }}
-          persist-credentials: false
-      - name: Keep private main's composite actions out of the branch's tree (generated)
+      - name: Verify private main's composite actions are the checked-out tree (generated)
         shell: bash
         working-directory: ${{ github.workspace }}
-        run: printf '/.nikatru-trusted/\n' >> "$(git rev-parse --git-path info/exclude)"
+        env:
+          NIKATRU_TRUSTED_TREE: ${{ steps.nikatru-trusted-tree.outputs.tree }}
+          NIKATRU_TRUSTED_GIT: ${{ steps.nikatru-trusted-tree.outputs.git }}
+        run: |
+          case "$NIKATRU_TRUSTED_GIT" in /*) ;; *) echo "::error::.nikatru-trusted: no git path was recorded before the job's own steps ($NIKATRU_TRUSTED_GIT)"; exit 1 ;; esac
+          rm -rf .nikatru-trusted/.github && mkdir -p .nikatru-trusted && cp -R "$RUNNER_TEMP/nikatru-trusted-actions/.github" .nikatru-trusted/
+          if x="$(git rev-parse --git-path info/exclude 2>/dev/null)"; then mkdir -p "${x%/*}"; grep -qxF '/.nikatru-trusted/' "$x" 2>/dev/null || printf '/.nikatru-trusted/\n' >> "$x"; fi
+          tree="$(for v in $(compgen -e); do case "$v" in (GIT_*) unset "$v" ;; esac; done && d="$RUNNER_TEMP/nikatru-trusted.$$.$RANDOM" && [ ! -e "$d.git" ] && [ ! -e "$d.index" ] && export GIT_DIR="$d.git" GIT_INDEX_FILE="$d.index" GIT_CONFIG_GLOBAL=/dev/null GIT_CONFIG_NOSYSTEM=1 && "$NIKATRU_TRUSTED_GIT" init -q --bare --template= "$GIT_DIR" && "$NIKATRU_TRUSTED_GIT" -C .nikatru-trusted --work-tree=. add -A -f .github/actions && "$NIKATRU_TRUSTED_GIT" write-tree --prefix=.github/actions/)"
+          if [ -z "$NIKATRU_TRUSTED_TREE" ] || [ "$tree" != "$NIKATRU_TRUSTED_TREE" ]; then echo "::error::.nikatru-trusted is not the tree checked out from private main ($NIKATRU_TRUSTED_TREE, now $tree): a step of this job edited its copy"; exit 1; fi
       - name: Install Playwright's Chromium (and its system packages)
         id: nikatru-setup-15
         timeout-minutes: 9
@@ -734,6 +817,15 @@ jobs:
           NIKATRU_QUIET_EOF
           NIKATRU_SHELL="${BASH:-bash}"; if command -v cygpath >/dev/null 2>&1; then NIKATRU_SHELL="$(cygpath -w "$NIKATRU_SHELL")"; fi
           node "$GITHUB_WORKSPACE/../.nikatru-shell/quiet-step.mjs" --name lane-sites.sites.16 -- "$NIKATRU_SHELL" -e "$NIKATRU_QUIET"
+      - name: Every account-mail link opened without the app explains itself (auth-return page, real browser)
+        if: ${{ success() || (!cancelled() && (github.event.client_payload.event == 'pull_request' && startsWith(github.event.client_payload.ref, 'refs/heads/rehearsal/')) && steps.nikatru-setup-ok.outcome == 'success' && steps.nikatru-setup-14.outcome == 'success' && steps.nikatru-setup-15.outcome == 'success') }}
+        run: |
+          NIKATRU_QUIET="$(mktemp "${RUNNER_TEMP:-/tmp}/nikatru-step.XXXXXX")"
+          cat > "$NIKATRU_QUIET" <<'NIKATRU_QUIET_EOF'
+          node tooling/sites/auth-return-browser-check.mjs
+          NIKATRU_QUIET_EOF
+          NIKATRU_SHELL="${BASH:-bash}"; if command -v cygpath >/dev/null 2>&1; then NIKATRU_SHELL="$(cygpath -w "$NIKATRU_SHELL")"; fi
+          node "$GITHUB_WORKSPACE/../.nikatru-shell/quiet-step.mjs" --name lane-sites.sites.17 -- "$NIKATRU_SHELL" -e "$NIKATRU_QUIET"
       - name: The accessibility scan's page set plans, and its legal-snapshot manifest is the tool's own (no browser)
         if: ${{ success() || (!cancelled() && (github.event.client_payload.event == 'pull_request' && startsWith(github.event.client_payload.ref, 'refs/heads/rehearsal/')) && steps.nikatru-setup-ok.outcome == 'success' && steps.nikatru-setup-14.outcome == 'success' && steps.nikatru-setup-15.outcome == 'success') }}
         run: |
@@ -742,7 +834,7 @@ jobs:
           node tooling/a11y/scan.mjs --plan
           NIKATRU_QUIET_EOF
           NIKATRU_SHELL="${BASH:-bash}"; if command -v cygpath >/dev/null 2>&1; then NIKATRU_SHELL="$(cygpath -w "$NIKATRU_SHELL")"; fi
-          node "$GITHUB_WORKSPACE/../.nikatru-shell/quiet-step.mjs" --name lane-sites.sites.17 -- "$NIKATRU_SHELL" -e "$NIKATRU_QUIET"
+          node "$GITHUB_WORKSPACE/../.nikatru-shell/quiet-step.mjs" --name lane-sites.sites.18 -- "$NIKATRU_SHELL" -e "$NIKATRU_QUIET"
       - name: The status page passes the accessibility scan
         if: ${{ success() || (!cancelled() && (github.event.client_payload.event == 'pull_request' && startsWith(github.event.client_payload.ref, 'refs/heads/rehearsal/')) && steps.nikatru-setup-ok.outcome == 'success' && steps.nikatru-setup-14.outcome == 'success' && steps.nikatru-setup-15.outcome == 'success') }}
         run: |
@@ -751,7 +843,7 @@ jobs:
           node tooling/a11y/scan.mjs --site sites/status
           NIKATRU_QUIET_EOF
           NIKATRU_SHELL="${BASH:-bash}"; if command -v cygpath >/dev/null 2>&1; then NIKATRU_SHELL="$(cygpath -w "$NIKATRU_SHELL")"; fi
-          node "$GITHUB_WORKSPACE/../.nikatru-shell/quiet-step.mjs" --name lane-sites.sites.18 -- "$NIKATRU_SHELL" -e "$NIKATRU_QUIET"
+          node "$GITHUB_WORKSPACE/../.nikatru-shell/quiet-step.mjs" --name lane-sites.sites.19 -- "$NIKATRU_SHELL" -e "$NIKATRU_QUIET"
       - name: The personal site passes the accessibility scan
         if: ${{ success() || (!cancelled() && (github.event.client_payload.event == 'pull_request' && startsWith(github.event.client_payload.ref, 'refs/heads/rehearsal/')) && steps.nikatru-setup-ok.outcome == 'success' && steps.nikatru-setup-14.outcome == 'success' && steps.nikatru-setup-15.outcome == 'success') }}
         run: |
@@ -760,7 +852,7 @@ jobs:
           node tooling/a11y/scan.mjs --site sites/rajasekarselvam
           NIKATRU_QUIET_EOF
           NIKATRU_SHELL="${BASH:-bash}"; if command -v cygpath >/dev/null 2>&1; then NIKATRU_SHELL="$(cygpath -w "$NIKATRU_SHELL")"; fi
-          node "$GITHUB_WORKSPACE/../.nikatru-shell/quiet-step.mjs" --name lane-sites.sites.19 -- "$NIKATRU_SHELL" -e "$NIKATRU_QUIET"
+          node "$GITHUB_WORKSPACE/../.nikatru-shell/quiet-step.mjs" --name lane-sites.sites.20 -- "$NIKATRU_SHELL" -e "$NIKATRU_QUIET"
       - name: RED CONTROL — the scan fails an unlabeled button, a covering sticky nav, a page that scrolls sideways at 320 px and an unregistered dark-scheme contrast failure
         if: ${{ success() || (!cancelled() && (github.event.client_payload.event == 'pull_request' && startsWith(github.event.client_payload.ref, 'refs/heads/rehearsal/')) && steps.nikatru-setup-ok.outcome == 'success' && steps.nikatru-setup-14.outcome == 'success' && steps.nikatru-setup-15.outcome == 'success') }}
         shell: bash
@@ -779,7 +871,20 @@ jobs:
           done
           NIKATRU_QUIET_EOF
           NIKATRU_SHELL="${BASH:-bash}"; if command -v cygpath >/dev/null 2>&1; then NIKATRU_SHELL="$(cygpath -w "$NIKATRU_SHELL")"; fi
-          node "$GITHUB_WORKSPACE/../.nikatru-shell/quiet-step.mjs" --name lane-sites.sites.20 -- "$NIKATRU_SHELL" --noprofile --norc -eo pipefail "$NIKATRU_QUIET"
+          node "$GITHUB_WORKSPACE/../.nikatru-shell/quiet-step.mjs" --name lane-sites.sites.21 -- "$NIKATRU_SHELL" --noprofile --norc -eo pipefail "$NIKATRU_QUIET"
+      - name: RED CONTROL — the scan's reveal, settle and tripwire hold in a real browser (settle-control.mjs; exit 2 is COVERAGE LOST)
+        if: ${{ success() || (!cancelled() && (github.event.client_payload.event == 'pull_request' && startsWith(github.event.client_payload.ref, 'refs/heads/rehearsal/')) && steps.nikatru-setup-ok.outcome == 'success' && steps.nikatru-setup-14.outcome == 'success' && steps.nikatru-setup-15.outcome == 'success') }}
+        shell: bash
+        run: |
+          NIKATRU_QUIET="$(mktemp "${RUNNER_TEMP:-/tmp}/nikatru-step.XXXXXX")"
+          cat > "$NIKATRU_QUIET" <<'NIKATRU_QUIET_EOF'
+          code=0
+          node tooling/a11y/settle-control.mjs || code=$?
+          if [ "$code" -eq 2 ]; then echo "::error::settle-control.mjs exited 2: COVERAGE LOST (no Playwright/axe-core in _playwright/, or no browser) — never a pass"; fi
+          if [ "$code" -ne 0 ]; then echo "::error::settle-control.mjs exited $code: the a11y scan's reveal/settle/tripwire control did not hold"; exit 1; fi
+          NIKATRU_QUIET_EOF
+          NIKATRU_SHELL="${BASH:-bash}"; if command -v cygpath >/dev/null 2>&1; then NIKATRU_SHELL="$(cygpath -w "$NIKATRU_SHELL")"; fi
+          node "$GITHUB_WORKSPACE/../.nikatru-shell/quiet-step.mjs" --name lane-sites.sites.22 -- "$NIKATRU_SHELL" --noprofile --norc -eo pipefail "$NIKATRU_QUIET"
       - name: The published catalogue satisfies its contract
         if: ${{ success() || (!cancelled() && (github.event.client_payload.event == 'pull_request' && startsWith(github.event.client_payload.ref, 'refs/heads/rehearsal/')) && steps.nikatru-setup-ok.outcome == 'success' && steps.nikatru-setup-14.outcome == 'success' && steps.nikatru-setup-15.outcome == 'success') }}
         run: |
@@ -788,7 +893,7 @@ jobs:
           node tooling/ci/assert-catalog-contract.mjs
           NIKATRU_QUIET_EOF
           NIKATRU_SHELL="${BASH:-bash}"; if command -v cygpath >/dev/null 2>&1; then NIKATRU_SHELL="$(cygpath -w "$NIKATRU_SHELL")"; fi
-          node "$GITHUB_WORKSPACE/../.nikatru-shell/quiet-step.mjs" --name lane-sites.sites.21 -- "$NIKATRU_SHELL" -e "$NIKATRU_QUIET"
+          node "$GITHUB_WORKSPACE/../.nikatru-shell/quiet-step.mjs" --name lane-sites.sites.23 -- "$NIKATRU_SHELL" -e "$NIKATRU_QUIET"
       - name: Delete the feed so the generator has to produce it
         if: ${{ success() || (!cancelled() && (github.event.client_payload.event == 'pull_request' && startsWith(github.event.client_payload.ref, 'refs/heads/rehearsal/')) && steps.nikatru-setup-ok.outcome == 'success' && steps.nikatru-setup-14.outcome == 'success' && steps.nikatru-setup-15.outcome == 'success') }}
         run: |
@@ -797,14 +902,14 @@ jobs:
           rm -f sites/_shared/_data/apps.json
           NIKATRU_QUIET_EOF
           NIKATRU_SHELL="${BASH:-bash}"; if command -v cygpath >/dev/null 2>&1; then NIKATRU_SHELL="$(cygpath -w "$NIKATRU_SHELL")"; fi
-          node "$GITHUB_WORKSPACE/../.nikatru-shell/quiet-step.mjs" --name lane-sites.sites.22 -- "$NIKATRU_SHELL" -e "$NIKATRU_QUIET"
+          node "$GITHUB_WORKSPACE/../.nikatru-shell/quiet-step.mjs" --name lane-sites.sites.24 -- "$NIKATRU_SHELL" -e "$NIKATRU_QUIET"
       - run: |
           NIKATRU_QUIET="$(mktemp "${RUNNER_TEMP:-/tmp}/nikatru-step.XXXXXX")"
           cat > "$NIKATRU_QUIET" <<'NIKATRU_QUIET_EOF'
           node tooling/sites/generate-apps-data.mjs
           NIKATRU_QUIET_EOF
           NIKATRU_SHELL="${BASH:-bash}"; if command -v cygpath >/dev/null 2>&1; then NIKATRU_SHELL="$(cygpath -w "$NIKATRU_SHELL")"; fi
-          node "$GITHUB_WORKSPACE/../.nikatru-shell/quiet-step.mjs" --name lane-sites.sites.23 -- "$NIKATRU_SHELL" -e "$NIKATRU_QUIET"
+          node "$GITHUB_WORKSPACE/../.nikatru-shell/quiet-step.mjs" --name lane-sites.sites.25 -- "$NIKATRU_SHELL" -e "$NIKATRU_QUIET"
         if: ${{ success() || (!cancelled() && (github.event.client_payload.event == 'pull_request' && startsWith(github.event.client_payload.ref, 'refs/heads/rehearsal/')) && steps.nikatru-setup-ok.outcome == 'success' && steps.nikatru-setup-14.outcome == 'success' && steps.nikatru-setup-15.outcome == 'success') }}
       - name: The generator actually wrote the feed
         if: ${{ success() || (!cancelled() && (github.event.client_payload.event == 'pull_request' && startsWith(github.event.client_payload.ref, 'refs/heads/rehearsal/')) && steps.nikatru-setup-ok.outcome == 'success' && steps.nikatru-setup-14.outcome == 'success' && steps.nikatru-setup-15.outcome == 'success') }}
@@ -814,7 +919,7 @@ jobs:
           test -s sites/_shared/_data/apps.json
           NIKATRU_QUIET_EOF
           NIKATRU_SHELL="${BASH:-bash}"; if command -v cygpath >/dev/null 2>&1; then NIKATRU_SHELL="$(cygpath -w "$NIKATRU_SHELL")"; fi
-          node "$GITHUB_WORKSPACE/../.nikatru-shell/quiet-step.mjs" --name lane-sites.sites.24 -- "$NIKATRU_SHELL" -e "$NIKATRU_QUIET"
+          node "$GITHUB_WORKSPACE/../.nikatru-shell/quiet-step.mjs" --name lane-sites.sites.26 -- "$NIKATRU_SHELL" -e "$NIKATRU_QUIET"
       - name: Site feed must equal a fresh generation from the catalogue
         if: ${{ success() || (!cancelled() && (github.event.client_payload.event == 'pull_request' && startsWith(github.event.client_payload.ref, 'refs/heads/rehearsal/')) && steps.nikatru-setup-ok.outcome == 'success' && steps.nikatru-setup-14.outcome == 'success' && steps.nikatru-setup-15.outcome == 'success') }}
         run: |
@@ -823,7 +928,7 @@ jobs:
           git diff --exit-code -- sites/_shared/_data/apps.json
           NIKATRU_QUIET_EOF
           NIKATRU_SHELL="${BASH:-bash}"; if command -v cygpath >/dev/null 2>&1; then NIKATRU_SHELL="$(cygpath -w "$NIKATRU_SHELL")"; fi
-          node "$GITHUB_WORKSPACE/../.nikatru-shell/quiet-step.mjs" --name lane-sites.sites.25 -- "$NIKATRU_SHELL" -e "$NIKATRU_QUIET"
+          node "$GITHUB_WORKSPACE/../.nikatru-shell/quiet-step.mjs" --name lane-sites.sites.27 -- "$NIKATRU_SHELL" -e "$NIKATRU_QUIET"
       - name: Catalogue advertises no dead app
         if: ${{ success() || (!cancelled() && (github.event.client_payload.event == 'pull_request' && startsWith(github.event.client_payload.ref, 'refs/heads/rehearsal/')) && steps.nikatru-setup-ok.outcome == 'success' && steps.nikatru-setup-14.outcome == 'success' && steps.nikatru-setup-15.outcome == 'success') }}
         run: |
@@ -832,7 +937,7 @@ jobs:
           node tooling/ci/assert-catalog-reachable.mjs
           NIKATRU_QUIET_EOF
           NIKATRU_SHELL="${BASH:-bash}"; if command -v cygpath >/dev/null 2>&1; then NIKATRU_SHELL="$(cygpath -w "$NIKATRU_SHELL")"; fi
-          node "$GITHUB_WORKSPACE/../.nikatru-shell/quiet-step.mjs" --name lane-sites.sites.26 -- "$NIKATRU_SHELL" -e "$NIKATRU_QUIET"
+          node "$GITHUB_WORKSPACE/../.nikatru-shell/quiet-step.mjs" --name lane-sites.sites.28 -- "$NIKATRU_SHELL" -e "$NIKATRU_QUIET"
       - name: The published render payload satisfies its contract
         if: ${{ success() || (!cancelled() && (github.event.client_payload.event == 'pull_request' && startsWith(github.event.client_payload.ref, 'refs/heads/rehearsal/')) && steps.nikatru-setup-ok.outcome == 'success' && steps.nikatru-setup-14.outcome == 'success' && steps.nikatru-setup-15.outcome == 'success') }}
         run: |
@@ -841,7 +946,7 @@ jobs:
           node tooling/ci/assert-render-payload.mjs
           NIKATRU_QUIET_EOF
           NIKATRU_SHELL="${BASH:-bash}"; if command -v cygpath >/dev/null 2>&1; then NIKATRU_SHELL="$(cygpath -w "$NIKATRU_SHELL")"; fi
-          node "$GITHUB_WORKSPACE/../.nikatru-shell/quiet-step.mjs" --name lane-sites.sites.27 -- "$NIKATRU_SHELL" -e "$NIKATRU_QUIET"
+          node "$GITHUB_WORKSPACE/../.nikatru-shell/quiet-step.mjs" --name lane-sites.sites.29 -- "$NIKATRU_SHELL" -e "$NIKATRU_QUIET"
       - name: Delete the payload so the publisher has to produce it
         if: ${{ success() || (!cancelled() && (github.event.client_payload.event == 'pull_request' && startsWith(github.event.client_payload.ref, 'refs/heads/rehearsal/')) && steps.nikatru-setup-ok.outcome == 'success' && steps.nikatru-setup-14.outcome == 'success' && steps.nikatru-setup-15.outcome == 'success') }}
         run: |
@@ -850,14 +955,14 @@ jobs:
           rm -f catalog/apps-landing.json
           NIKATRU_QUIET_EOF
           NIKATRU_SHELL="${BASH:-bash}"; if command -v cygpath >/dev/null 2>&1; then NIKATRU_SHELL="$(cygpath -w "$NIKATRU_SHELL")"; fi
-          node "$GITHUB_WORKSPACE/../.nikatru-shell/quiet-step.mjs" --name lane-sites.sites.28 -- "$NIKATRU_SHELL" -e "$NIKATRU_QUIET"
+          node "$GITHUB_WORKSPACE/../.nikatru-shell/quiet-step.mjs" --name lane-sites.sites.30 -- "$NIKATRU_SHELL" -e "$NIKATRU_QUIET"
       - run: |
           NIKATRU_QUIET="$(mktemp "${RUNNER_TEMP:-/tmp}/nikatru-step.XXXXXX")"
           cat > "$NIKATRU_QUIET" <<'NIKATRU_QUIET_EOF'
           node tooling/sites/generate-landing-payload.mjs
           NIKATRU_QUIET_EOF
           NIKATRU_SHELL="${BASH:-bash}"; if command -v cygpath >/dev/null 2>&1; then NIKATRU_SHELL="$(cygpath -w "$NIKATRU_SHELL")"; fi
-          node "$GITHUB_WORKSPACE/../.nikatru-shell/quiet-step.mjs" --name lane-sites.sites.29 -- "$NIKATRU_SHELL" -e "$NIKATRU_QUIET"
+          node "$GITHUB_WORKSPACE/../.nikatru-shell/quiet-step.mjs" --name lane-sites.sites.31 -- "$NIKATRU_SHELL" -e "$NIKATRU_QUIET"
         if: ${{ success() || (!cancelled() && (github.event.client_payload.event == 'pull_request' && startsWith(github.event.client_payload.ref, 'refs/heads/rehearsal/')) && steps.nikatru-setup-ok.outcome == 'success' && steps.nikatru-setup-14.outcome == 'success' && steps.nikatru-setup-15.outcome == 'success') }}
       - name: The publisher actually wrote the payload
         if: ${{ success() || (!cancelled() && (github.event.client_payload.event == 'pull_request' && startsWith(github.event.client_payload.ref, 'refs/heads/rehearsal/')) && steps.nikatru-setup-ok.outcome == 'success' && steps.nikatru-setup-14.outcome == 'success' && steps.nikatru-setup-15.outcome == 'success') }}
@@ -867,7 +972,7 @@ jobs:
           test -s catalog/apps-landing.json
           NIKATRU_QUIET_EOF
           NIKATRU_SHELL="${BASH:-bash}"; if command -v cygpath >/dev/null 2>&1; then NIKATRU_SHELL="$(cygpath -w "$NIKATRU_SHELL")"; fi
-          node "$GITHUB_WORKSPACE/../.nikatru-shell/quiet-step.mjs" --name lane-sites.sites.30 -- "$NIKATRU_SHELL" -e "$NIKATRU_QUIET"
+          node "$GITHUB_WORKSPACE/../.nikatru-shell/quiet-step.mjs" --name lane-sites.sites.32 -- "$NIKATRU_SHELL" -e "$NIKATRU_QUIET"
       - name: Render payload must equal a fresh publish from the rail config
         if: ${{ success() || (!cancelled() && (github.event.client_payload.event == 'pull_request' && startsWith(github.event.client_payload.ref, 'refs/heads/rehearsal/')) && steps.nikatru-setup-ok.outcome == 'success' && steps.nikatru-setup-14.outcome == 'success' && steps.nikatru-setup-15.outcome == 'success') }}
         run: |
@@ -876,7 +981,7 @@ jobs:
           git diff --exit-code -- catalog/apps-landing.json
           NIKATRU_QUIET_EOF
           NIKATRU_SHELL="${BASH:-bash}"; if command -v cygpath >/dev/null 2>&1; then NIKATRU_SHELL="$(cygpath -w "$NIKATRU_SHELL")"; fi
-          node "$GITHUB_WORKSPACE/../.nikatru-shell/quiet-step.mjs" --name lane-sites.sites.31 -- "$NIKATRU_SHELL" -e "$NIKATRU_QUIET"
+          node "$GITHUB_WORKSPACE/../.nikatru-shell/quiet-step.mjs" --name lane-sites.sites.33 -- "$NIKATRU_SHELL" -e "$NIKATRU_QUIET"
       - name: The site generator chain is current (compare only)
         if: ${{ success() || (!cancelled() && (github.event.client_payload.event == 'pull_request' && startsWith(github.event.client_payload.ref, 'refs/heads/rehearsal/')) && steps.nikatru-setup-ok.outcome == 'success' && steps.nikatru-setup-14.outcome == 'success' && steps.nikatru-setup-15.outcome == 'success') }}
         run: |
@@ -885,7 +990,7 @@ jobs:
           node tooling/sites/regen.mjs --check
           NIKATRU_QUIET_EOF
           NIKATRU_SHELL="${BASH:-bash}"; if command -v cygpath >/dev/null 2>&1; then NIKATRU_SHELL="$(cygpath -w "$NIKATRU_SHELL")"; fi
-          node "$GITHUB_WORKSPACE/../.nikatru-shell/quiet-step.mjs" --name lane-sites.sites.32 -- "$NIKATRU_SHELL" -e "$NIKATRU_QUIET"
+          node "$GITHUB_WORKSPACE/../.nikatru-shell/quiet-step.mjs" --name lane-sites.sites.34 -- "$NIKATRU_SHELL" -e "$NIKATRU_QUIET"
       - name: Discovery surfaces match the registry that generated them
         if: ${{ success() || (!cancelled() && (github.event.client_payload.event == 'pull_request' && startsWith(github.event.client_payload.ref, 'refs/heads/rehearsal/')) && steps.nikatru-setup-ok.outcome == 'success' && steps.nikatru-setup-14.outcome == 'success' && steps.nikatru-setup-15.outcome == 'success') }}
         run: |
@@ -894,7 +999,7 @@ jobs:
           node tooling/ci/assert-discovery-surface.mjs
           NIKATRU_QUIET_EOF
           NIKATRU_SHELL="${BASH:-bash}"; if command -v cygpath >/dev/null 2>&1; then NIKATRU_SHELL="$(cygpath -w "$NIKATRU_SHELL")"; fi
-          node "$GITHUB_WORKSPACE/../.nikatru-shell/quiet-step.mjs" --name lane-sites.sites.33 -- "$NIKATRU_SHELL" -e "$NIKATRU_QUIET"
+          node "$GITHUB_WORKSPACE/../.nikatru-shell/quiet-step.mjs" --name lane-sites.sites.35 -- "$NIKATRU_SHELL" -e "$NIKATRU_QUIET"
       - name: The apex site's Pages bindings agree with its README, its Functions and its deploy job
         if: ${{ success() || (!cancelled() && (github.event.client_payload.event == 'pull_request' && startsWith(github.event.client_payload.ref, 'refs/heads/rehearsal/')) && steps.nikatru-setup-ok.outcome == 'success' && steps.nikatru-setup-14.outcome == 'success' && steps.nikatru-setup-15.outcome == 'success') }}
         run: |
@@ -903,7 +1008,7 @@ jobs:
           node tooling/ci/assert-site-bindings.mjs
           NIKATRU_QUIET_EOF
           NIKATRU_SHELL="${BASH:-bash}"; if command -v cygpath >/dev/null 2>&1; then NIKATRU_SHELL="$(cygpath -w "$NIKATRU_SHELL")"; fi
-          node "$GITHUB_WORKSPACE/../.nikatru-shell/quiet-step.mjs" --name lane-sites.sites.34 -- "$NIKATRU_SHELL" -e "$NIKATRU_QUIET"
+          node "$GITHUB_WORKSPACE/../.nikatru-shell/quiet-step.mjs" --name lane-sites.sites.36 -- "$NIKATRU_SHELL" -e "$NIKATRU_QUIET"
       - name: Every inline palette copy still matches the token source
         if: ${{ success() || (!cancelled() && (github.event.client_payload.event == 'pull_request' && startsWith(github.event.client_payload.ref, 'refs/heads/rehearsal/')) && steps.nikatru-setup-ok.outcome == 'success' && steps.nikatru-setup-14.outcome == 'success' && steps.nikatru-setup-15.outcome == 'success') }}
         run: |
@@ -912,7 +1017,7 @@ jobs:
           node tooling/ci/assert-palette-consistent.mjs
           NIKATRU_QUIET_EOF
           NIKATRU_SHELL="${BASH:-bash}"; if command -v cygpath >/dev/null 2>&1; then NIKATRU_SHELL="$(cygpath -w "$NIKATRU_SHELL")"; fi
-          node "$GITHUB_WORKSPACE/../.nikatru-shell/quiet-step.mjs" --name lane-sites.sites.35 -- "$NIKATRU_SHELL" -e "$NIKATRU_QUIET"
+          node "$GITHUB_WORKSPACE/../.nikatru-shell/quiet-step.mjs" --name lane-sites.sites.37 -- "$NIKATRU_SHELL" -e "$NIKATRU_QUIET"
       - name: No page claims a store channel the catalogue has not published to
         if: ${{ success() || (!cancelled() && (github.event.client_payload.event == 'pull_request' && startsWith(github.event.client_payload.ref, 'refs/heads/rehearsal/')) && steps.nikatru-setup-ok.outcome == 'success' && steps.nikatru-setup-14.outcome == 'success' && steps.nikatru-setup-15.outcome == 'success') }}
         run: |
@@ -921,7 +1026,7 @@ jobs:
           node tooling/ci/assert-availability.mjs
           NIKATRU_QUIET_EOF
           NIKATRU_SHELL="${BASH:-bash}"; if command -v cygpath >/dev/null 2>&1; then NIKATRU_SHELL="$(cygpath -w "$NIKATRU_SHELL")"; fi
-          node "$GITHUB_WORKSPACE/../.nikatru-shell/quiet-step.mjs" --name lane-sites.sites.36 -- "$NIKATRU_SHELL" -e "$NIKATRU_QUIET"
+          node "$GITHUB_WORKSPACE/../.nikatru-shell/quiet-step.mjs" --name lane-sites.sites.38 -- "$NIKATRU_SHELL" -e "$NIKATRU_QUIET"
       - name: Hand this job's red detail to the report job, sealed (generated)
         id: nikatru-handoff
         if: always()
@@ -1025,9 +1130,30 @@ jobs:
           ssh-key: ${{ secrets.PRIVATE_DEPLOY_KEY }}
           persist-credentials: false
       - name: Keep private main's composite actions out of the branch's tree (generated)
+        id: nikatru-trusted-tree
         shell: bash
         working-directory: ${{ github.workspace }}
-        run: printf '/.nikatru-trusted/\n' >> "$(git rev-parse --git-path info/exclude)"
+        run: |
+          if x="$(git rev-parse --git-path info/exclude 2>/dev/null)"; then mkdir -p "${x%/*}"; grep -qxF '/.nikatru-trusted/' "$x" 2>/dev/null || printf '/.nikatru-trusted/\n' >> "$x"; fi
+          NIKATRU_TRUSTED_GIT="$(command -v git)"; case "$NIKATRU_TRUSTED_GIT" in /*) ;; *) echo "::error::git does not resolve to an absolute path ($NIKATRU_TRUSTED_GIT)"; exit 1 ;; esac
+          tree="$(for v in $(compgen -e); do case "$v" in (GIT_*) unset "$v" ;; esac; done && d="$RUNNER_TEMP/nikatru-trusted.$$.$RANDOM" && [ ! -e "$d.git" ] && [ ! -e "$d.index" ] && export GIT_DIR="$d.git" GIT_INDEX_FILE="$d.index" GIT_CONFIG_GLOBAL=/dev/null GIT_CONFIG_NOSYSTEM=1 && "$NIKATRU_TRUSTED_GIT" init -q --bare --template= "$GIT_DIR" && "$NIKATRU_TRUSTED_GIT" -C .nikatru-trusted --work-tree=. add -A -f .github/actions && "$NIKATRU_TRUSTED_GIT" write-tree --prefix=.github/actions/)"
+          main="$(git -C .nikatru-trusted rev-parse HEAD:.github/actions)"
+          if [ -z "$tree" ] || [ "$tree" != "$main" ]; then echo "::error::.nikatru-trusted: the working tree ($tree) is not private main's .github/actions ($main)"; exit 1; fi
+          rm -rf "$RUNNER_TEMP/nikatru-trusted-actions" && mkdir -p "$RUNNER_TEMP/nikatru-trusted-actions" && cp -R .nikatru-trusted/.github "$RUNNER_TEMP/nikatru-trusted-actions/"
+          echo "tree=$tree" >> "$GITHUB_OUTPUT"
+          echo "git=$NIKATRU_TRUSTED_GIT" >> "$GITHUB_OUTPUT"
+      - name: Verify private main's composite actions are the checked-out tree (generated)
+        shell: bash
+        working-directory: ${{ github.workspace }}
+        env:
+          NIKATRU_TRUSTED_TREE: ${{ steps.nikatru-trusted-tree.outputs.tree }}
+          NIKATRU_TRUSTED_GIT: ${{ steps.nikatru-trusted-tree.outputs.git }}
+        run: |
+          case "$NIKATRU_TRUSTED_GIT" in /*) ;; *) echo "::error::.nikatru-trusted: no git path was recorded before the job's own steps ($NIKATRU_TRUSTED_GIT)"; exit 1 ;; esac
+          rm -rf .nikatru-trusted/.github && mkdir -p .nikatru-trusted && cp -R "$RUNNER_TEMP/nikatru-trusted-actions/.github" .nikatru-trusted/
+          if x="$(git rev-parse --git-path info/exclude 2>/dev/null)"; then mkdir -p "${x%/*}"; grep -qxF '/.nikatru-trusted/' "$x" 2>/dev/null || printf '/.nikatru-trusted/\n' >> "$x"; fi
+          tree="$(for v in $(compgen -e); do case "$v" in (GIT_*) unset "$v" ;; esac; done && d="$RUNNER_TEMP/nikatru-trusted.$$.$RANDOM" && [ ! -e "$d.git" ] && [ ! -e "$d.index" ] && export GIT_DIR="$d.git" GIT_INDEX_FILE="$d.index" GIT_CONFIG_GLOBAL=/dev/null GIT_CONFIG_NOSYSTEM=1 && "$NIKATRU_TRUSTED_GIT" init -q --bare --template= "$GIT_DIR" && "$NIKATRU_TRUSTED_GIT" -C .nikatru-trusted --work-tree=. add -A -f .github/actions && "$NIKATRU_TRUSTED_GIT" write-tree --prefix=.github/actions/)"
+          if [ -z "$NIKATRU_TRUSTED_TREE" ] || [ "$tree" != "$NIKATRU_TRUSTED_TREE" ]; then echo "::error::.nikatru-trusted is not the tree checked out from private main ($NIKATRU_TRUSTED_TREE, now $tree): a step of this job edited its copy"; exit 1; fi
       - uses: ./.nikatru-trusted/.github/actions/setup-node
         env:
           NIKATRU_REF: ${{ github.event.client_payload.ref || 'refs/heads/main' }}
@@ -1210,9 +1336,30 @@ jobs:
           ssh-key: ${{ secrets.PRIVATE_DEPLOY_KEY }}
           persist-credentials: false
       - name: Keep private main's composite actions out of the branch's tree (generated)
+        id: nikatru-trusted-tree
         shell: bash
         working-directory: ${{ github.workspace }}
-        run: printf '/.nikatru-trusted/\n' >> "$(git rev-parse --git-path info/exclude)"
+        run: |
+          if x="$(git rev-parse --git-path info/exclude 2>/dev/null)"; then mkdir -p "${x%/*}"; grep -qxF '/.nikatru-trusted/' "$x" 2>/dev/null || printf '/.nikatru-trusted/\n' >> "$x"; fi
+          NIKATRU_TRUSTED_GIT="$(command -v git)"; case "$NIKATRU_TRUSTED_GIT" in /*) ;; *) echo "::error::git does not resolve to an absolute path ($NIKATRU_TRUSTED_GIT)"; exit 1 ;; esac
+          tree="$(for v in $(compgen -e); do case "$v" in (GIT_*) unset "$v" ;; esac; done && d="$RUNNER_TEMP/nikatru-trusted.$$.$RANDOM" && [ ! -e "$d.git" ] && [ ! -e "$d.index" ] && export GIT_DIR="$d.git" GIT_INDEX_FILE="$d.index" GIT_CONFIG_GLOBAL=/dev/null GIT_CONFIG_NOSYSTEM=1 && "$NIKATRU_TRUSTED_GIT" init -q --bare --template= "$GIT_DIR" && "$NIKATRU_TRUSTED_GIT" -C .nikatru-trusted --work-tree=. add -A -f .github/actions && "$NIKATRU_TRUSTED_GIT" write-tree --prefix=.github/actions/)"
+          main="$(git -C .nikatru-trusted rev-parse HEAD:.github/actions)"
+          if [ -z "$tree" ] || [ "$tree" != "$main" ]; then echo "::error::.nikatru-trusted: the working tree ($tree) is not private main's .github/actions ($main)"; exit 1; fi
+          rm -rf "$RUNNER_TEMP/nikatru-trusted-actions" && mkdir -p "$RUNNER_TEMP/nikatru-trusted-actions" && cp -R .nikatru-trusted/.github "$RUNNER_TEMP/nikatru-trusted-actions/"
+          echo "tree=$tree" >> "$GITHUB_OUTPUT"
+          echo "git=$NIKATRU_TRUSTED_GIT" >> "$GITHUB_OUTPUT"
+      - name: Verify private main's composite actions are the checked-out tree (generated)
+        shell: bash
+        working-directory: ${{ github.workspace }}
+        env:
+          NIKATRU_TRUSTED_TREE: ${{ steps.nikatru-trusted-tree.outputs.tree }}
+          NIKATRU_TRUSTED_GIT: ${{ steps.nikatru-trusted-tree.outputs.git }}
+        run: |
+          case "$NIKATRU_TRUSTED_GIT" in /*) ;; *) echo "::error::.nikatru-trusted: no git path was recorded before the job's own steps ($NIKATRU_TRUSTED_GIT)"; exit 1 ;; esac
+          rm -rf .nikatru-trusted/.github && mkdir -p .nikatru-trusted && cp -R "$RUNNER_TEMP/nikatru-trusted-actions/.github" .nikatru-trusted/
+          if x="$(git rev-parse --git-path info/exclude 2>/dev/null)"; then mkdir -p "${x%/*}"; grep -qxF '/.nikatru-trusted/' "$x" 2>/dev/null || printf '/.nikatru-trusted/\n' >> "$x"; fi
+          tree="$(for v in $(compgen -e); do case "$v" in (GIT_*) unset "$v" ;; esac; done && d="$RUNNER_TEMP/nikatru-trusted.$$.$RANDOM" && [ ! -e "$d.git" ] && [ ! -e "$d.index" ] && export GIT_DIR="$d.git" GIT_INDEX_FILE="$d.index" GIT_CONFIG_GLOBAL=/dev/null GIT_CONFIG_NOSYSTEM=1 && "$NIKATRU_TRUSTED_GIT" init -q --bare --template= "$GIT_DIR" && "$NIKATRU_TRUSTED_GIT" -C .nikatru-trusted --work-tree=. add -A -f .github/actions && "$NIKATRU_TRUSTED_GIT" write-tree --prefix=.github/actions/)"
+          if [ -z "$NIKATRU_TRUSTED_TREE" ] || [ "$tree" != "$NIKATRU_TRUSTED_TREE" ]; then echo "::error::.nikatru-trusted is not the tree checked out from private main ($NIKATRU_TRUSTED_TREE, now $tree): a step of this job edited its copy"; exit 1; fi
       - uses: ./.nikatru-trusted/.github/actions/setup-node
         env:
           NIKATRU_REF: ${{ github.event.client_payload.ref || 'refs/heads/main' }}
@@ -1417,9 +1564,30 @@ jobs:
           ssh-key: ${{ secrets.PRIVATE_DEPLOY_KEY }}
           persist-credentials: false
       - name: Keep private main's composite actions out of the branch's tree (generated)
+        id: nikatru-trusted-tree
         shell: bash
         working-directory: ${{ github.workspace }}
-        run: printf '/.nikatru-trusted/\n' >> "$(git rev-parse --git-path info/exclude)"
+        run: |
+          if x="$(git rev-parse --git-path info/exclude 2>/dev/null)"; then mkdir -p "${x%/*}"; grep -qxF '/.nikatru-trusted/' "$x" 2>/dev/null || printf '/.nikatru-trusted/\n' >> "$x"; fi
+          NIKATRU_TRUSTED_GIT="$(command -v git)"; case "$NIKATRU_TRUSTED_GIT" in /*) ;; *) echo "::error::git does not resolve to an absolute path ($NIKATRU_TRUSTED_GIT)"; exit 1 ;; esac
+          tree="$(for v in $(compgen -e); do case "$v" in (GIT_*) unset "$v" ;; esac; done && d="$RUNNER_TEMP/nikatru-trusted.$$.$RANDOM" && [ ! -e "$d.git" ] && [ ! -e "$d.index" ] && export GIT_DIR="$d.git" GIT_INDEX_FILE="$d.index" GIT_CONFIG_GLOBAL=/dev/null GIT_CONFIG_NOSYSTEM=1 && "$NIKATRU_TRUSTED_GIT" init -q --bare --template= "$GIT_DIR" && "$NIKATRU_TRUSTED_GIT" -C .nikatru-trusted --work-tree=. add -A -f .github/actions && "$NIKATRU_TRUSTED_GIT" write-tree --prefix=.github/actions/)"
+          main="$(git -C .nikatru-trusted rev-parse HEAD:.github/actions)"
+          if [ -z "$tree" ] || [ "$tree" != "$main" ]; then echo "::error::.nikatru-trusted: the working tree ($tree) is not private main's .github/actions ($main)"; exit 1; fi
+          rm -rf "$RUNNER_TEMP/nikatru-trusted-actions" && mkdir -p "$RUNNER_TEMP/nikatru-trusted-actions" && cp -R .nikatru-trusted/.github "$RUNNER_TEMP/nikatru-trusted-actions/"
+          echo "tree=$tree" >> "$GITHUB_OUTPUT"
+          echo "git=$NIKATRU_TRUSTED_GIT" >> "$GITHUB_OUTPUT"
+      - name: Verify private main's composite actions are the checked-out tree (generated)
+        shell: bash
+        working-directory: ${{ github.workspace }}
+        env:
+          NIKATRU_TRUSTED_TREE: ${{ steps.nikatru-trusted-tree.outputs.tree }}
+          NIKATRU_TRUSTED_GIT: ${{ steps.nikatru-trusted-tree.outputs.git }}
+        run: |
+          case "$NIKATRU_TRUSTED_GIT" in /*) ;; *) echo "::error::.nikatru-trusted: no git path was recorded before the job's own steps ($NIKATRU_TRUSTED_GIT)"; exit 1 ;; esac
+          rm -rf .nikatru-trusted/.github && mkdir -p .nikatru-trusted && cp -R "$RUNNER_TEMP/nikatru-trusted-actions/.github" .nikatru-trusted/
+          if x="$(git rev-parse --git-path info/exclude 2>/dev/null)"; then mkdir -p "${x%/*}"; grep -qxF '/.nikatru-trusted/' "$x" 2>/dev/null || printf '/.nikatru-trusted/\n' >> "$x"; fi
+          tree="$(for v in $(compgen -e); do case "$v" in (GIT_*) unset "$v" ;; esac; done && d="$RUNNER_TEMP/nikatru-trusted.$$.$RANDOM" && [ ! -e "$d.git" ] && [ ! -e "$d.index" ] && export GIT_DIR="$d.git" GIT_INDEX_FILE="$d.index" GIT_CONFIG_GLOBAL=/dev/null GIT_CONFIG_NOSYSTEM=1 && "$NIKATRU_TRUSTED_GIT" init -q --bare --template= "$GIT_DIR" && "$NIKATRU_TRUSTED_GIT" -C .nikatru-trusted --work-tree=. add -A -f .github/actions && "$NIKATRU_TRUSTED_GIT" write-tree --prefix=.github/actions/)"
+          if [ -z "$NIKATRU_TRUSTED_TREE" ] || [ "$tree" != "$NIKATRU_TRUSTED_TREE" ]; then echo "::error::.nikatru-trusted is not the tree checked out from private main ($NIKATRU_TRUSTED_TREE, now $tree): a step of this job edited its copy"; exit 1; fi
       - uses: ./.nikatru-trusted/.github/actions/setup-node
         env:
           NIKATRU_REF: ${{ github.event.client_payload.ref || 'refs/heads/main' }}
@@ -1436,19 +1604,18 @@ jobs:
           NIKATRU_QUIET_EOF
           NIKATRU_SHELL="${BASH:-bash}"; if command -v cygpath >/dev/null 2>&1; then NIKATRU_SHELL="$(cygpath -w "$NIKATRU_SHELL")"; fi
           node "$GITHUB_WORKSPACE/../.nikatru-shell/quiet-step.mjs" --name lane-sites.review-crawl-self-test.3 -- "$NIKATRU_SHELL" --noprofile --norc -eo pipefail "$NIKATRU_QUIET"
-      - name: Check out private main's composite actions (generated)
-        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
-        with:
-          repository: ${{ env.NIKATRU_PRIVATE_REPO }}
-          ref: refs/heads/main
-          path: .nikatru-trusted
-          sparse-checkout: .github/actions
-          ssh-key: ${{ secrets.PRIVATE_DEPLOY_KEY }}
-          persist-credentials: false
-      - name: Keep private main's composite actions out of the branch's tree (generated)
+      - name: Verify private main's composite actions are the checked-out tree (generated)
         shell: bash
         working-directory: ${{ github.workspace }}
-        run: printf '/.nikatru-trusted/\n' >> "$(git rev-parse --git-path info/exclude)"
+        env:
+          NIKATRU_TRUSTED_TREE: ${{ steps.nikatru-trusted-tree.outputs.tree }}
+          NIKATRU_TRUSTED_GIT: ${{ steps.nikatru-trusted-tree.outputs.git }}
+        run: |
+          case "$NIKATRU_TRUSTED_GIT" in /*) ;; *) echo "::error::.nikatru-trusted: no git path was recorded before the job's own steps ($NIKATRU_TRUSTED_GIT)"; exit 1 ;; esac
+          rm -rf .nikatru-trusted/.github && mkdir -p .nikatru-trusted && cp -R "$RUNNER_TEMP/nikatru-trusted-actions/.github" .nikatru-trusted/
+          if x="$(git rev-parse --git-path info/exclude 2>/dev/null)"; then mkdir -p "${x%/*}"; grep -qxF '/.nikatru-trusted/' "$x" 2>/dev/null || printf '/.nikatru-trusted/\n' >> "$x"; fi
+          tree="$(for v in $(compgen -e); do case "$v" in (GIT_*) unset "$v" ;; esac; done && d="$RUNNER_TEMP/nikatru-trusted.$$.$RANDOM" && [ ! -e "$d.git" ] && [ ! -e "$d.index" ] && export GIT_DIR="$d.git" GIT_INDEX_FILE="$d.index" GIT_CONFIG_GLOBAL=/dev/null GIT_CONFIG_NOSYSTEM=1 && "$NIKATRU_TRUSTED_GIT" init -q --bare --template= "$GIT_DIR" && "$NIKATRU_TRUSTED_GIT" -C .nikatru-trusted --work-tree=. add -A -f .github/actions && "$NIKATRU_TRUSTED_GIT" write-tree --prefix=.github/actions/)"
+          if [ -z "$NIKATRU_TRUSTED_TREE" ] || [ "$tree" != "$NIKATRU_TRUSTED_TREE" ]; then echo "::error::.nikatru-trusted is not the tree checked out from private main ($NIKATRU_TRUSTED_TREE, now $tree): a step of this job edited its copy"; exit 1; fi
       - name: Install Playwright's Chromium (and its system packages)
         timeout-minutes: 9
         uses: ./.nikatru-trusted/.github/actions/cached-install
@@ -1582,9 +1749,30 @@ jobs:
           ssh-key: ${{ secrets.PRIVATE_DEPLOY_KEY }}
           persist-credentials: false
       - name: Keep private main's composite actions out of the branch's tree (generated)
+        id: nikatru-trusted-tree
         shell: bash
         working-directory: ${{ github.workspace }}
-        run: printf '/.nikatru-trusted/\n' >> "$(git rev-parse --git-path info/exclude)"
+        run: |
+          if x="$(git rev-parse --git-path info/exclude 2>/dev/null)"; then mkdir -p "${x%/*}"; grep -qxF '/.nikatru-trusted/' "$x" 2>/dev/null || printf '/.nikatru-trusted/\n' >> "$x"; fi
+          NIKATRU_TRUSTED_GIT="$(command -v git)"; case "$NIKATRU_TRUSTED_GIT" in /*) ;; *) echo "::error::git does not resolve to an absolute path ($NIKATRU_TRUSTED_GIT)"; exit 1 ;; esac
+          tree="$(for v in $(compgen -e); do case "$v" in (GIT_*) unset "$v" ;; esac; done && d="$RUNNER_TEMP/nikatru-trusted.$$.$RANDOM" && [ ! -e "$d.git" ] && [ ! -e "$d.index" ] && export GIT_DIR="$d.git" GIT_INDEX_FILE="$d.index" GIT_CONFIG_GLOBAL=/dev/null GIT_CONFIG_NOSYSTEM=1 && "$NIKATRU_TRUSTED_GIT" init -q --bare --template= "$GIT_DIR" && "$NIKATRU_TRUSTED_GIT" -C .nikatru-trusted --work-tree=. add -A -f .github/actions && "$NIKATRU_TRUSTED_GIT" write-tree --prefix=.github/actions/)"
+          main="$(git -C .nikatru-trusted rev-parse HEAD:.github/actions)"
+          if [ -z "$tree" ] || [ "$tree" != "$main" ]; then echo "::error::.nikatru-trusted: the working tree ($tree) is not private main's .github/actions ($main)"; exit 1; fi
+          rm -rf "$RUNNER_TEMP/nikatru-trusted-actions" && mkdir -p "$RUNNER_TEMP/nikatru-trusted-actions" && cp -R .nikatru-trusted/.github "$RUNNER_TEMP/nikatru-trusted-actions/"
+          echo "tree=$tree" >> "$GITHUB_OUTPUT"
+          echo "git=$NIKATRU_TRUSTED_GIT" >> "$GITHUB_OUTPUT"
+      - name: Verify private main's composite actions are the checked-out tree (generated)
+        shell: bash
+        working-directory: ${{ github.workspace }}
+        env:
+          NIKATRU_TRUSTED_TREE: ${{ steps.nikatru-trusted-tree.outputs.tree }}
+          NIKATRU_TRUSTED_GIT: ${{ steps.nikatru-trusted-tree.outputs.git }}
+        run: |
+          case "$NIKATRU_TRUSTED_GIT" in /*) ;; *) echo "::error::.nikatru-trusted: no git path was recorded before the job's own steps ($NIKATRU_TRUSTED_GIT)"; exit 1 ;; esac
+          rm -rf .nikatru-trusted/.github && mkdir -p .nikatru-trusted && cp -R "$RUNNER_TEMP/nikatru-trusted-actions/.github" .nikatru-trusted/
+          if x="$(git rev-parse --git-path info/exclude 2>/dev/null)"; then mkdir -p "${x%/*}"; grep -qxF '/.nikatru-trusted/' "$x" 2>/dev/null || printf '/.nikatru-trusted/\n' >> "$x"; fi
+          tree="$(for v in $(compgen -e); do case "$v" in (GIT_*) unset "$v" ;; esac; done && d="$RUNNER_TEMP/nikatru-trusted.$$.$RANDOM" && [ ! -e "$d.git" ] && [ ! -e "$d.index" ] && export GIT_DIR="$d.git" GIT_INDEX_FILE="$d.index" GIT_CONFIG_GLOBAL=/dev/null GIT_CONFIG_NOSYSTEM=1 && "$NIKATRU_TRUSTED_GIT" init -q --bare --template= "$GIT_DIR" && "$NIKATRU_TRUSTED_GIT" -C .nikatru-trusted --work-tree=. add -A -f .github/actions && "$NIKATRU_TRUSTED_GIT" write-tree --prefix=.github/actions/)"
+          if [ -z "$NIKATRU_TRUSTED_TREE" ] || [ "$tree" != "$NIKATRU_TRUSTED_TREE" ]; then echo "::error::.nikatru-trusted is not the tree checked out from private main ($NIKATRU_TRUSTED_TREE, now $tree): a step of this job edited its copy"; exit 1; fi
       - uses: ./.nikatru-trusted/.github/actions/setup-node
         env:
           NIKATRU_REF: ${{ github.event.client_payload.ref || 'refs/heads/main' }}

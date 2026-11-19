@@ -11,7 +11,7 @@ env:
 
 name: names-render
 
-run-name: "names-render · ${{ inputs.classes }} · ${{ inputs.mode }}${{ inputs.prefix && format(' · under {0}', inputs.prefix) || '' }}${{ inputs.limit && inputs.limit != '0' && format(' · limit {0}', inputs.limit) || '' }}${{ inputs.reword == 'true' && ' · reword' || '' }}${{ inputs.account && format(' · {0}', inputs.account) || '' }}"
+run-name: "${{ (github.event.schedule || github.event.inputs.worker_slot) && '[slot] ' || '[hand] ' }}names-render · ${{ inputs.classes }} · ${{ inputs.mode }}${{ inputs.limit && inputs.limit != '0' && format(' · limit {0}', inputs.limit) || '' }}${{ inputs.reword == 'true' && ' · reword' || '' }}${{ inputs.account && format(' · {0}', inputs.account) || '' }}"
 
 on:
   workflow_dispatch:

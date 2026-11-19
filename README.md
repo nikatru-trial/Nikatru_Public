@@ -59,7 +59,7 @@ verdict back to that repository. It is generated: a pull request here is not how
   `BRIDGE_ARTIFACT_SECRET` (signs a private artifact upload; held only by the private-artifact
   steps), plus what each workflow reads.
 
-## Workflows (61)
+## Workflows (63)
 
 - `apple-expiry-write.yml`
 - `artifact-drill.yml`
@@ -86,6 +86,7 @@ verdict back to that repository. It is generated: a pull request here is not how
 - `lane-guards.yml`
 - `lane-sites.yml`
 - `lane-workers.yml`
+- `load-rehearsal.yml`
 - `machinery-canary.yml`
 - `main-healthy.yml`
 - `migrate-platform-db.yml`
@@ -95,6 +96,7 @@ verdict back to that repository. It is generated: a pull request here is not how
 - `name-clearance.yml`
 - `names-render.yml`
 - `native-auth-proof.yml`
+- `native-crash-drill.yml`
 - `new-user-e2e.yml` — reports `new-user-e2e`
 - `ops-watch.yml` — reports `ops-watch`
 - `org-move-duty.yml`

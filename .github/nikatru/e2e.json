@@ -5,6 +5,7 @@
   "prefix": "nikatru-detail-",
   "slots": 32,
   "sendBudgetS": 360,
+  "redLogBudgetS": 240,
   "gate": {
     "job": "e2e",
     "context": "e2e",
@@ -12,7 +13,22 @@
       "e2e-leg."
     ]
   },
-  "lanes": [],
+  "lanes": [
+    {
+      "job": "last-green",
+      "context": "e2e/last-green",
+      "members": [
+        "e2e.last-green."
+      ]
+    },
+    {
+      "job": "alert",
+      "context": "e2e/alert",
+      "members": [
+        "e2e.alert."
+      ]
+    }
+  ],
   "leadDispatch": true,
   "dispatchDetailUrl": "https://gh-bridge.nikatru.workers.dev/dispatch-detail",
   "artifactUrl": "https://gh-bridge.nikatru.workers.dev/artifact"

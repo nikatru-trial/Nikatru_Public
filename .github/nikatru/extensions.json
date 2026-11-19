@@ -5,6 +5,7 @@
   "prefix": "nikatru-detail-",
   "slots": 32,
   "sendBudgetS": 360,
+  "redLogBudgetS": 240,
   "gate": {
     "job": "extensions-lane-accounting",
     "context": "extensions",
@@ -74,6 +75,13 @@
       "context": "extensions/scheduled-proof-fresh",
       "members": [
         "extensions.scheduled-proof-fresh."
+      ]
+    },
+    {
+      "job": "e2e-discover",
+      "context": "extensions/e2e-discover",
+      "members": [
+        "extensions.e2e-discover."
       ]
     }
   ],

@@ -2,7 +2,7 @@
 # Do not edit: `node tooling/ci/gen-public-shell.mjs --check` re-generates it and fails on any difference.
 env:
   NIKATRU_PRIVATE_REPO: com-nikatru/Nikatru_Private
-  NIKATRU_SHELL_FINGERPRINT: 78e7878092243c32c1a20a6c5afddbbbccf48b9fa3451eaa43cbddd2d2c19d85
+  NIKATRU_SHELL_FINGERPRINT: 34052d426786a13f1685efbd4a8d0bf3742a5db2b9edef4b8152c3aa49400d9d
 
 name: Part of CI · Migrate PLATFORM_DB
 
@@ -91,6 +91,28 @@ jobs:
             echo "NIKATRU_PR_CREATED_AT=$NIKATRU_P_PR_CREATED_AT"
             echo "NIKATRU_DRAFT=$NIKATRU_P_DRAFT"
           } >> "$GITHUB_ENV"
+      - name: Check out private main's composite actions (generated)
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
+        with:
+          repository: ${{ env.NIKATRU_PRIVATE_REPO }}
+          ref: refs/heads/main
+          path: .nikatru-trusted
+          sparse-checkout: .github/actions
+          ssh-key: ${{ secrets.PRIVATE_DEPLOY_KEY }}
+          persist-credentials: false
+      - name: Keep private main's composite actions out of the branch's tree (generated)
+        id: nikatru-trusted-tree
+        shell: bash
+        working-directory: ${{ github.workspace }}
+        run: |
+          if x="$(git rev-parse --git-path info/exclude 2>/dev/null)"; then mkdir -p "${x%/*}"; grep -qxF '/.nikatru-trusted/' "$x" 2>/dev/null || printf '/.nikatru-trusted/\n' >> "$x"; fi
+          NIKATRU_TRUSTED_GIT="$(command -v git)"; case "$NIKATRU_TRUSTED_GIT" in /*) ;; *) echo "::error::git does not resolve to an absolute path ($NIKATRU_TRUSTED_GIT)"; exit 1 ;; esac
+          tree="$(for v in $(compgen -e); do case "$v" in (GIT_*) unset "$v" ;; esac; done && d="$RUNNER_TEMP/nikatru-trusted.$$.$RANDOM" && [ ! -e "$d.git" ] && [ ! -e "$d.index" ] && export GIT_DIR="$d.git" GIT_INDEX_FILE="$d.index" GIT_CONFIG_GLOBAL=/dev/null GIT_CONFIG_NOSYSTEM=1 && "$NIKATRU_TRUSTED_GIT" init -q --bare --template= "$GIT_DIR" && "$NIKATRU_TRUSTED_GIT" -C .nikatru-trusted --work-tree=. add -A -f .github/actions && "$NIKATRU_TRUSTED_GIT" write-tree --prefix=.github/actions/)"
+          main="$(git -C .nikatru-trusted rev-parse HEAD:.github/actions)"
+          if [ -z "$tree" ] || [ "$tree" != "$main" ]; then echo "::error::.nikatru-trusted: the working tree ($tree) is not private main's .github/actions ($main)"; exit 1; fi
+          rm -rf "$RUNNER_TEMP/nikatru-trusted-actions" && mkdir -p "$RUNNER_TEMP/nikatru-trusted-actions" && cp -R .nikatru-trusted/.github "$RUNNER_TEMP/nikatru-trusted-actions/"
+          echo "tree=$tree" >> "$GITHUB_OUTPUT"
+          echo "git=$NIKATRU_TRUSTED_GIT" >> "$GITHUB_OUTPUT"
       - name: Refuse any ref but main
         run: node tooling/ci/assert-deploy-ref.mjs --allow main
       - name: The shell running this deploy was generated from this commit
@@ -109,21 +131,19 @@ jobs:
           if [ "$PLAN_DEPLOY" = true ] || [ "$PLAN_DECISION" = rollback-hold ]; then apply=true; else apply=false; fi
           echo "apply=${apply}" >> "$GITHUB_OUTPUT"
           echo "migrate: plan decision=${PLAN_DECISION} deploy=${PLAN_DEPLOY} -> apply=${apply}"
-      - name: Check out private main's composite actions (generated)
-        if: steps.migrate.outputs.apply == 'true'
-        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
-        with:
-          repository: ${{ env.NIKATRU_PRIVATE_REPO }}
-          ref: refs/heads/main
-          path: .nikatru-trusted
-          sparse-checkout: .github/actions
-          ssh-key: ${{ secrets.PRIVATE_DEPLOY_KEY }}
-          persist-credentials: false
-      - name: Keep private main's composite actions out of the branch's tree (generated)
+      - name: Verify private main's composite actions are the checked-out tree (generated)
         if: steps.migrate.outputs.apply == 'true'
         shell: bash
         working-directory: ${{ github.workspace }}
-        run: printf '/.nikatru-trusted/\n' >> "$(git rev-parse --git-path info/exclude)"
+        env:
+          NIKATRU_TRUSTED_TREE: ${{ steps.nikatru-trusted-tree.outputs.tree }}
+          NIKATRU_TRUSTED_GIT: ${{ steps.nikatru-trusted-tree.outputs.git }}
+        run: |
+          case "$NIKATRU_TRUSTED_GIT" in /*) ;; *) echo "::error::.nikatru-trusted: no git path was recorded before the job's own steps ($NIKATRU_TRUSTED_GIT)"; exit 1 ;; esac
+          rm -rf .nikatru-trusted/.github && mkdir -p .nikatru-trusted && cp -R "$RUNNER_TEMP/nikatru-trusted-actions/.github" .nikatru-trusted/
+          if x="$(git rev-parse --git-path info/exclude 2>/dev/null)"; then mkdir -p "${x%/*}"; grep -qxF '/.nikatru-trusted/' "$x" 2>/dev/null || printf '/.nikatru-trusted/\n' >> "$x"; fi
+          tree="$(for v in $(compgen -e); do case "$v" in (GIT_*) unset "$v" ;; esac; done && d="$RUNNER_TEMP/nikatru-trusted.$$.$RANDOM" && [ ! -e "$d.git" ] && [ ! -e "$d.index" ] && export GIT_DIR="$d.git" GIT_INDEX_FILE="$d.index" GIT_CONFIG_GLOBAL=/dev/null GIT_CONFIG_NOSYSTEM=1 && "$NIKATRU_TRUSTED_GIT" init -q --bare --template= "$GIT_DIR" && "$NIKATRU_TRUSTED_GIT" -C .nikatru-trusted --work-tree=. add -A -f .github/actions && "$NIKATRU_TRUSTED_GIT" write-tree --prefix=.github/actions/)"
+          if [ -z "$NIKATRU_TRUSTED_TREE" ] || [ "$tree" != "$NIKATRU_TRUSTED_TREE" ]; then echo "::error::.nikatru-trusted is not the tree checked out from private main ($NIKATRU_TRUSTED_TREE, now $tree): a step of this job edited its copy"; exit 1; fi
       - uses: ./.nikatru-trusted/.github/actions/setup-node
         if: steps.migrate.outputs.apply == 'true'
         env:
@@ -149,13 +169,29 @@ jobs:
         env:
           D1_TIME_TRAVEL_OUTPUT: ${{ steps.time_travel.outputs.command-output }}
         run: node tooling/ops/d1-restore-bookmark.mjs --database PLATFORM_DB
+      - name: List PLATFORM_DB's pending migrations
+        id: pending_list
+        if: steps.migrate.outputs.apply == 'true'
+        uses: cloudflare/wrangler-action@953926a2e2182532811c01a25e53647d93bf07c0
+        with:
+          apiToken: ${{ secrets.CLOUDFLARE_API_TOKEN }}
+          wranglerVersion: '4.149.0'
+          accountId: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
+          workingDirectory: services/platform
+          command: d1 migrations list PLATFORM_DB --remote
+      - name: Does a migration wait (the export gate and the apply run only then)
+        id: pending
+        if: steps.migrate.outputs.apply == 'true'
+        env:
+          D1_MIGRATIONS_LIST: ${{ steps.pending_list.outputs.command-output }}
+        run: node tooling/ops/pre-migration-export.mjs --pending
       - name: Name the export bucket (services/platform/wrangler.jsonc BACKUPS_R2)
         id: export_bucket
-        if: steps.migrate.outputs.apply == 'true'
+        if: steps.migrate.outputs.apply == 'true' && steps.pending.outputs.pending == 'true'
         run: node tooling/ops/pre-migration-export.mjs --bucket
       - name: Read the newest export's manifest (the outside-D1 copy before the apply)
         id: export_manifest
-        if: steps.migrate.outputs.apply == 'true'
+        if: steps.migrate.outputs.apply == 'true' && steps.pending.outputs.pending == 'true'
         uses: cloudflare/wrangler-action@953926a2e2182532811c01a25e53647d93bf07c0
         with:
           apiToken: ${{ secrets.CLOUDFLARE_API_TOKEN }}
@@ -165,13 +201,13 @@ jobs:
           command: r2 object get ${{ steps.export_bucket.outputs.bucket }}/manifests/latest.json --remote --pipe
       - name: Refuse the apply without a complete, fresh export
         id: pre_export
-        if: steps.migrate.outputs.apply == 'true'
+        if: steps.migrate.outputs.apply == 'true' && steps.pending.outputs.pending == 'true'
         env:
           PRE_MIGRATION_MANIFEST: ${{ steps.export_manifest.outputs.command-output }}
         run: node tooling/ops/pre-migration-export.mjs
       - name: Record this apply's rollback point in the migration ledger (refuse the apply without it)
         id: ledger
-        if: steps.migrate.outputs.apply == 'true'
+        if: steps.migrate.outputs.apply == 'true' && steps.pending.outputs.pending == 'true'
         env:
           GH_TOKEN: ${{ github.token }}
           PRE_MIGRATION_EXPORT_ID: ${{ steps.pre_export.outputs.export }}

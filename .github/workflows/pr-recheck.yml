@@ -3,7 +3,7 @@
 
 name: PR re-check (gate-only re-judge of the PR head)
 
-run-name: "${{ github.event.client_payload.ref && (startsWith(github.event.client_payload.ref, 'refs/heads/rehearsal/') && '[rehearsal] ' || startsWith(github.event.client_payload.ref, 'refs/heads/club/') && '[club] ' || startsWith(github.event.client_payload.ref, 'refs/heads/train/') && '[club] ' || startsWith(github.event.client_payload.ref, 'refs/heads/integ/') && '[club] ' || startsWith(github.event.client_payload.ref, 'refs/heads/renovate/') && '[bot] ' || startsWith(github.event.client_payload.ref, 'refs/heads/dependabot/') && '[bot] ' || '[single] ') || '' }}PR recheck · ${{ github.event.client_payload.head_sha }} (PR #${{ github.event.client_payload.pr }})"
+run-name: "${{ github.event.client_payload.ref && (startsWith(github.event.client_payload.ref, 'refs/heads/rehearsal/') && '[rehearsal] ' || startsWith(github.event.client_payload.ref, 'refs/heads/club/') && '[club] ' || startsWith(github.event.client_payload.ref, 'refs/heads/train/') && '[club] ' || startsWith(github.event.client_payload.ref, 'refs/heads/integ/') && '[club] ' || startsWith(github.event.client_payload.ref, 'refs/heads/renovate/') && '[bot] ' || startsWith(github.event.client_payload.ref, 'refs/heads/dependabot/') && '[bot] ' || '[single] ') || '[pr] ' }}PR recheck · ${{ github.event.client_payload.head_sha }} (PR #${{ github.event.client_payload.pr }})"
 
 on:
   repository_dispatch:
@@ -37,6 +37,7 @@ jobs:
           NIKATRU_GATE_JOB: ci-gate
           NIKATRU_ROOT: ci.yml
           NIKATRU_RUN_NAME: CI
+          NIKATRU_REHEARSAL_TITLE: REHEARSAL
           NIKATRU_WAIT_S: 900
           NIKATRU_POLL_S: 20
           NIKATRU_OIDC_AUDIENCE: nikatru-gh-bridge-propose
@@ -62,6 +63,7 @@ jobs:
           [[ "${NIKATRU_POLL_S:-}" =~ ^[0-9]{1,4}$ ]] || unknown "NIKATRU_POLL_S is not a number of seconds"
           [ -n "${BRIDGE_READ_SECRET:-}" ] || unknown "BRIDGE_READ_SECRET is not set: the bridge read cannot be signed"
           [[ "${NIKATRU_BRIDGE_READ_URL:-}" =~ ^https://[A-Za-z0-9.-]+/pr-meta$ ]] || [[ "${NIKATRU_BRIDGE_READ_URL:-}" =~ ^http://127\.0\.0\.1:[0-9]+/pr-meta$ ]] || unknown "NIKATRU_BRIDGE_READ_URL is not the bridge's https /pr-meta URL"
+          [[ "${NIKATRU_REHEARSAL_TITLE:-}" =~ ^([A-Z]{1,32})?$ ]] || unknown "NIKATRU_REHEARSAL_TITLE holds a character this script will not pass"
           retry_base_s="${NIKATRU_RETRY_BASE_S:-1}"
           [[ "$retry_base_s" =~ ^[0-9]{1,2}$ ]] || unknown "NIKATRU_RETRY_BASE_S is not a number of seconds"
           audience="${NIKATRU_OIDC_AUDIENCE:-nikatru-gh-bridge-propose}"
@@ -94,13 +96,24 @@ jobs:
             fi
           }
 
+          # THE ONE title rule, for every read that names this PR's run of the head (newest_unfinished_run, newest_head_run):
+          # a title, its kind code `[x] ` stripped, is OWN_TITLE, or OWN_REHEARSAL_TITLE when a rehearsal title is configured.
+          # ⏱ 2026-11-12 (O-RECHECK-MISSES-DISPATCH-RUNS): a rehearsal's run is titled `<name> · REHEARSAL · <sha> (PR #n)`
+          # (ci.yml's run-name, REHEARSAL_RUN_TITLE), so that exact title is this PR's run too; #1347's recheck missed it.
+          # ⏱ 2026-11-18 · integ-m2-1117b r10: main's #1577 newest_head_run carried its own copy of the rule without the
+          # rehearsal title club M2 had added to the other; both reads now call this one jq def (pr-recheck.test pins it).
+          OWN_TITLE="$NIKATRU_RUN_NAME · $NIKATRU_P_HEAD_SHA (PR #$NIKATRU_P_PR)"
+          OWN_REHEARSAL_TITLE=""
+          [ -z "${NIKATRU_REHEARSAL_TITLE:-}" ] || OWN_REHEARSAL_TITLE="$NIKATRU_RUN_NAME · $NIKATRU_REHEARSAL_TITLE · $NIKATRU_P_HEAD_SHA (PR #$NIKATRU_P_PR)"
+          OURS_JQ='def ours: ((. // "") | sub("^\\[[a-z]+\\] "; "")) as $d | ($d == $t or ($t2 != "" and $d == $t2));'
+
           # The newest root run of THIS PR's head that has not completed and whose id is greater than $1
-          # (0 = any), named by its exact title. Prints the id, or nothing. One function for (d) and (e).
+          # (0 = any), named by its exact title (OURS_JQ). Prints the id, or nothing. One function for (d) and (e).
           newest_unfinished_run() {
             local after="$1" st runs found newest=""
             for st in queued in_progress waiting pending requested; do
               runs=$(gh run list --repo "$GITHUB_REPOSITORY" --workflow "$NIKATRU_ROOT" --status "$st" --limit 100 --json databaseId,displayTitle,status) || unknown "the $NIKATRU_ROOT runs that are $st could not be listed"
-              found=$(jq -r --arg t "$NIKATRU_RUN_NAME · $NIKATRU_P_HEAD_SHA (PR #$NIKATRU_P_PR)" --argjson after "$after" 'try ([.[] | select(((.displayTitle // "") | sub("^\\[[a-z]+\\] "; "")) == $t and .status != "completed" and (.databaseId | type) == "number" and .databaseId > $after) | .databaseId] | max // "" | tostring) catch "?"' <<<"$runs") || found="?"
+              found=$(jq -r --arg t "$OWN_TITLE" --arg t2 "$OWN_REHEARSAL_TITLE" --argjson after "$after" "$OURS_JQ"' try ([.[] | select((.displayTitle | ours) and .status != "completed" and (.databaseId | type) == "number" and .databaseId > $after) | .databaseId] | max // "" | tostring) catch "?"' <<<"$runs") || found="?"
               [ "$found" != "?" ] || unknown "the $NIKATRU_ROOT runs that are $st are not a run list"
               if [ -n "$found" ] && { [ -z "$newest" ] || [ "$found" -gt "$newest" ]; }; then newest="$found"; fi
             done
@@ -171,7 +184,7 @@ jobs:
             local page body found id n
             for ((page = 1; page <= HEAD_RUN_PAGES; page++)); do
               body=$(gh_read "the $NIKATRU_ROOT run list (page $page) could not be read" gh api "repos/$GITHUB_REPOSITORY/actions/workflows/$NIKATRU_ROOT/runs?per_page=$HEAD_RUN_PER_PAGE&page=$page") || exit 1
-              found=$(jq -r --arg t "$NIKATRU_RUN_NAME · $NIKATRU_P_HEAD_SHA (PR #$NIKATRU_P_PR)" 'try (if (.workflow_runs | type) == "array" then "\([.workflow_runs[] | select(((.display_title // "") | sub("^\\[[a-z]+\\] "; "")) == $t and (.id | type) == "number") | .id] | max // "")|\(.workflow_runs | length)" else "?" end) catch "?"' <<<"$body") || found="?"
+              found=$(jq -r --arg t "$OWN_TITLE" --arg t2 "$OWN_REHEARSAL_TITLE" "$OURS_JQ"' try (if (.workflow_runs | type) == "array" then "\([.workflow_runs[] | select((.display_title | ours) and (.id | type) == "number") | .id] | max // "")|\(.workflow_runs | length)" else "?" end) catch "?"' <<<"$body") || found="?"
               [ "$found" != "?" ] || unknown "the $NIKATRU_ROOT run list (page $page) is not a run list"
               id="${found%|*}"
               n="${found#*|}"

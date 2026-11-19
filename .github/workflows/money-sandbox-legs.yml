@@ -38,6 +38,11 @@ on:
         required: false
         default: 'true'
         type: string
+      resume:
+        description: "money-sandbox-e2e.yml's resume job output only (JSON); empty walks every unit. Ignored when called as the gate."
+        required: false
+        default: ''
+        type: string
     secrets:
       SUPABASE_URL:
         required: false
@@ -50,8 +55,6 @@ on:
       TEST_ACCOUNT_EMAIL:
         required: false
       TEST_ACCOUNT_EMAIL_RAZORPAY:
-        required: false
-      TEST_ACCOUNT_PASSWORD:
         required: false
       PADDLE_SANDBOX_API_KEY:
         required: false
@@ -82,6 +85,8 @@ jobs:
     timeout-minutes: 5
     outputs:
       money: ${{ steps.plan.outputs.money }}
+      resumed: ${{ steps.resume.outputs.resumed || '[]' }}
+      resume: ${{ steps.resume.outputs.resume }}
     steps:
       - name: Check out the private tree (generated)
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
@@ -162,6 +167,31 @@ jobs:
           NIKATRU_QUIET_EOF
           NIKATRU_SHELL="${BASH:-bash}"; if command -v cygpath >/dev/null 2>&1; then NIKATRU_SHELL="$(cygpath -w "$NIKATRU_SHELL")"; fi
           node "$GITHUB_WORKSPACE/../.nikatru-shell/quiet-step.mjs" --name money-sandbox-legs.plan.1 -- "$NIKATRU_SHELL" -e "$NIKATRU_QUIET"
+      - name: The proof units an earlier run at this commit already proved (a resume), or none
+        id: resume
+        env:
+          GATE: ${{ inputs.gate == true }}
+          RESUME: ${{ inputs.resume }}
+          PIN: ${{ inputs.ref || env.NIKATRU_SHA }}
+        run: |
+          NIKATRU_QUIET="$(mktemp "${RUNNER_TEMP:-/tmp}/nikatru-step.XXXXXX")"
+          cat > "$NIKATRU_QUIET" <<'NIKATRU_QUIET_EOF'
+          set -euo pipefail
+          if [ "$GATE" = "true" ] || [ -z "$RESUME" ]; then
+            echo 'resumed=[]' >> "$GITHUB_OUTPUT"
+            echo "every proof unit walks in this run."
+            exit 0
+          fi
+          if ! printf '%s' "$RESUME" | jq -e --arg pin "$PIN" '(.sha == $pin) and (.of | test("^[1-9][0-9]{0,19}$")) and ((.units // {}) | type == "object") and ((.units // {}) | keys | all(test("^([a-z0-9]+-web|desktop-linux|desktop-windows)$"))) and ([(.units // {})[] | .result == "success"] | all)' > /dev/null; then
+            echo "::error title=Money proof resume::the resume hand-off is not {of, sha = this run's pinned commit, units of known proof units, each success}: FAILING CLOSED, nothing walks."
+            exit 1
+          fi
+          printf 'resumed=%s\n' "$(printf '%s' "$RESUME" | jq -c '(.units // {}) | keys')" >> "$GITHUB_OUTPUT"
+          printf 'resume=%s\n' "$(printf '%s' "$RESUME" | jq -c '.')" >> "$GITHUB_OUTPUT"
+          printf '%s' "$RESUME" | jq -r '"resume of run \(.of) at \(.sha): kept " + ((.units // {}) | keys | join(", "))'
+          NIKATRU_QUIET_EOF
+          NIKATRU_SHELL="${BASH:-bash}"; if command -v cygpath >/dev/null 2>&1; then NIKATRU_SHELL="$(cygpath -w "$NIKATRU_SHELL")"; fi
+          node "$GITHUB_WORKSPACE/../.nikatru-shell/quiet-step.mjs" --name money-sandbox-legs.plan.2 -- "$NIKATRU_SHELL" -e "$NIKATRU_QUIET"
       - name: Hand this job's red detail to the report job, sealed (generated)
         id: nikatru-handoff
         if: always()
@@ -232,16 +262,7 @@ jobs:
             echo "NIKATRU_PR_CREATED_AT=$NIKATRU_P_PR_CREATED_AT"
             echo "NIKATRU_DRAFT=$NIKATRU_P_DRAFT"
           } >> "$GITHUB_ENV"
-      - name: Check out the private tree (generated)
-        if: needs.plan.outputs.money == 'true'
-        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
-        with:
-          repository: ${{ env.NIKATRU_PRIVATE_REPO }}
-          ref: ${{ inputs.ref || inputs.nikatru_sha || (github.event.client_payload.event == 'pull_request' && format('refs/pull/{0}/merge', github.event.client_payload.pr) || github.event.client_payload.sha || 'main') }}
-          ssh-key: ${{ secrets.PRIVATE_DEPLOY_KEY }}
-          persist-credentials: false
       - name: Check out private main's composite actions (generated)
-        if: needs.plan.outputs.money == 'true'
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
         with:
           repository: ${{ env.NIKATRU_PRIVATE_REPO }}
@@ -251,10 +272,39 @@ jobs:
           ssh-key: ${{ secrets.PRIVATE_DEPLOY_KEY }}
           persist-credentials: false
       - name: Keep private main's composite actions out of the branch's tree (generated)
+        id: nikatru-trusted-tree
+        shell: bash
+        working-directory: ${{ github.workspace }}
+        run: |
+          if x="$(git rev-parse --git-path info/exclude 2>/dev/null)"; then mkdir -p "${x%/*}"; grep -qxF '/.nikatru-trusted/' "$x" 2>/dev/null || printf '/.nikatru-trusted/\n' >> "$x"; fi
+          NIKATRU_TRUSTED_GIT="$(command -v git)"; case "$NIKATRU_TRUSTED_GIT" in /*) ;; *) echo "::error::git does not resolve to an absolute path ($NIKATRU_TRUSTED_GIT)"; exit 1 ;; esac
+          tree="$(for v in $(compgen -e); do case "$v" in (GIT_*) unset "$v" ;; esac; done && d="$RUNNER_TEMP/nikatru-trusted.$$.$RANDOM" && [ ! -e "$d.git" ] && [ ! -e "$d.index" ] && export GIT_DIR="$d.git" GIT_INDEX_FILE="$d.index" GIT_CONFIG_GLOBAL=/dev/null GIT_CONFIG_NOSYSTEM=1 && "$NIKATRU_TRUSTED_GIT" init -q --bare --template= "$GIT_DIR" && "$NIKATRU_TRUSTED_GIT" -C .nikatru-trusted --work-tree=. add -A -f .github/actions && "$NIKATRU_TRUSTED_GIT" write-tree --prefix=.github/actions/)"
+          main="$(git -C .nikatru-trusted rev-parse HEAD:.github/actions)"
+          if [ -z "$tree" ] || [ "$tree" != "$main" ]; then echo "::error::.nikatru-trusted: the working tree ($tree) is not private main's .github/actions ($main)"; exit 1; fi
+          rm -rf "$RUNNER_TEMP/nikatru-trusted-actions" && mkdir -p "$RUNNER_TEMP/nikatru-trusted-actions" && cp -R .nikatru-trusted/.github "$RUNNER_TEMP/nikatru-trusted-actions/"
+          echo "tree=$tree" >> "$GITHUB_OUTPUT"
+          echo "git=$NIKATRU_TRUSTED_GIT" >> "$GITHUB_OUTPUT"
+      - name: Check out the private tree (generated)
+        if: needs.plan.outputs.money == 'true'
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
+        with:
+          repository: ${{ env.NIKATRU_PRIVATE_REPO }}
+          ref: ${{ inputs.ref || inputs.nikatru_sha || (github.event.client_payload.event == 'pull_request' && format('refs/pull/{0}/merge', github.event.client_payload.pr) || github.event.client_payload.sha || 'main') }}
+          ssh-key: ${{ secrets.PRIVATE_DEPLOY_KEY }}
+          persist-credentials: false
+      - name: Verify private main's composite actions are the checked-out tree (generated)
         if: needs.plan.outputs.money == 'true'
         shell: bash
         working-directory: ${{ github.workspace }}
-        run: printf '/.nikatru-trusted/\n' >> "$(git rev-parse --git-path info/exclude)"
+        env:
+          NIKATRU_TRUSTED_TREE: ${{ steps.nikatru-trusted-tree.outputs.tree }}
+          NIKATRU_TRUSTED_GIT: ${{ steps.nikatru-trusted-tree.outputs.git }}
+        run: |
+          case "$NIKATRU_TRUSTED_GIT" in /*) ;; *) echo "::error::.nikatru-trusted: no git path was recorded before the job's own steps ($NIKATRU_TRUSTED_GIT)"; exit 1 ;; esac
+          rm -rf .nikatru-trusted/.github && mkdir -p .nikatru-trusted && cp -R "$RUNNER_TEMP/nikatru-trusted-actions/.github" .nikatru-trusted/
+          if x="$(git rev-parse --git-path info/exclude 2>/dev/null)"; then mkdir -p "${x%/*}"; grep -qxF '/.nikatru-trusted/' "$x" 2>/dev/null || printf '/.nikatru-trusted/\n' >> "$x"; fi
+          tree="$(for v in $(compgen -e); do case "$v" in (GIT_*) unset "$v" ;; esac; done && d="$RUNNER_TEMP/nikatru-trusted.$$.$RANDOM" && [ ! -e "$d.git" ] && [ ! -e "$d.index" ] && export GIT_DIR="$d.git" GIT_INDEX_FILE="$d.index" GIT_CONFIG_GLOBAL=/dev/null GIT_CONFIG_NOSYSTEM=1 && "$NIKATRU_TRUSTED_GIT" init -q --bare --template= "$GIT_DIR" && "$NIKATRU_TRUSTED_GIT" -C .nikatru-trusted --work-tree=. add -A -f .github/actions && "$NIKATRU_TRUSTED_GIT" write-tree --prefix=.github/actions/)"
+          if [ -z "$NIKATRU_TRUSTED_TREE" ] || [ "$tree" != "$NIKATRU_TRUSTED_TREE" ]; then echo "::error::.nikatru-trusted is not the tree checked out from private main ($NIKATRU_TRUSTED_TREE, now $tree): a step of this job edited its copy"; exit 1; fi
       - uses: ./.nikatru-trusted/.github/actions/setup-node
         if: needs.plan.outputs.money == 'true'
         env:
@@ -290,7 +340,6 @@ jobs:
           SUPABASE_SERVICE_ROLE_KEY: ${{ secrets.SUPABASE_SERVICE_ROLE_KEY }}
           TEST_ACCOUNT_EMAIL: ${{ secrets.TEST_ACCOUNT_EMAIL }}
           TEST_ACCOUNT_EMAIL_RAZORPAY: ${{ secrets.TEST_ACCOUNT_EMAIL_RAZORPAY }}
-          TEST_ACCOUNT_PASSWORD: ${{ secrets.TEST_ACCOUNT_PASSWORD }}
           PADDLE_SANDBOX_API_KEY: ${{ secrets.PADDLE_SANDBOX_API_KEY }}
           PADDLE_SANDBOX_CLIENT_TOKEN: ${{ secrets.PADDLE_SANDBOX_CLIENT_TOKEN }}
           PADDLE_SANDBOX_NOTIFICATION_SECRET: ${{ secrets.PADDLE_SANDBOX_NOTIFICATION_SECRET }}
@@ -372,8 +421,30 @@ jobs:
             echo "NIKATRU_PR_CREATED_AT=$NIKATRU_P_PR_CREATED_AT"
             echo "NIKATRU_DRAFT=$NIKATRU_P_DRAFT"
           } >> "$GITHUB_ENV"
+      - name: Check out private main's composite actions (generated)
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
+        with:
+          repository: ${{ env.NIKATRU_PRIVATE_REPO }}
+          ref: refs/heads/main
+          path: .nikatru-trusted
+          sparse-checkout: .github/actions
+          ssh-key: ${{ secrets.PRIVATE_DEPLOY_KEY }}
+          persist-credentials: false
+      - name: Keep private main's composite actions out of the branch's tree (generated)
+        id: nikatru-trusted-tree
+        shell: bash
+        working-directory: ${{ github.workspace }}
+        run: |
+          if x="$(git rev-parse --git-path info/exclude 2>/dev/null)"; then mkdir -p "${x%/*}"; grep -qxF '/.nikatru-trusted/' "$x" 2>/dev/null || printf '/.nikatru-trusted/\n' >> "$x"; fi
+          NIKATRU_TRUSTED_GIT="$(command -v git)"; case "$NIKATRU_TRUSTED_GIT" in /*) ;; *) echo "::error::git does not resolve to an absolute path ($NIKATRU_TRUSTED_GIT)"; exit 1 ;; esac
+          tree="$(for v in $(compgen -e); do case "$v" in (GIT_*) unset "$v" ;; esac; done && d="$RUNNER_TEMP/nikatru-trusted.$$.$RANDOM" && [ ! -e "$d.git" ] && [ ! -e "$d.index" ] && export GIT_DIR="$d.git" GIT_INDEX_FILE="$d.index" GIT_CONFIG_GLOBAL=/dev/null GIT_CONFIG_NOSYSTEM=1 && "$NIKATRU_TRUSTED_GIT" init -q --bare --template= "$GIT_DIR" && "$NIKATRU_TRUSTED_GIT" -C .nikatru-trusted --work-tree=. add -A -f .github/actions && "$NIKATRU_TRUSTED_GIT" write-tree --prefix=.github/actions/)"
+          main="$(git -C .nikatru-trusted rev-parse HEAD:.github/actions)"
+          if [ -z "$tree" ] || [ "$tree" != "$main" ]; then echo "::error::.nikatru-trusted: the working tree ($tree) is not private main's .github/actions ($main)"; exit 1; fi
+          rm -rf "$RUNNER_TEMP/nikatru-trusted-actions" && mkdir -p "$RUNNER_TEMP/nikatru-trusted-actions" && cp -R .nikatru-trusted/.github "$RUNNER_TEMP/nikatru-trusted-actions/"
+          echo "tree=$tree" >> "$GITHUB_OUTPUT"
+          echo "git=$NIKATRU_TRUSTED_GIT" >> "$GITHUB_OUTPUT"
       - name: Check out the private tree (generated)
-        if: needs.plan.outputs.money == 'true'
+        if: needs.plan.outputs.money == 'true' && !contains(fromJSON(needs.plan.outputs.resumed || '[]'), format('{0}-web', matrix.rail))
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
         with:
           repository: ${{ env.NIKATRU_PRIVATE_REPO }}
@@ -381,7 +452,7 @@ jobs:
           ssh-key: ${{ secrets.PRIVATE_DEPLOY_KEY }}
           persist-credentials: false
       - name: "Check out the private history beside it (every branch's commits, no file) (generated: the private tree)"
-        if: needs.plan.outputs.money == 'true'
+        if: needs.plan.outputs.money == 'true' && !contains(fromJSON(needs.plan.outputs.resumed || '[]'), format('{0}-web', matrix.rail))
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
         with:
           repository: ${{ env.NIKATRU_PRIVATE_REPO }}
@@ -392,44 +463,40 @@ jobs:
           sparse-checkout: .github/ISSUE_TEMPLATE
           ssh-key: ${{ secrets.PRIVATE_DEPLOY_KEY }}
           persist-credentials: false
-      - name: Check out private main's composite actions (generated)
-        if: needs.plan.outputs.money == 'true'
-        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
-        with:
-          repository: ${{ env.NIKATRU_PRIVATE_REPO }}
-          ref: refs/heads/main
-          path: .nikatru-trusted
-          sparse-checkout: .github/actions
-          ssh-key: ${{ secrets.PRIVATE_DEPLOY_KEY }}
-          persist-credentials: false
-      - name: Keep private main's composite actions out of the branch's tree (generated)
-        if: needs.plan.outputs.money == 'true'
+      - name: Verify private main's composite actions are the checked-out tree (generated)
+        if: needs.plan.outputs.money == 'true' && !contains(fromJSON(needs.plan.outputs.resumed || '[]'), format('{0}-web', matrix.rail))
         shell: bash
         working-directory: ${{ github.workspace }}
-        run: printf '/.nikatru-trusted/\n' >> "$(git rev-parse --git-path info/exclude)"
+        env:
+          NIKATRU_TRUSTED_TREE: ${{ steps.nikatru-trusted-tree.outputs.tree }}
+          NIKATRU_TRUSTED_GIT: ${{ steps.nikatru-trusted-tree.outputs.git }}
+        run: |
+          case "$NIKATRU_TRUSTED_GIT" in /*) ;; *) echo "::error::.nikatru-trusted: no git path was recorded before the job's own steps ($NIKATRU_TRUSTED_GIT)"; exit 1 ;; esac
+          rm -rf .nikatru-trusted/.github && mkdir -p .nikatru-trusted && cp -R "$RUNNER_TEMP/nikatru-trusted-actions/.github" .nikatru-trusted/
+          if x="$(git rev-parse --git-path info/exclude 2>/dev/null)"; then mkdir -p "${x%/*}"; grep -qxF '/.nikatru-trusted/' "$x" 2>/dev/null || printf '/.nikatru-trusted/\n' >> "$x"; fi
+          tree="$(for v in $(compgen -e); do case "$v" in (GIT_*) unset "$v" ;; esac; done && d="$RUNNER_TEMP/nikatru-trusted.$$.$RANDOM" && [ ! -e "$d.git" ] && [ ! -e "$d.index" ] && export GIT_DIR="$d.git" GIT_INDEX_FILE="$d.index" GIT_CONFIG_GLOBAL=/dev/null GIT_CONFIG_NOSYSTEM=1 && "$NIKATRU_TRUSTED_GIT" init -q --bare --template= "$GIT_DIR" && "$NIKATRU_TRUSTED_GIT" -C .nikatru-trusted --work-tree=. add -A -f .github/actions && "$NIKATRU_TRUSTED_GIT" write-tree --prefix=.github/actions/)"
+          if [ -z "$NIKATRU_TRUSTED_TREE" ] || [ "$tree" != "$NIKATRU_TRUSTED_TREE" ]; then echo "::error::.nikatru-trusted is not the tree checked out from private main ($NIKATRU_TRUSTED_TREE, now $tree): a step of this job edited its copy"; exit 1; fi
       - uses: ./.nikatru-trusted/.github/actions/setup-node
-        if: needs.plan.outputs.money == 'true'
+        if: needs.plan.outputs.money == 'true' && !contains(fromJSON(needs.plan.outputs.resumed || '[]'), format('{0}-web', matrix.rail))
         env:
           NIKATRU_REF: ${{ github.event.client_payload.ref || 'refs/heads/main' }}
           NIKATRU_EVENT_NAME: ${{ github.event.client_payload.event || github.event_name }}
           NIKATRU_PR: ${{ github.event.client_payload.pr }}
-      - name: Check out private main's composite actions (generated)
-        if: needs.plan.outputs.money == 'true'
-        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
-        with:
-          repository: ${{ env.NIKATRU_PRIVATE_REPO }}
-          ref: refs/heads/main
-          path: .nikatru-trusted
-          sparse-checkout: .github/actions
-          ssh-key: ${{ secrets.PRIVATE_DEPLOY_KEY }}
-          persist-credentials: false
-      - name: Keep private main's composite actions out of the branch's tree (generated)
-        if: needs.plan.outputs.money == 'true'
+      - name: Verify private main's composite actions are the checked-out tree (generated)
+        if: needs.plan.outputs.money == 'true' && !contains(fromJSON(needs.plan.outputs.resumed || '[]'), format('{0}-web', matrix.rail))
         shell: bash
         working-directory: ${{ github.workspace }}
-        run: printf '/.nikatru-trusted/\n' >> "$(git rev-parse --git-path info/exclude)"
+        env:
+          NIKATRU_TRUSTED_TREE: ${{ steps.nikatru-trusted-tree.outputs.tree }}
+          NIKATRU_TRUSTED_GIT: ${{ steps.nikatru-trusted-tree.outputs.git }}
+        run: |
+          case "$NIKATRU_TRUSTED_GIT" in /*) ;; *) echo "::error::.nikatru-trusted: no git path was recorded before the job's own steps ($NIKATRU_TRUSTED_GIT)"; exit 1 ;; esac
+          rm -rf .nikatru-trusted/.github && mkdir -p .nikatru-trusted && cp -R "$RUNNER_TEMP/nikatru-trusted-actions/.github" .nikatru-trusted/
+          if x="$(git rev-parse --git-path info/exclude 2>/dev/null)"; then mkdir -p "${x%/*}"; grep -qxF '/.nikatru-trusted/' "$x" 2>/dev/null || printf '/.nikatru-trusted/\n' >> "$x"; fi
+          tree="$(for v in $(compgen -e); do case "$v" in (GIT_*) unset "$v" ;; esac; done && d="$RUNNER_TEMP/nikatru-trusted.$$.$RANDOM" && [ ! -e "$d.git" ] && [ ! -e "$d.index" ] && export GIT_DIR="$d.git" GIT_INDEX_FILE="$d.index" GIT_CONFIG_GLOBAL=/dev/null GIT_CONFIG_NOSYSTEM=1 && "$NIKATRU_TRUSTED_GIT" init -q --bare --template= "$GIT_DIR" && "$NIKATRU_TRUSTED_GIT" -C .nikatru-trusted --work-tree=. add -A -f .github/actions && "$NIKATRU_TRUSTED_GIT" write-tree --prefix=.github/actions/)"
+          if [ -z "$NIKATRU_TRUSTED_TREE" ] || [ "$tree" != "$NIKATRU_TRUSTED_TREE" ]; then echo "::error::.nikatru-trusted is not the tree checked out from private main ($NIKATRU_TRUSTED_TREE, now $tree): a step of this job edited its copy"; exit 1; fi
       - uses: ./.nikatru-trusted/.github/actions/setup-flutter
-        if: needs.plan.outputs.money == 'true'
+        if: needs.plan.outputs.money == 'true' && !contains(fromJSON(needs.plan.outputs.resumed || '[]'), format('{0}-web', matrix.rail))
         with:
           cache: 'false'
         env:
@@ -437,32 +504,33 @@ jobs:
           NIKATRU_EVENT_NAME: ${{ github.event.client_payload.event || github.event_name }}
           NIKATRU_PR: ${{ github.event.client_payload.pr }}
       - name: Resolve the workspace
-        if: needs.plan.outputs.money == 'true'
+        if: needs.plan.outputs.money == 'true' && !contains(fromJSON(needs.plan.outputs.resumed || '[]'), format('{0}-web', matrix.rail))
         run: flutter pub get --enforce-lockfile
       - name: Build the web app against the sandbox Workers
-        if: needs.plan.outputs.money == 'true'
+        if: needs.plan.outputs.money == 'true' && !contains(fromJSON(needs.plan.outputs.resumed || '[]'), format('{0}-web', matrix.rail))
         env:
           SUPABASE_URL: ${{ secrets.SUPABASE_URL }}
           SUPABASE_ANON_KEY: ${{ secrets.SUPABASE_ANON_KEY }}
         run: node tooling/e2e/money/build-web.mjs --sha "$NIKATRU_SHA"
       - name: Install the fleet Playwright (lockfile)
-        if: needs.plan.outputs.money == 'true'
+        if: needs.plan.outputs.money == 'true' && !contains(fromJSON(needs.plan.outputs.resumed || '[]'), format('{0}-web', matrix.rail))
         working-directory: _playwright
         run: node "$GITHUB_WORKSPACE/tooling/ops/npm-ci-retry.mjs" -- npm ci --ignore-scripts --no-audit --no-fund
       - name: Open the paywall on the SANDBOX Worker only
-        if: needs.plan.outputs.money == 'true'
+        if: needs.plan.outputs.money == 'true' && !contains(fromJSON(needs.plan.outputs.resumed || '[]'), format('{0}-web', matrix.rail))
         env:
           SANDBOX_ADMIN_ROUTE_SECRET: ${{ secrets.SANDBOX_ADMIN_ROUTE_SECRET }}
         run: node tooling/e2e/money/sandbox-paywall.mjs --open --unless-superseded --history .money-history --by "$GITHUB_RUN_ID"
       - name: The harness, the sandbox Worker and the pinned commit are one commit
-        if: needs.plan.outputs.money == 'true'
+        if: needs.plan.outputs.money == 'true' && !contains(fromJSON(needs.plan.outputs.resumed || '[]'), format('{0}-web', matrix.rail))
         run: node tooling/e2e/money/preflight.mjs --one-commit "$NIKATRU_SHA"
       - name: Walk every money leg on this rail
         id: walk
-        if: needs.plan.outputs.money == 'true'
+        if: needs.plan.outputs.money == 'true' && !contains(fromJSON(needs.plan.outputs.resumed || '[]'), format('{0}-web', matrix.rail))
         timeout-minutes: ${{ matrix.rail == 'razorpay' && 30 || 45 }}
         env:
           RAIL: ${{ matrix.rail }}
+          RAIL_ACCOUNT: ${{ matrix.account }}
           APP: subscriptiontracker
           MONEY_EVIDENCE_DIR: ${{ runner.temp }}/money-evidence
           SANDBOX_ADMIN_ROUTE_SECRET: ${{ secrets.SANDBOX_ADMIN_ROUTE_SECRET }}
@@ -471,7 +539,6 @@ jobs:
           SUPABASE_SERVICE_ROLE_KEY: ${{ secrets.SUPABASE_SERVICE_ROLE_KEY }}
           TEST_ACCOUNT_EMAIL: ${{ secrets.TEST_ACCOUNT_EMAIL }}
           TEST_ACCOUNT_EMAIL_RAZORPAY: ${{ secrets.TEST_ACCOUNT_EMAIL_RAZORPAY }}
-          TEST_ACCOUNT_PASSWORD: ${{ secrets.TEST_ACCOUNT_PASSWORD }}
           PADDLE_SANDBOX_API_KEY: ${{ secrets.PADDLE_SANDBOX_API_KEY }}
           PADDLE_SANDBOX_CLIENT_TOKEN: ${{ secrets.PADDLE_SANDBOX_CLIENT_TOKEN }}
           PADDLE_SANDBOX_NOTIFICATION_SECRET: ${{ secrets.PADDLE_SANDBOX_NOTIFICATION_SECRET }}
@@ -488,6 +555,8 @@ jobs:
           status=0
           out="$RUNNER_TEMP/throwaway-${RAIL}.out"
           : > "$out"
+          # why: the start BEFORE the throwaway is provisioned, so a cancel from here on still has its purge (next step).
+          walk_started="$(date +%s)"; echo "$walk_started" > "$RUNNER_TEMP/walk-started-${RAIL}"
           if ! GITHUB_OUTPUT="$out" node tooling/e2e/provision_user.mjs; then
             echo "::error title=Money sandbox proof (${RAIL})::the throwaway second account could not be provisioned; the ${RAIL} legs did not run."
             exit 1
@@ -501,17 +570,44 @@ jobs:
           # resolveMoneyConsentLog). Removed first, so a log this rail did not write is never read.
           consent_log="$RUNNER_TEMP/money-consent-${RAIL}.log"
           rm -f "$consent_log"
-          MONEY_RAIL="$RAIL" THROWAWAY_EMAIL="$email" THROWAWAY_PASSWORD="$password" MONEY_CHROME="$chrome" MONEY_CONSENT_LOG="$consent_log" \
-            node --import "$SPAWN_CEILING" --test-timeout=600000 --test --test-reporter=spec tooling/e2e/money/money-sandbox.spec.mjs || status=1
-          uid="$(sed -n 's/^user_id=//p' "$out")"
-          # why: ALWAYS after the spec, a user or not: the consent rows belong to the browser profiles, not to the user.
-          E2E_USER_ID="$uid" E2E_APP_ID=subscriptiontracker E2E_MONEY_CONSENT_LOG="$consent_log" PLATFORM_D1_DATABASE_ID="$(node tooling/e2e/money/preflight.mjs --print-sandbox-platform-db)" \
-            node tooling/e2e/purge.mjs || status=1
+          # why: the before-walk purge, then the spec under the rail's bound, as ONE chain: a purge that could not finish
+          # leaves A Pro, so this rail's legs are NOT walked (red, named by the purge); the throwaway's purge below still
+          # runs. One line, so this step stays under the inline-run standard (24 code lines, O-STD-INLINE-RUN-CEILING).
+          node tooling/e2e/money/leftovers.mjs --before-walk --budget-minutes 3 --email-var "$RAIL_ACCOUNT" && MONEY_RAIL="$RAIL" THROWAWAY_EMAIL="$email" THROWAWAY_PASSWORD="$password" MONEY_CHROME="$chrome" MONEY_CONSENT_LOG="$consent_log" node tooling/e2e/money/rail-bound.mjs --rail "$RAIL" -- node --import "$SPAWN_CEILING" --test-timeout=600000 --test --test-reporter=spec tooling/e2e/money/money-sandbox.spec.mjs || status=1
           # why: the verdict job reads this rail's own key: a proof that never reached this line proved nothing.
           echo "walked_${RAIL}=true" >> "$GITHUB_OUTPUT"
           exit "$status"
+      - name: End every plan this rail's walk bought, and purge its throwaway (always)
+        if: ${{ (always()) && needs.plan.outputs.money == 'true' && !contains(fromJSON(needs.plan.outputs.resumed || '[]'), format('{0}-web', matrix.rail)) }}
+        timeout-minutes: 10
+        env:
+          RAIL: ${{ matrix.rail }}
+          RAIL_ACCOUNT: ${{ matrix.account }}
+          SANDBOX_ADMIN_ROUTE_SECRET: ${{ secrets.SANDBOX_ADMIN_ROUTE_SECRET }}
+          SUPABASE_URL: ${{ secrets.SUPABASE_URL }}
+          SUPABASE_ANON_KEY: ${{ secrets.SUPABASE_ANON_KEY }}
+          SUPABASE_SERVICE_ROLE_KEY: ${{ secrets.SUPABASE_SERVICE_ROLE_KEY }}
+          TEST_ACCOUNT_EMAIL: ${{ secrets.TEST_ACCOUNT_EMAIL }}
+          TEST_ACCOUNT_EMAIL_RAZORPAY: ${{ secrets.TEST_ACCOUNT_EMAIL_RAZORPAY }}
+          PADDLE_SANDBOX_API_KEY: ${{ secrets.PADDLE_SANDBOX_API_KEY }}
+          RAZORPAY_TEST_KEY_ID: ${{ secrets.RAZORPAY_TEST_KEY_ID }}
+          RAZORPAY_TEST_KEY_SECRET: ${{ secrets.RAZORPAY_TEST_KEY_SECRET }}
+        run: |
+          set -uo pipefail
+          status=0
+          started="$RUNNER_TEMP/walk-started-${RAIL}"
+          if [ ! -s "$started" ]; then
+            echo "the ${RAIL} walk never reached its start (no start file): it provisioned no throwaway and bought no plan, none to end."
+          else
+            uid="$(sed -n 's/^user_id=//p' "$RUNNER_TEMP/throwaway-${RAIL}.out" 2>/dev/null)"
+            node tooling/e2e/money/leftovers.mjs --after-walk --since "$(cat "$started")" ${uid:+--user-id "$uid"} --budget-minutes 3 --email-var "$RAIL_ACCOUNT" || status=1
+            # why: a user or not: the consent rows belong to the browser profiles, not to the user.
+            E2E_USER_ID="$uid" E2E_APP_ID=subscriptiontracker E2E_MONEY_CONSENT_LOG="$RUNNER_TEMP/money-consent-${RAIL}.log" PLATFORM_D1_DATABASE_ID="$(node tooling/e2e/money/preflight.mjs --print-sandbox-platform-db)" \
+              node tooling/e2e/purge.mjs || status=1
+          fi
+          exit "$status"
       - name: "Money walk fallbacks: ${{ steps.walk.outputs.fallbacks || 'none' }}"
-        if: ${{ (always()) && needs.plan.outputs.money == 'true' }}
+        if: ${{ (always()) && needs.plan.outputs.money == 'true' && !contains(fromJSON(needs.plan.outputs.resumed || '[]'), format('{0}-web', matrix.rail)) }}
         env:
           FALLBACKS: ${{ steps.walk.outputs.fallbacks }}
         run: |
@@ -522,7 +618,7 @@ jobs:
             echo "no lost-event fallback carried this walk"
           fi
       - name: This rail's leg verdicts into the job summary (no ids)
-        if: ${{ (always()) && needs.plan.outputs.money == 'true' }}
+        if: ${{ (always()) && needs.plan.outputs.money == 'true' && !contains(fromJSON(needs.plan.outputs.resumed || '[]'), format('{0}-web', matrix.rail)) }}
         env:
           RAIL: ${{ matrix.rail }}
         run: |
@@ -539,7 +635,7 @@ jobs:
             fs.appendFileSync(process.env.GITHUB_STEP_SUMMARY, out.join("\n") + "\n");
           '
       - name: Store money-sandbox-evidence-${{ matrix.rail }} in the bridge's private home (generated)
-        if: ${{ (always()) && needs.plan.outputs.money == 'true' && inputs.evidence != 'false' }}
+        if: ${{ (always()) && needs.plan.outputs.money == 'true' && !contains(fromJSON(needs.plan.outputs.resumed || '[]'), format('{0}-web', matrix.rail)) && inputs.evidence != 'false' }}
         shell: bash
         working-directory: ${{ github.workspace }}
         env:
@@ -550,10 +646,33 @@ jobs:
           BRIDGE_ARTIFACT_SECRET: ${{ secrets.BRIDGE_ARTIFACT_SECRET }}
           NIKATRU_BRIDGE_ARTIFACT_URL: https://gh-bridge.nikatru.workers.dev/artifact
         run: node tooling/ops/bridge-artifact.mjs upload
+      - name: This rail's leg results (a per-run record, never evidence)
+        if: ${{ (always()) && needs.plan.outputs.money == 'true' && !contains(fromJSON(needs.plan.outputs.resumed || '[]'), format('{0}-web', matrix.rail)) }}
+        env:
+          RAIL: ${{ matrix.rail }}
+          PROOF_SHA: ${{ inputs.ref || env.NIKATRU_SHA }}
+        run: |
+          if grep -q -- "'--leg-results'" tooling/e2e/money/walked.mjs; then
+            node tooling/e2e/money/walked.mjs --leg-results --unit "${RAIL}-web" --evidence-dir "$RUNNER_TEMP/money-evidence" --out "$RUNNER_TEMP/money-leg-results"
+          else
+            echo "::warning title=Money leg results::this checkout predates walked.mjs --leg-results: no leg-results record for ${RAIL}-web."
+          fi
+      - name: Store money-leg-results-${{ matrix.rail }}-web in the bridge's private home (generated)
+        if: ${{ (always()) && needs.plan.outputs.money == 'true' && !contains(fromJSON(needs.plan.outputs.resumed || '[]'), format('{0}-web', matrix.rail)) }}
+        shell: bash
+        working-directory: ${{ github.workspace }}
+        env:
+          NIKATRU_PATHS: ${{ runner.temp }}/money-leg-results/
+          NIKATRU_ARTIFACT_NAME: money-leg-results-${{ matrix.rail }}-web
+          NIKATRU_IF_NO_FILES: warn
+          BRIDGE_ARTIFACT_SECRET: ${{ secrets.BRIDGE_ARTIFACT_SECRET }}
+          NIKATRU_BRIDGE_ARTIFACT_URL: https://gh-bridge.nikatru.workers.dev/artifact
+        run: node tooling/ops/bridge-artifact.mjs upload
 
   desktop-linux:
     name: Desktop money legs — Linux app under xvfb (sandbox)
     needs: [plan, preflight, legs]
+    if: always()
     outputs:
       walked: ${{ steps.walk.outputs.walked }}
     runs-on: ubuntu-24.04
@@ -562,6 +681,9 @@ jobs:
     concurrency:
       group: ${{ needs.plan.outputs.money == 'true' && 'money-sandbox-legs' || format('money-sandbox-noop-{0}-{1}', github.run_id, github.job) }}
       cancel-in-progress: false
+    permissions:
+      contents: read
+      id-token: write
     steps:
       - name: Check out the private tree (generated)
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
@@ -602,8 +724,30 @@ jobs:
             echo "NIKATRU_PR_CREATED_AT=$NIKATRU_P_PR_CREATED_AT"
             echo "NIKATRU_DRAFT=$NIKATRU_P_DRAFT"
           } >> "$GITHUB_ENV"
+      - name: Check out private main's composite actions (generated)
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
+        with:
+          repository: ${{ env.NIKATRU_PRIVATE_REPO }}
+          ref: refs/heads/main
+          path: .nikatru-trusted
+          sparse-checkout: .github/actions
+          ssh-key: ${{ secrets.PRIVATE_DEPLOY_KEY }}
+          persist-credentials: false
+      - name: Keep private main's composite actions out of the branch's tree (generated)
+        id: nikatru-trusted-tree
+        shell: bash
+        working-directory: ${{ github.workspace }}
+        run: |
+          if x="$(git rev-parse --git-path info/exclude 2>/dev/null)"; then mkdir -p "${x%/*}"; grep -qxF '/.nikatru-trusted/' "$x" 2>/dev/null || printf '/.nikatru-trusted/\n' >> "$x"; fi
+          NIKATRU_TRUSTED_GIT="$(command -v git)"; case "$NIKATRU_TRUSTED_GIT" in /*) ;; *) echo "::error::git does not resolve to an absolute path ($NIKATRU_TRUSTED_GIT)"; exit 1 ;; esac
+          tree="$(for v in $(compgen -e); do case "$v" in (GIT_*) unset "$v" ;; esac; done && d="$RUNNER_TEMP/nikatru-trusted.$$.$RANDOM" && [ ! -e "$d.git" ] && [ ! -e "$d.index" ] && export GIT_DIR="$d.git" GIT_INDEX_FILE="$d.index" GIT_CONFIG_GLOBAL=/dev/null GIT_CONFIG_NOSYSTEM=1 && "$NIKATRU_TRUSTED_GIT" init -q --bare --template= "$GIT_DIR" && "$NIKATRU_TRUSTED_GIT" -C .nikatru-trusted --work-tree=. add -A -f .github/actions && "$NIKATRU_TRUSTED_GIT" write-tree --prefix=.github/actions/)"
+          main="$(git -C .nikatru-trusted rev-parse HEAD:.github/actions)"
+          if [ -z "$tree" ] || [ "$tree" != "$main" ]; then echo "::error::.nikatru-trusted: the working tree ($tree) is not private main's .github/actions ($main)"; exit 1; fi
+          rm -rf "$RUNNER_TEMP/nikatru-trusted-actions" && mkdir -p "$RUNNER_TEMP/nikatru-trusted-actions" && cp -R .nikatru-trusted/.github "$RUNNER_TEMP/nikatru-trusted-actions/"
+          echo "tree=$tree" >> "$GITHUB_OUTPUT"
+          echo "git=$NIKATRU_TRUSTED_GIT" >> "$GITHUB_OUTPUT"
       - name: Check out the private tree (generated)
-        if: needs.plan.outputs.money == 'true'
+        if: success() && !cancelled() && needs.plan.outputs.money == 'true' && needs.preflight.result == 'success' && !contains(fromJSON(needs.plan.outputs.resumed || '[]'), 'desktop-linux')
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
         with:
           repository: ${{ env.NIKATRU_PRIVATE_REPO }}
@@ -611,7 +755,7 @@ jobs:
           ssh-key: ${{ secrets.PRIVATE_DEPLOY_KEY }}
           persist-credentials: false
       - name: "Check out the private history beside it (every branch's commits, no file) (generated: the private tree)"
-        if: needs.plan.outputs.money == 'true'
+        if: success() && !cancelled() && needs.plan.outputs.money == 'true' && needs.preflight.result == 'success' && !contains(fromJSON(needs.plan.outputs.resumed || '[]'), 'desktop-linux')
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
         with:
           repository: ${{ env.NIKATRU_PRIVATE_REPO }}
@@ -622,44 +766,40 @@ jobs:
           sparse-checkout: .github/ISSUE_TEMPLATE
           ssh-key: ${{ secrets.PRIVATE_DEPLOY_KEY }}
           persist-credentials: false
-      - name: Check out private main's composite actions (generated)
-        if: needs.plan.outputs.money == 'true'
-        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
-        with:
-          repository: ${{ env.NIKATRU_PRIVATE_REPO }}
-          ref: refs/heads/main
-          path: .nikatru-trusted
-          sparse-checkout: .github/actions
-          ssh-key: ${{ secrets.PRIVATE_DEPLOY_KEY }}
-          persist-credentials: false
-      - name: Keep private main's composite actions out of the branch's tree (generated)
-        if: needs.plan.outputs.money == 'true'
+      - name: Verify private main's composite actions are the checked-out tree (generated)
+        if: success() && !cancelled() && needs.plan.outputs.money == 'true' && needs.preflight.result == 'success' && !contains(fromJSON(needs.plan.outputs.resumed || '[]'), 'desktop-linux')
         shell: bash
         working-directory: ${{ github.workspace }}
-        run: printf '/.nikatru-trusted/\n' >> "$(git rev-parse --git-path info/exclude)"
+        env:
+          NIKATRU_TRUSTED_TREE: ${{ steps.nikatru-trusted-tree.outputs.tree }}
+          NIKATRU_TRUSTED_GIT: ${{ steps.nikatru-trusted-tree.outputs.git }}
+        run: |
+          case "$NIKATRU_TRUSTED_GIT" in /*) ;; *) echo "::error::.nikatru-trusted: no git path was recorded before the job's own steps ($NIKATRU_TRUSTED_GIT)"; exit 1 ;; esac
+          rm -rf .nikatru-trusted/.github && mkdir -p .nikatru-trusted && cp -R "$RUNNER_TEMP/nikatru-trusted-actions/.github" .nikatru-trusted/
+          if x="$(git rev-parse --git-path info/exclude 2>/dev/null)"; then mkdir -p "${x%/*}"; grep -qxF '/.nikatru-trusted/' "$x" 2>/dev/null || printf '/.nikatru-trusted/\n' >> "$x"; fi
+          tree="$(for v in $(compgen -e); do case "$v" in (GIT_*) unset "$v" ;; esac; done && d="$RUNNER_TEMP/nikatru-trusted.$$.$RANDOM" && [ ! -e "$d.git" ] && [ ! -e "$d.index" ] && export GIT_DIR="$d.git" GIT_INDEX_FILE="$d.index" GIT_CONFIG_GLOBAL=/dev/null GIT_CONFIG_NOSYSTEM=1 && "$NIKATRU_TRUSTED_GIT" init -q --bare --template= "$GIT_DIR" && "$NIKATRU_TRUSTED_GIT" -C .nikatru-trusted --work-tree=. add -A -f .github/actions && "$NIKATRU_TRUSTED_GIT" write-tree --prefix=.github/actions/)"
+          if [ -z "$NIKATRU_TRUSTED_TREE" ] || [ "$tree" != "$NIKATRU_TRUSTED_TREE" ]; then echo "::error::.nikatru-trusted is not the tree checked out from private main ($NIKATRU_TRUSTED_TREE, now $tree): a step of this job edited its copy"; exit 1; fi
       - uses: ./.nikatru-trusted/.github/actions/setup-node
-        if: needs.plan.outputs.money == 'true'
+        if: success() && !cancelled() && needs.plan.outputs.money == 'true' && needs.preflight.result == 'success' && !contains(fromJSON(needs.plan.outputs.resumed || '[]'), 'desktop-linux')
         env:
           NIKATRU_REF: ${{ github.event.client_payload.ref || 'refs/heads/main' }}
           NIKATRU_EVENT_NAME: ${{ github.event.client_payload.event || github.event_name }}
           NIKATRU_PR: ${{ github.event.client_payload.pr }}
-      - name: Check out private main's composite actions (generated)
-        if: needs.plan.outputs.money == 'true'
-        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
-        with:
-          repository: ${{ env.NIKATRU_PRIVATE_REPO }}
-          ref: refs/heads/main
-          path: .nikatru-trusted
-          sparse-checkout: .github/actions
-          ssh-key: ${{ secrets.PRIVATE_DEPLOY_KEY }}
-          persist-credentials: false
-      - name: Keep private main's composite actions out of the branch's tree (generated)
-        if: needs.plan.outputs.money == 'true'
+      - name: Verify private main's composite actions are the checked-out tree (generated)
+        if: success() && !cancelled() && needs.plan.outputs.money == 'true' && needs.preflight.result == 'success' && !contains(fromJSON(needs.plan.outputs.resumed || '[]'), 'desktop-linux')
         shell: bash
         working-directory: ${{ github.workspace }}
-        run: printf '/.nikatru-trusted/\n' >> "$(git rev-parse --git-path info/exclude)"
+        env:
+          NIKATRU_TRUSTED_TREE: ${{ steps.nikatru-trusted-tree.outputs.tree }}
+          NIKATRU_TRUSTED_GIT: ${{ steps.nikatru-trusted-tree.outputs.git }}
+        run: |
+          case "$NIKATRU_TRUSTED_GIT" in /*) ;; *) echo "::error::.nikatru-trusted: no git path was recorded before the job's own steps ($NIKATRU_TRUSTED_GIT)"; exit 1 ;; esac
+          rm -rf .nikatru-trusted/.github && mkdir -p .nikatru-trusted && cp -R "$RUNNER_TEMP/nikatru-trusted-actions/.github" .nikatru-trusted/
+          if x="$(git rev-parse --git-path info/exclude 2>/dev/null)"; then mkdir -p "${x%/*}"; grep -qxF '/.nikatru-trusted/' "$x" 2>/dev/null || printf '/.nikatru-trusted/\n' >> "$x"; fi
+          tree="$(for v in $(compgen -e); do case "$v" in (GIT_*) unset "$v" ;; esac; done && d="$RUNNER_TEMP/nikatru-trusted.$$.$RANDOM" && [ ! -e "$d.git" ] && [ ! -e "$d.index" ] && export GIT_DIR="$d.git" GIT_INDEX_FILE="$d.index" GIT_CONFIG_GLOBAL=/dev/null GIT_CONFIG_NOSYSTEM=1 && "$NIKATRU_TRUSTED_GIT" init -q --bare --template= "$GIT_DIR" && "$NIKATRU_TRUSTED_GIT" -C .nikatru-trusted --work-tree=. add -A -f .github/actions && "$NIKATRU_TRUSTED_GIT" write-tree --prefix=.github/actions/)"
+          if [ -z "$NIKATRU_TRUSTED_TREE" ] || [ "$tree" != "$NIKATRU_TRUSTED_TREE" ]; then echo "::error::.nikatru-trusted is not the tree checked out from private main ($NIKATRU_TRUSTED_TREE, now $tree): a step of this job edited its copy"; exit 1; fi
       - uses: ./.nikatru-trusted/.github/actions/setup-flutter
-        if: needs.plan.outputs.money == 'true'
+        if: success() && !cancelled() && needs.plan.outputs.money == 'true' && needs.preflight.result == 'success' && !contains(fromJSON(needs.plan.outputs.resumed || '[]'), 'desktop-linux')
         with:
           cache: 'false'
         env:
@@ -667,7 +807,7 @@ jobs:
           NIKATRU_EVENT_NAME: ${{ github.event.client_payload.event || github.event_name }}
           NIKATRU_PR: ${{ github.event.client_payload.pr }}
       - name: Linux build and session deps
-        if: needs.plan.outputs.money == 'true'
+        if: success() && !cancelled() && needs.plan.outputs.money == 'true' && needs.preflight.result == 'success' && !contains(fromJSON(needs.plan.outputs.resumed || '[]'), 'desktop-linux')
         timeout-minutes: 9
         run: |
           # why the guard: ⏱ 2026-10-23 (lead, run 39978965907) — a branch run builds a checkout that may predate #981's
@@ -688,32 +828,32 @@ jobs:
             libsecret-1-dev libjsoncpp-dev libcurl4-openssl-dev \
             xvfb gnome-keyring dbus-x11 libsecret-tools
       - name: Enable the Linux desktop target
-        if: needs.plan.outputs.money == 'true'
+        if: success() && !cancelled() && needs.plan.outputs.money == 'true' && needs.preflight.result == 'success' && !contains(fromJSON(needs.plan.outputs.resumed || '[]'), 'desktop-linux')
         run: flutter config --enable-linux-desktop
       - name: Resolve the workspace
-        if: needs.plan.outputs.money == 'true'
+        if: success() && !cancelled() && needs.plan.outputs.money == 'true' && needs.preflight.result == 'success' && !contains(fromJSON(needs.plan.outputs.resumed || '[]'), 'desktop-linux')
         run: flutter pub get --enforce-lockfile
       - name: Install the fleet Playwright (lockfile)
-        if: needs.plan.outputs.money == 'true'
+        if: success() && !cancelled() && needs.plan.outputs.money == 'true' && needs.preflight.result == 'success' && !contains(fromJSON(needs.plan.outputs.resumed || '[]'), 'desktop-linux')
         working-directory: _playwright
         run: node "$GITHUB_WORKSPACE/tooling/ops/npm-ci-retry.mjs" -- npm ci --ignore-scripts --no-audit --no-fund
       - name: Open the paywall on the SANDBOX Worker only
-        if: needs.plan.outputs.money == 'true'
+        if: success() && !cancelled() && needs.plan.outputs.money == 'true' && needs.preflight.result == 'success' && !contains(fromJSON(needs.plan.outputs.resumed || '[]'), 'desktop-linux')
         env:
           SANDBOX_ADMIN_ROUTE_SECRET: ${{ secrets.SANDBOX_ADMIN_ROUTE_SECRET }}
         run: node tooling/e2e/money/sandbox-paywall.mjs --open --unless-superseded --history .money-history --by "$GITHUB_RUN_ID"
       - name: The harness, the sandbox Worker and the pinned commit are one commit
-        if: needs.plan.outputs.money == 'true'
+        if: success() && !cancelled() && needs.plan.outputs.money == 'true' && needs.preflight.result == 'success' && !contains(fromJSON(needs.plan.outputs.resumed || '[]'), 'desktop-linux')
         run: node tooling/e2e/money/preflight.mjs --one-commit "$NIKATRU_SHA"
       - name: Walk every desktop leg on Linux
         id: walk
-        if: needs.plan.outputs.money == 'true'
+        timeout-minutes: 80
+        if: success() && !cancelled() && needs.plan.outputs.money == 'true' && needs.preflight.result == 'success' && !contains(fromJSON(needs.plan.outputs.resumed || '[]'), 'desktop-linux')
         env:
           SUPABASE_URL: ${{ secrets.SUPABASE_URL }}
           SUPABASE_ANON_KEY: ${{ secrets.SUPABASE_ANON_KEY }}
           SUPABASE_SERVICE_ROLE_KEY: ${{ secrets.SUPABASE_SERVICE_ROLE_KEY }}
           TEST_ACCOUNT_EMAIL: ${{ secrets.TEST_ACCOUNT_EMAIL }}
-          TEST_ACCOUNT_PASSWORD: ${{ secrets.TEST_ACCOUNT_PASSWORD }}
           PADDLE_SANDBOX_API_KEY: ${{ secrets.PADDLE_SANDBOX_API_KEY }}
           PADDLE_SANDBOX_CLIENT_TOKEN: ${{ secrets.PADDLE_SANDBOX_CLIENT_TOKEN }}
           RAZORPAY_TEST_KEY_ID: ${{ secrets.RAZORPAY_TEST_KEY_ID }}
@@ -727,10 +867,32 @@ jobs:
             xvfb-run -a -s "-screen 0 1920x1200x24" node tooling/e2e/money/desktop.mjs --target linux --log "$RUNNER_TEMP/money-desktop.log"
           '
           echo "walked=true" >> "$GITHUB_OUTPUT"
+      - name: This target's leg results (a per-run record, never evidence)
+        if: ${{ (always()) && needs.plan.outputs.money == 'true' && needs.preflight.result == 'success' && !contains(fromJSON(needs.plan.outputs.resumed || '[]'), 'desktop-linux') }}
+        env:
+          PROOF_SHA: ${{ inputs.ref || env.NIKATRU_SHA }}
+        run: |
+          if grep -q -- "'--leg-results'" tooling/e2e/money/walked.mjs; then
+            node tooling/e2e/money/walked.mjs --leg-results --unit desktop-linux --desktop-log "$RUNNER_TEMP/money-desktop.log" --out "$RUNNER_TEMP/money-leg-results"
+          else
+            echo "::warning title=Money leg results::this checkout predates walked.mjs --leg-results: no leg-results record for desktop-linux."
+          fi
+      - name: Store money-leg-results-desktop-linux in the bridge's private home (generated)
+        if: ${{ (always()) && needs.plan.outputs.money == 'true' && needs.preflight.result == 'success' && !contains(fromJSON(needs.plan.outputs.resumed || '[]'), 'desktop-linux') }}
+        shell: bash
+        working-directory: ${{ github.workspace }}
+        env:
+          NIKATRU_PATHS: ${{ runner.temp }}/money-leg-results/
+          NIKATRU_ARTIFACT_NAME: money-leg-results-desktop-linux
+          NIKATRU_IF_NO_FILES: warn
+          BRIDGE_ARTIFACT_SECRET: ${{ secrets.BRIDGE_ARTIFACT_SECRET }}
+          NIKATRU_BRIDGE_ARTIFACT_URL: https://gh-bridge.nikatru.workers.dev/artifact
+        run: node tooling/ops/bridge-artifact.mjs upload
 
   desktop-windows:
     name: Desktop money legs — Windows app (sandbox)
     needs: [plan, preflight, desktop-linux]
+    if: always()
     outputs:
       walked: ${{ steps.walk.outputs.walked }}
     runs-on: windows-2025
@@ -742,6 +904,9 @@ jobs:
     defaults:
       run:
         shell: bash
+    permissions:
+      contents: read
+      id-token: write
     steps:
       - name: Check out the private tree (generated)
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
@@ -782,8 +947,30 @@ jobs:
             echo "NIKATRU_PR_CREATED_AT=$NIKATRU_P_PR_CREATED_AT"
             echo "NIKATRU_DRAFT=$NIKATRU_P_DRAFT"
           } >> "$GITHUB_ENV"
+      - name: Check out private main's composite actions (generated)
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
+        with:
+          repository: ${{ env.NIKATRU_PRIVATE_REPO }}
+          ref: refs/heads/main
+          path: .nikatru-trusted
+          sparse-checkout: .github/actions
+          ssh-key: ${{ secrets.PRIVATE_DEPLOY_KEY }}
+          persist-credentials: false
+      - name: Keep private main's composite actions out of the branch's tree (generated)
+        id: nikatru-trusted-tree
+        shell: bash
+        working-directory: ${{ github.workspace }}
+        run: |
+          if x="$(git rev-parse --git-path info/exclude 2>/dev/null)"; then mkdir -p "${x%/*}"; grep -qxF '/.nikatru-trusted/' "$x" 2>/dev/null || printf '/.nikatru-trusted/\n' >> "$x"; fi
+          NIKATRU_TRUSTED_GIT="$(command -v git)"; case "$NIKATRU_TRUSTED_GIT" in /*) ;; *) echo "::error::git does not resolve to an absolute path ($NIKATRU_TRUSTED_GIT)"; exit 1 ;; esac
+          tree="$(for v in $(compgen -e); do case "$v" in (GIT_*) unset "$v" ;; esac; done && d="$RUNNER_TEMP/nikatru-trusted.$$.$RANDOM" && [ ! -e "$d.git" ] && [ ! -e "$d.index" ] && export GIT_DIR="$d.git" GIT_INDEX_FILE="$d.index" GIT_CONFIG_GLOBAL=/dev/null GIT_CONFIG_NOSYSTEM=1 && "$NIKATRU_TRUSTED_GIT" init -q --bare --template= "$GIT_DIR" && "$NIKATRU_TRUSTED_GIT" -C .nikatru-trusted --work-tree=. add -A -f .github/actions && "$NIKATRU_TRUSTED_GIT" write-tree --prefix=.github/actions/)"
+          main="$(git -C .nikatru-trusted rev-parse HEAD:.github/actions)"
+          if [ -z "$tree" ] || [ "$tree" != "$main" ]; then echo "::error::.nikatru-trusted: the working tree ($tree) is not private main's .github/actions ($main)"; exit 1; fi
+          rm -rf "$RUNNER_TEMP/nikatru-trusted-actions" && mkdir -p "$RUNNER_TEMP/nikatru-trusted-actions" && cp -R .nikatru-trusted/.github "$RUNNER_TEMP/nikatru-trusted-actions/"
+          echo "tree=$tree" >> "$GITHUB_OUTPUT"
+          echo "git=$NIKATRU_TRUSTED_GIT" >> "$GITHUB_OUTPUT"
       - name: Check out the private tree (generated)
-        if: needs.plan.outputs.money == 'true'
+        if: success() && !cancelled() && needs.plan.outputs.money == 'true' && needs.preflight.result == 'success' && !contains(fromJSON(needs.plan.outputs.resumed || '[]'), 'desktop-windows')
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
         with:
           repository: ${{ env.NIKATRU_PRIVATE_REPO }}
@@ -791,7 +978,7 @@ jobs:
           ssh-key: ${{ secrets.PRIVATE_DEPLOY_KEY }}
           persist-credentials: false
       - name: "Check out the private history beside it (every branch's commits, no file) (generated: the private tree)"
-        if: needs.plan.outputs.money == 'true'
+        if: success() && !cancelled() && needs.plan.outputs.money == 'true' && needs.preflight.result == 'success' && !contains(fromJSON(needs.plan.outputs.resumed || '[]'), 'desktop-windows')
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
         with:
           repository: ${{ env.NIKATRU_PRIVATE_REPO }}
@@ -802,44 +989,40 @@ jobs:
           sparse-checkout: .github/ISSUE_TEMPLATE
           ssh-key: ${{ secrets.PRIVATE_DEPLOY_KEY }}
           persist-credentials: false
-      - name: Check out private main's composite actions (generated)
-        if: needs.plan.outputs.money == 'true'
-        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
-        with:
-          repository: ${{ env.NIKATRU_PRIVATE_REPO }}
-          ref: refs/heads/main
-          path: .nikatru-trusted
-          sparse-checkout: .github/actions
-          ssh-key: ${{ secrets.PRIVATE_DEPLOY_KEY }}
-          persist-credentials: false
-      - name: Keep private main's composite actions out of the branch's tree (generated)
-        if: needs.plan.outputs.money == 'true'
+      - name: Verify private main's composite actions are the checked-out tree (generated)
+        if: success() && !cancelled() && needs.plan.outputs.money == 'true' && needs.preflight.result == 'success' && !contains(fromJSON(needs.plan.outputs.resumed || '[]'), 'desktop-windows')
         shell: bash
         working-directory: ${{ github.workspace }}
-        run: printf '/.nikatru-trusted/\n' >> "$(git rev-parse --git-path info/exclude)"
+        env:
+          NIKATRU_TRUSTED_TREE: ${{ steps.nikatru-trusted-tree.outputs.tree }}
+          NIKATRU_TRUSTED_GIT: ${{ steps.nikatru-trusted-tree.outputs.git }}
+        run: |
+          case "$NIKATRU_TRUSTED_GIT" in /*) ;; *) echo "::error::.nikatru-trusted: no git path was recorded before the job's own steps ($NIKATRU_TRUSTED_GIT)"; exit 1 ;; esac
+          rm -rf .nikatru-trusted/.github && mkdir -p .nikatru-trusted && cp -R "$RUNNER_TEMP/nikatru-trusted-actions/.github" .nikatru-trusted/
+          if x="$(git rev-parse --git-path info/exclude 2>/dev/null)"; then mkdir -p "${x%/*}"; grep -qxF '/.nikatru-trusted/' "$x" 2>/dev/null || printf '/.nikatru-trusted/\n' >> "$x"; fi
+          tree="$(for v in $(compgen -e); do case "$v" in (GIT_*) unset "$v" ;; esac; done && d="$RUNNER_TEMP/nikatru-trusted.$$.$RANDOM" && [ ! -e "$d.git" ] && [ ! -e "$d.index" ] && export GIT_DIR="$d.git" GIT_INDEX_FILE="$d.index" GIT_CONFIG_GLOBAL=/dev/null GIT_CONFIG_NOSYSTEM=1 && "$NIKATRU_TRUSTED_GIT" init -q --bare --template= "$GIT_DIR" && "$NIKATRU_TRUSTED_GIT" -C .nikatru-trusted --work-tree=. add -A -f .github/actions && "$NIKATRU_TRUSTED_GIT" write-tree --prefix=.github/actions/)"
+          if [ -z "$NIKATRU_TRUSTED_TREE" ] || [ "$tree" != "$NIKATRU_TRUSTED_TREE" ]; then echo "::error::.nikatru-trusted is not the tree checked out from private main ($NIKATRU_TRUSTED_TREE, now $tree): a step of this job edited its copy"; exit 1; fi
       - uses: ./.nikatru-trusted/.github/actions/setup-node
-        if: needs.plan.outputs.money == 'true'
+        if: success() && !cancelled() && needs.plan.outputs.money == 'true' && needs.preflight.result == 'success' && !contains(fromJSON(needs.plan.outputs.resumed || '[]'), 'desktop-windows')
         env:
           NIKATRU_REF: ${{ github.event.client_payload.ref || 'refs/heads/main' }}
           NIKATRU_EVENT_NAME: ${{ github.event.client_payload.event || github.event_name }}
           NIKATRU_PR: ${{ github.event.client_payload.pr }}
-      - name: Check out private main's composite actions (generated)
-        if: needs.plan.outputs.money == 'true'
-        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
-        with:
-          repository: ${{ env.NIKATRU_PRIVATE_REPO }}
-          ref: refs/heads/main
-          path: .nikatru-trusted
-          sparse-checkout: .github/actions
-          ssh-key: ${{ secrets.PRIVATE_DEPLOY_KEY }}
-          persist-credentials: false
-      - name: Keep private main's composite actions out of the branch's tree (generated)
-        if: needs.plan.outputs.money == 'true'
+      - name: Verify private main's composite actions are the checked-out tree (generated)
+        if: success() && !cancelled() && needs.plan.outputs.money == 'true' && needs.preflight.result == 'success' && !contains(fromJSON(needs.plan.outputs.resumed || '[]'), 'desktop-windows')
         shell: bash
         working-directory: ${{ github.workspace }}
-        run: printf '/.nikatru-trusted/\n' >> "$(git rev-parse --git-path info/exclude)"
+        env:
+          NIKATRU_TRUSTED_TREE: ${{ steps.nikatru-trusted-tree.outputs.tree }}
+          NIKATRU_TRUSTED_GIT: ${{ steps.nikatru-trusted-tree.outputs.git }}
+        run: |
+          case "$NIKATRU_TRUSTED_GIT" in /*) ;; *) echo "::error::.nikatru-trusted: no git path was recorded before the job's own steps ($NIKATRU_TRUSTED_GIT)"; exit 1 ;; esac
+          rm -rf .nikatru-trusted/.github && mkdir -p .nikatru-trusted && cp -R "$RUNNER_TEMP/nikatru-trusted-actions/.github" .nikatru-trusted/
+          if x="$(git rev-parse --git-path info/exclude 2>/dev/null)"; then mkdir -p "${x%/*}"; grep -qxF '/.nikatru-trusted/' "$x" 2>/dev/null || printf '/.nikatru-trusted/\n' >> "$x"; fi
+          tree="$(for v in $(compgen -e); do case "$v" in (GIT_*) unset "$v" ;; esac; done && d="$RUNNER_TEMP/nikatru-trusted.$$.$RANDOM" && [ ! -e "$d.git" ] && [ ! -e "$d.index" ] && export GIT_DIR="$d.git" GIT_INDEX_FILE="$d.index" GIT_CONFIG_GLOBAL=/dev/null GIT_CONFIG_NOSYSTEM=1 && "$NIKATRU_TRUSTED_GIT" init -q --bare --template= "$GIT_DIR" && "$NIKATRU_TRUSTED_GIT" -C .nikatru-trusted --work-tree=. add -A -f .github/actions && "$NIKATRU_TRUSTED_GIT" write-tree --prefix=.github/actions/)"
+          if [ -z "$NIKATRU_TRUSTED_TREE" ] || [ "$tree" != "$NIKATRU_TRUSTED_TREE" ]; then echo "::error::.nikatru-trusted is not the tree checked out from private main ($NIKATRU_TRUSTED_TREE, now $tree): a step of this job edited its copy"; exit 1; fi
       - uses: ./.nikatru-trusted/.github/actions/setup-flutter
-        if: needs.plan.outputs.money == 'true'
+        if: success() && !cancelled() && needs.plan.outputs.money == 'true' && needs.preflight.result == 'success' && !contains(fromJSON(needs.plan.outputs.resumed || '[]'), 'desktop-windows')
         with:
           cache: 'false'
         env:
@@ -847,43 +1030,64 @@ jobs:
           NIKATRU_EVENT_NAME: ${{ github.event.client_payload.event || github.event_name }}
           NIKATRU_PR: ${{ github.event.client_payload.pr }}
       - name: Git may write paths past MAX_PATH
-        if: needs.plan.outputs.money == 'true'
+        if: success() && !cancelled() && needs.plan.outputs.money == 'true' && needs.preflight.result == 'success' && !contains(fromJSON(needs.plan.outputs.resumed || '[]'), 'desktop-windows')
         run: |
           git config --global core.longpaths true
           git config --global --get core.longpaths
       - name: Enable the Windows desktop target
-        if: needs.plan.outputs.money == 'true'
+        if: success() && !cancelled() && needs.plan.outputs.money == 'true' && needs.preflight.result == 'success' && !contains(fromJSON(needs.plan.outputs.resumed || '[]'), 'desktop-windows')
         run: flutter config --enable-windows-desktop
       - name: Resolve the workspace
-        if: needs.plan.outputs.money == 'true'
+        if: success() && !cancelled() && needs.plan.outputs.money == 'true' && needs.preflight.result == 'success' && !contains(fromJSON(needs.plan.outputs.resumed || '[]'), 'desktop-windows')
         run: flutter pub get --enforce-lockfile
       - name: Install the fleet Playwright (lockfile)
-        if: needs.plan.outputs.money == 'true'
+        if: success() && !cancelled() && needs.plan.outputs.money == 'true' && needs.preflight.result == 'success' && !contains(fromJSON(needs.plan.outputs.resumed || '[]'), 'desktop-windows')
         working-directory: _playwright
         run: node "$GITHUB_WORKSPACE/tooling/ops/npm-ci-retry.mjs" -- npm ci --ignore-scripts --no-audit --no-fund
       - name: Open the paywall on the SANDBOX Worker only
-        if: needs.plan.outputs.money == 'true'
+        if: success() && !cancelled() && needs.plan.outputs.money == 'true' && needs.preflight.result == 'success' && !contains(fromJSON(needs.plan.outputs.resumed || '[]'), 'desktop-windows')
         env:
           SANDBOX_ADMIN_ROUTE_SECRET: ${{ secrets.SANDBOX_ADMIN_ROUTE_SECRET }}
         run: node tooling/e2e/money/sandbox-paywall.mjs --open --unless-superseded --history .money-history --by "$GITHUB_RUN_ID"
       - name: The harness, the sandbox Worker and the pinned commit are one commit
-        if: needs.plan.outputs.money == 'true'
+        if: success() && !cancelled() && needs.plan.outputs.money == 'true' && needs.preflight.result == 'success' && !contains(fromJSON(needs.plan.outputs.resumed || '[]'), 'desktop-windows')
         run: node tooling/e2e/money/preflight.mjs --one-commit "$NIKATRU_SHA"
       - name: Walk every desktop leg on Windows
         id: walk
-        if: needs.plan.outputs.money == 'true'
+        timeout-minutes: 80
+        if: success() && !cancelled() && needs.plan.outputs.money == 'true' && needs.preflight.result == 'success' && !contains(fromJSON(needs.plan.outputs.resumed || '[]'), 'desktop-windows')
         env:
           SUPABASE_URL: ${{ secrets.SUPABASE_URL }}
           SUPABASE_ANON_KEY: ${{ secrets.SUPABASE_ANON_KEY }}
           SUPABASE_SERVICE_ROLE_KEY: ${{ secrets.SUPABASE_SERVICE_ROLE_KEY }}
           TEST_ACCOUNT_EMAIL: ${{ secrets.TEST_ACCOUNT_EMAIL }}
-          TEST_ACCOUNT_PASSWORD: ${{ secrets.TEST_ACCOUNT_PASSWORD }}
           PADDLE_SANDBOX_API_KEY: ${{ secrets.PADDLE_SANDBOX_API_KEY }}
           PADDLE_SANDBOX_CLIENT_TOKEN: ${{ secrets.PADDLE_SANDBOX_CLIENT_TOKEN }}
           RAZORPAY_TEST_KEY_ID: ${{ secrets.RAZORPAY_TEST_KEY_ID }}
         run: |
           node tooling/e2e/money/desktop.mjs --target windows --log "$RUNNER_TEMP/money-desktop.log"
           echo "walked=true" >> "$GITHUB_OUTPUT"
+      - name: This target's leg results (a per-run record, never evidence)
+        if: ${{ (always()) && needs.plan.outputs.money == 'true' && needs.preflight.result == 'success' && !contains(fromJSON(needs.plan.outputs.resumed || '[]'), 'desktop-windows') }}
+        env:
+          PROOF_SHA: ${{ inputs.ref || env.NIKATRU_SHA }}
+        run: |
+          if grep -q -- "'--leg-results'" tooling/e2e/money/walked.mjs; then
+            node tooling/e2e/money/walked.mjs --leg-results --unit desktop-windows --desktop-log "$RUNNER_TEMP/money-desktop.log" --out "$RUNNER_TEMP/money-leg-results"
+          else
+            echo "::warning title=Money leg results::this checkout predates walked.mjs --leg-results: no leg-results record for desktop-windows."
+          fi
+      - name: Store money-leg-results-desktop-windows in the bridge's private home (generated)
+        if: ${{ (always()) && needs.plan.outputs.money == 'true' && needs.preflight.result == 'success' && !contains(fromJSON(needs.plan.outputs.resumed || '[]'), 'desktop-windows') }}
+        shell: bash
+        working-directory: ${{ github.workspace }}
+        env:
+          NIKATRU_PATHS: ${{ runner.temp }}/money-leg-results/
+          NIKATRU_ARTIFACT_NAME: money-leg-results-desktop-windows
+          NIKATRU_IF_NO_FILES: warn
+          BRIDGE_ARTIFACT_SECRET: ${{ secrets.BRIDGE_ARTIFACT_SECRET }}
+          NIKATRU_BRIDGE_ARTIFACT_URL: https://gh-bridge.nikatru.workers.dev/artifact
+        run: node tooling/ops/bridge-artifact.mjs upload
 
   close-paywall:
     name: Close the sandbox paywall once every money leg is done
@@ -935,6 +1139,28 @@ jobs:
             echo "NIKATRU_PR_CREATED_AT=$NIKATRU_P_PR_CREATED_AT"
             echo "NIKATRU_DRAFT=$NIKATRU_P_DRAFT"
           } >> "$GITHUB_ENV"
+      - name: Check out private main's composite actions (generated)
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
+        with:
+          repository: ${{ env.NIKATRU_PRIVATE_REPO }}
+          ref: refs/heads/main
+          path: .nikatru-trusted
+          sparse-checkout: .github/actions
+          ssh-key: ${{ secrets.PRIVATE_DEPLOY_KEY }}
+          persist-credentials: false
+      - name: Keep private main's composite actions out of the branch's tree (generated)
+        id: nikatru-trusted-tree
+        shell: bash
+        working-directory: ${{ github.workspace }}
+        run: |
+          if x="$(git rev-parse --git-path info/exclude 2>/dev/null)"; then mkdir -p "${x%/*}"; grep -qxF '/.nikatru-trusted/' "$x" 2>/dev/null || printf '/.nikatru-trusted/\n' >> "$x"; fi
+          NIKATRU_TRUSTED_GIT="$(command -v git)"; case "$NIKATRU_TRUSTED_GIT" in /*) ;; *) echo "::error::git does not resolve to an absolute path ($NIKATRU_TRUSTED_GIT)"; exit 1 ;; esac
+          tree="$(for v in $(compgen -e); do case "$v" in (GIT_*) unset "$v" ;; esac; done && d="$RUNNER_TEMP/nikatru-trusted.$$.$RANDOM" && [ ! -e "$d.git" ] && [ ! -e "$d.index" ] && export GIT_DIR="$d.git" GIT_INDEX_FILE="$d.index" GIT_CONFIG_GLOBAL=/dev/null GIT_CONFIG_NOSYSTEM=1 && "$NIKATRU_TRUSTED_GIT" init -q --bare --template= "$GIT_DIR" && "$NIKATRU_TRUSTED_GIT" -C .nikatru-trusted --work-tree=. add -A -f .github/actions && "$NIKATRU_TRUSTED_GIT" write-tree --prefix=.github/actions/)"
+          main="$(git -C .nikatru-trusted rev-parse HEAD:.github/actions)"
+          if [ -z "$tree" ] || [ "$tree" != "$main" ]; then echo "::error::.nikatru-trusted: the working tree ($tree) is not private main's .github/actions ($main)"; exit 1; fi
+          rm -rf "$RUNNER_TEMP/nikatru-trusted-actions" && mkdir -p "$RUNNER_TEMP/nikatru-trusted-actions" && cp -R .nikatru-trusted/.github "$RUNNER_TEMP/nikatru-trusted-actions/"
+          echo "tree=$tree" >> "$GITHUB_OUTPUT"
+          echo "git=$NIKATRU_TRUSTED_GIT" >> "$GITHUB_OUTPUT"
       - name: Check out the private tree (generated)
         if: needs.plan.outputs.money == 'true'
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
@@ -955,21 +1181,19 @@ jobs:
           sparse-checkout: .github/ISSUE_TEMPLATE
           ssh-key: ${{ secrets.PRIVATE_DEPLOY_KEY }}
           persist-credentials: false
-      - name: Check out private main's composite actions (generated)
-        if: needs.plan.outputs.money == 'true'
-        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
-        with:
-          repository: ${{ env.NIKATRU_PRIVATE_REPO }}
-          ref: refs/heads/main
-          path: .nikatru-trusted
-          sparse-checkout: .github/actions
-          ssh-key: ${{ secrets.PRIVATE_DEPLOY_KEY }}
-          persist-credentials: false
-      - name: Keep private main's composite actions out of the branch's tree (generated)
+      - name: Verify private main's composite actions are the checked-out tree (generated)
         if: needs.plan.outputs.money == 'true'
         shell: bash
         working-directory: ${{ github.workspace }}
-        run: printf '/.nikatru-trusted/\n' >> "$(git rev-parse --git-path info/exclude)"
+        env:
+          NIKATRU_TRUSTED_TREE: ${{ steps.nikatru-trusted-tree.outputs.tree }}
+          NIKATRU_TRUSTED_GIT: ${{ steps.nikatru-trusted-tree.outputs.git }}
+        run: |
+          case "$NIKATRU_TRUSTED_GIT" in /*) ;; *) echo "::error::.nikatru-trusted: no git path was recorded before the job's own steps ($NIKATRU_TRUSTED_GIT)"; exit 1 ;; esac
+          rm -rf .nikatru-trusted/.github && mkdir -p .nikatru-trusted && cp -R "$RUNNER_TEMP/nikatru-trusted-actions/.github" .nikatru-trusted/
+          if x="$(git rev-parse --git-path info/exclude 2>/dev/null)"; then mkdir -p "${x%/*}"; grep -qxF '/.nikatru-trusted/' "$x" 2>/dev/null || printf '/.nikatru-trusted/\n' >> "$x"; fi
+          tree="$(for v in $(compgen -e); do case "$v" in (GIT_*) unset "$v" ;; esac; done && d="$RUNNER_TEMP/nikatru-trusted.$$.$RANDOM" && [ ! -e "$d.git" ] && [ ! -e "$d.index" ] && export GIT_DIR="$d.git" GIT_INDEX_FILE="$d.index" GIT_CONFIG_GLOBAL=/dev/null GIT_CONFIG_NOSYSTEM=1 && "$NIKATRU_TRUSTED_GIT" init -q --bare --template= "$GIT_DIR" && "$NIKATRU_TRUSTED_GIT" -C .nikatru-trusted --work-tree=. add -A -f .github/actions && "$NIKATRU_TRUSTED_GIT" write-tree --prefix=.github/actions/)"
+          if [ -z "$NIKATRU_TRUSTED_TREE" ] || [ "$tree" != "$NIKATRU_TRUSTED_TREE" ]; then echo "::error::.nikatru-trusted is not the tree checked out from private main ($NIKATRU_TRUSTED_TREE, now $tree): a step of this job edited its copy"; exit 1; fi
       - uses: ./.nikatru-trusted/.github/actions/setup-node
         if: needs.plan.outputs.money == 'true'
         env:
@@ -1051,6 +1275,8 @@ jobs:
       - name: Every proof job walked when the plan says money
         env:
           MONEY: ${{ needs.plan.outputs.money }}
+          RESUMED: ${{ needs.plan.outputs.resumed || '[]' }}
+          RESUME: ${{ needs.plan.outputs.resume }}
           RAILS: ${{ needs.preflight.outputs.rails }}
           NEEDS: ${{ toJSON(needs) }}
           LINUX: ${{ needs.desktop-linux.outputs.walked }}
@@ -1064,24 +1290,47 @@ jobs:
             exit 0
           fi
           missing=""
+          kept() { printf '%s' "${RESUMED:-[]}" | jq -e --arg u "$1" 'index($u) != null' > /dev/null; }
+          table="| unit | run id | attempt | result |"$'\n'"|---|---|---|---|"
+          row() {
+            if kept "$1"; then
+              table="${table}"$'\n'"$(printf '%s' "${RESUME:-}" | jq -r --arg u "$1" '"| \($u) | \(.units[$u].run) | \(.units[$u].attempt) | \(.units[$u].result) (resumed) |"')"
+            else
+              table="${table}"$'\n'"| $1 | ${GITHUB_RUN_ID:-this run} | ${GITHUB_RUN_ATTEMPT:-1} | $2 |"
+            fi
+          }
           rails="$(printf '%s' "$RAILS" | tr -d '[]"' | tr ',' ' ')"
           legs_result="$(printf '%s' "$NEEDS" | jq -r '.legs.result // ""')"
           wrote="$(printf '%s' "$NEEDS" | jq -r '[(.legs.outputs // {}) | to_entries[] | select((.key | startswith("walked_")) and .value == "true")] | length')"
           [ "$legs_result" = "success" ] || missing="$missing web (the legs concluded ${legs_result:-nothing})"
           for rail in $rails; do
+            if kept "${rail}-web"; then row "${rail}-web" ""; continue; fi
             walked="$(printf '%s' "$NEEDS" | jq -r --arg k "walked_${rail}" '.legs.outputs[$k] // ""')"
             [ -z "$walked" ] && [ "$legs_result" = "success" ] && [ "$wrote" -gt 0 ] && walked="true"
             [ "$walked" = "true" ] || missing="$missing web-${rail}"
+            row "${rail}-web" "$([ "$walked" = "true" ] && echo success || echo 'not walked')"
           done
           [ -n "$(printf '%s' "$rails" | tr -d ' ')" ] || missing="$missing web (no rail was planned)"
-          [ "$LINUX" = "true" ] || missing="$missing linux"
-          [ "$WINDOWS" = "true" ] || missing="$missing windows"
+          if kept desktop-linux; then row desktop-linux ""; else
+            [ "$LINUX" = "true" ] || missing="$missing linux"
+            row desktop-linux "$([ "$LINUX" = "true" ] && echo success || echo 'not walked')"
+          fi
+          if kept desktop-windows; then row desktop-windows ""; else
+            [ "$WINDOWS" = "true" ] || missing="$missing windows"
+            row desktop-windows "$([ "$WINDOWS" = "true" ] && echo success || echo 'not walked')"
+          fi
+          echo "$table"
+          printf '### Money proof units\n\n%s\n' "$table" >> "${GITHUB_STEP_SUMMARY:-/dev/null}"
           if [ -n "$missing" ]; then
             echo "::error title=Money proof did not run::the plan says money, and these proof jobs never walked their legs:${missing}. Green here would mean nothing was proven."
             exit 1
           fi
           # decision pr:1427 05:54:17Z: a walk that leaned on a lost-event fallback is AMBER, never a plain green (still a pass).
           fb="$(printf '%s' "$NEEDS" | jq -r '[(.legs.outputs // {}) | to_entries[] | select((.key | startswith("fallbacks_")) and .value != "") | "\(.key | ltrimstr("fallbacks_")): \(.value)"] | join("; ")')"
+          # club mu1116 fix round (review #6/#7): a unit a resume KEPT was walked in its earlier run, so its fallbacks come from
+          # plan's resume record (walked.mjs judgeResume `fallbacks`), never from this run's outputs: AMBER there is AMBER here.
+          kfb="$(printf '%s' "${RESUME:-}" | jq -r '[(.units // {}) | to_entries[] | .key as $u | .value as $k | ($k.fallbacks // [])[] | "\($u) (kept from run \($k.run)): \(.)"] | join("; ")')"
+          if [ -n "$kfb" ]; then fb="${fb:+${fb}; }${kfb}"; fi
           if [ -n "$fb" ]; then
             echo "::warning title=Money proof AMBER::PASS with fallbacks — ${fb}"
             echo "money proof: PASS with fallbacks (AMBER, never a plain green) — ${fb}"

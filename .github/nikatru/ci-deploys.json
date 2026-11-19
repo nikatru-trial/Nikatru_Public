@@ -5,6 +5,7 @@
   "prefix": "nikatru-detail-",
   "slots": 32,
   "sendBudgetS": 360,
+  "redLogBudgetS": 240,
   "gate": null,
   "lanes": [
     {

@@ -39,6 +39,13 @@
 //
 // ⏱ 2026-11-10 · O-R52-OPS-048: a probe may EXPECT A REFUSAL — `expect.status: [401, 403]` is the kind (the row
 // `page-channel-deny-anon`: an anonymous read of a throwaway ntfy topic must be refused; a 200 pages).
+// ⏱ 2026-11-14 · bl-money-1-aw202611141316 (O-R53-MONEY-WEBHOOK-PROBE-SIGNED-REFUSAL): a probe may POST. The five
+// payment-webhook probes sent HEAD and passed on "below-500", but the routes are POST-only, so a live route, a deleted
+// one and a made-up provider all answered the router's 404 and all passed. A POST row sends its FIXED `body` (padded
+// with spaces to `padTo` bytes when set) and is judged by an exact `status` list and the exact parsed `expect.json`
+// — the refusal the route answers BEFORE anything is believed (services/platform test
+// live-probe-webhook-refusal.test.ts drives every such row through the real Worker app). `canary: true` marks a row
+// tooling/ops/gradual-deploy.mjs also sends to the pinned new version at every split.
 //
 // CONFIG: /etc/nikatru/live-probe.conf (LIVE_PROBE_CONF overrides; the tests do), KEY=VALUE lines:
 //   PAGE_URL=https://ntfy.sh/<owner topic>             the owner page, leg 1 = the PRIMARY (required unless --dry-run)
@@ -100,7 +107,7 @@ export function validateProbes(doc) {
     if (typeof id !== 'string' || !/^[a-z0-9-]+$/.test(id)) { errors.push(`row id ${JSON.stringify(id)} is not a slug`); continue; }
     if (seen.has(id)) errors.push(`${id}: duplicate id`);
     seen.add(id);
-    if (r.method !== 'GET' && r.method !== 'HEAD') errors.push(`${id}: method must be GET or HEAD`);
+    if (!PROBE_METHODS.includes(r.method)) errors.push(`${id}: method must be one of ${PROBE_METHODS.join(', ')}`);
     let u = null;
     try { u = new URL(r.url); } catch { errors.push(`${id}: url does not parse`); }
     if (u && (u.protocol !== 'https:' || u.search || u.hash)) errors.push(`${id}: url must be https with no query and no fragment (a probe never names a transaction)`);
@@ -108,7 +115,17 @@ export function validateProbes(doc) {
     if (!(e.status === 'below-500' || (Array.isArray(e.status) && e.status.length > 0 && e.status.every(Number.isInteger)))) {
       errors.push(`${id}: expect.status must be "below-500" or a non-empty array of integers`);
     }
-    if (r.method === 'HEAD' && (e.bodyIncludes || e.launcher)) errors.push(`${id}: a HEAD has no body to judge`);
+    if (r.method === 'HEAD' && (e.bodyIncludes || e.launcher || e.json !== undefined)) errors.push(`${id}: a HEAD has no body to judge`);
+    // ⏱ 2026-11-14 · bl-money-1-aw202611141316 (O-R53-MONEY-WEBHOOK-PROBE-SIGNED-REFUSAL): a status CLASS cannot fail on a
+    // route the router does not know — its 404 is "below 500" — so it is a GET-only judge, and a GET row still has a body.
+    if (e.status === 'below-500' && r.method !== 'GET') errors.push(`${id}: "below-500" is a GET-only judge — a ${r.method} to a route that is gone answers the router's 404, which it passes; judge the exact status and body the route answers`);
+    if (r.method === 'POST') {
+      if (typeof r.body !== 'string') errors.push(`${id}: a POST sends a fixed \`body\` string`);
+      if (r.padTo !== undefined && !(Number.isInteger(r.padTo) && r.padTo > Buffer.byteLength(String(r.body ?? '')))) errors.push(`${id}: padTo must be an integer larger than the body`);
+      if (e.json === undefined) errors.push(`${id}: a POST is judged by the exact JSON it is answered (expect.json)`);
+    } else if (r.body !== undefined || r.padTo !== undefined) errors.push(`${id}: only a POST sends a body`);
+    if (e.json !== undefined && (e.json === null || typeof e.json !== 'object' || Array.isArray(e.json))) errors.push(`${id}: expect.json must be an object`);
+    if (r.canary !== undefined && r.canary !== true) errors.push(`${id}: canary is true or absent`);
     if (e.bodyIncludes !== undefined && !(Array.isArray(e.bodyIncludes) && e.bodyIncludes.every((s) => typeof s === 'string' && s.length > 0))) {
       errors.push(`${id}: expect.bodyIncludes must be an array of non-empty strings`);
     }
@@ -121,7 +138,35 @@ export function validateProbes(doc) {
   return errors;
 }
 
+/** The methods a probe may send. */
+export const PROBE_METHODS = Object.freeze(['GET', 'HEAD', 'POST']);
+
 // ── judging one answer ──────────────────────────────────────────────────────
+
+/** PURE. The exact bytes a POST row sends: its fixed `body`, padded with spaces to `padTo` bytes when set (a body over a
+ *  route's bound is refused before anything reads it). Null for a row that sends no body. */
+export function requestBody(row) {
+  if (row?.method !== 'POST') return null;
+  const body = String(row.body ?? '');
+  return Number.isInteger(row.padTo) ? body + ' '.repeat(Math.max(0, row.padTo - Buffer.byteLength(body))) : body;
+}
+
+/** The request one row sends: method, body and headers (`extra` added, e.g. a version pin). Shared with gradual-deploy.mjs. */
+export function requestInit(row, extra = {}) {
+  const body = requestBody(row);
+  return {
+    method: row.method,
+    headers: { 'user-agent': 'nikatru-live-probe/1', ...(body === null ? {} : { 'content-type': 'application/json' }), ...extra },
+    ...(body === null ? {} : { body }),
+  };
+}
+
+/** PURE. A JSON value with its object keys sorted, so two bodies compare by content, never by key order. */
+function canonical(v) {
+  if (Array.isArray(v)) return v.map(canonical);
+  if (v && typeof v === 'object') return Object.fromEntries(Object.keys(v).sort().map((k) => [k, canonical(v[k])]));
+  return v;
+}
 
 const literal = (s) => String(s).replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
 
@@ -150,6 +195,12 @@ export function judge(row, answer) {
   const body = String(answer.body ?? '');
   const missing = (e.bodyIncludes ?? []).filter((s) => !body.includes(s));
   if (missing.length) return { ok: false, why: `HTTP ${answer.status} but the body lacks ${missing.map((s) => JSON.stringify(s)).join(', ')}` };
+  if (e.json !== undefined) {
+    let got;
+    try { got = JSON.parse(body); } catch { return { ok: false, why: `HTTP ${answer.status} but the body is not JSON` }; }
+    // The body is the route's refusal (a fixed error code), never a customer's data, so naming it is safe.
+    if (JSON.stringify(canonical(got)) !== JSON.stringify(canonical(e.json))) return { ok: false, why: `HTTP ${answer.status} but the body is ${JSON.stringify(got).slice(0, 120)}, expected ${JSON.stringify(e.json)}` };
+  }
   if (e.launcher) {
     const f = launcherFindings(body, e.launcher);
     if (f.length) return { ok: false, why: `HTTP ${answer.status} but the page ${f.join('; ')}` };
@@ -273,8 +324,8 @@ function readSecretFile(path) {
  *  backstop that runs the same probes from GitHub's runners (T-65). */
 export async function liveAnswer(row, timeoutMs) {
   try {
-    const res = await fetch(row.url, { method: row.method, redirect: 'follow', signal: AbortSignal.timeout(timeoutMs), headers: { 'user-agent': 'nikatru-live-probe/1' } });
-    const body = row.method === 'GET' ? await res.text() : '';
+    const res = await fetch(row.url, { ...requestInit(row), redirect: 'follow', signal: AbortSignal.timeout(timeoutMs) });
+    const body = row.method === 'HEAD' ? '' : await res.text();
     return { status: res.status, body };
   } catch (err) {
     return { error: err?.name === 'TimeoutError' ? `timed out after ${timeoutMs} ms` : (err?.cause?.code ?? err?.name ?? 'fetch failed') };

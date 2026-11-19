@@ -5,7 +5,7 @@ env:
 
 name: TruffleHog
 
-run-name: "TruffleHog${{ inputs.worker_slot && format(' [worker slot {0}]', inputs.worker_slot) || '' }}"
+run-name: "${{ (github.event.schedule || github.event.inputs.worker_slot) && '[slot] ' || '[hand] ' }}TruffleHog${{ inputs.worker_slot && format(' [worker slot {0}]', inputs.worker_slot) || '' }}"
 
 on:
   workflow_dispatch:

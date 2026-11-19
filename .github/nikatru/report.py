@@ -583,6 +583,14 @@ def seal(key, run, plain, nonce=None):
     return base64.b64encode(SEAL_VERSION + nonce + ct + _tag(mac, run, nonce, ct)).decode('ascii')
 
 
+def not_stored_line(not_stored):
+    """The PUBLIC line for red logs the report job could not store: a COUNT only (runner review of #1421 @ 4d375130,
+    minor 3, row O-1421-RUNNER-REVIEW-MINORS): a step-log name or the bridge's error text never reaches the public
+    log; each is named, with why, in the private detail (store_red_logs `answers`)."""
+    return (f'x LOG NOT STORED: {len(not_stored)} red log(s) not stored; each is named, with why, in the private'
+            ' detail')
+
+
 def unseal(key, run, sealed):
     if len(sealed) > SEALED_MAX_CHARS:
         raise Refused(f'{len(sealed)} characters, over the {SEALED_MAX_CHARS} cap')
@@ -976,6 +984,10 @@ RED_LOG_EXT = '.tar.gz'
 STORED_NAME = re.compile(r'^[A-Za-z0-9][A-Za-z0-9._-]{0,119}$')
 STORED_KEY = re.compile(r'^[1-9][0-9]{0,19}/[1-9][0-9]{0,4}/[A-Za-z0-9][A-Za-z0-9._-]{0,119}$')
 RED_LOG_POST_TIMEOUT_S = 60
+# ⏱ 2026-11-15 · club 1111 reviews of d7aab07e MAJOR 5 and of 2d8fac2c MAJOR 1: the red-log uploads run inside their
+# OWN declared slice (the config's redLogBudgetS, gen-public-shell.mjs REPORT_RED_LOG_BUDGET_S), BEFORE the send's
+# budget starts, never inside it (inside it no log fit). An attempt starts only while one whole post still fits the
+# slice, and a retry only while its sleep and a whole post do; a log the slice cannot start reads NOT stored (red).
 
 
 def red_log_tar(file, data):
@@ -1036,7 +1048,7 @@ def hand_red_logs(text, env, key, name):
         with open(os.path.join(out, file + RED_LOG_SEALED_SUFFIX), 'w', encoding='ascii') as f:
             f.write(seal(key, red_log_binding(name, file), tgz))
         seen.add(file)
-        print(f'ok handoff: the full log {file} sealed for the report job ({len(tgz)} byte(s) of gzip'
+        print(f'ok handoff: a full red log sealed for the report job ({len(tgz)} byte(s) of gzip'
               + (f', {cut} byte(s) of its middle cut' if cut else '') + ')')
         return f'{RED_LOG_HANDED}{file})'
     return RED_LOG_PENDING.sub(one, text)
@@ -1135,24 +1147,10 @@ def post_red_log(url, secret, name, body, env, opener, token):
         return None, f'no answer ({type(e).__name__})'
 
 
-# ⏱ 2026-11-12 · O-C1111-RED-LOGS-BEFORE-SEND-BUDGET (lane c1116-ci-1; review of #1362, finding 11). The red-log
-# uploads ran BEFORE the send's budget clock started, and one log can take ~188 s (three 60 s attempts and the waits),
-# so a slow /artifact could push the report job past its timeout before the gate status went out. The send's clock now
-# starts first, and the uploads get its share left after ONE whole post (red_log_share): a log starts only while one
-# whole attempt still fits, and a retry only while it and its wait do; every log left over is NOT STORED, named, red.
-def red_log_share(cfg):
-    """Seconds of the send budget the red-log uploads may use: all of it but one whole post (the gate goes first), or
-    None when the config sets no budget. PURE."""
-    budget = cfg.get('sendBudgetS')
-    return None if budget is None else max(0, budget - post_worst_s(cfg))
-
-
-def store_red_logs(env, cfg, details, opener=urllib.request.urlopen, clock=time.monotonic, deadline=None, sleep=None):
+def store_red_logs(env, cfg, details, opener=urllib.request.urlopen, deadline=None, clock=time.monotonic):
     """(details, not_stored): every red log the collect job carried, unsealed and stored through POST /artifact, and
     each `handed to the report job` line of `details` ({context: text}) turned into where its log IS. `not_stored`
-    lists `<file>: why` for each log not stored (red: LOG NOT STORED). With nothing carried and no line, nothing moves.
-    `deadline` (a `clock()` value): no upload attempt starts that could end past it (red_log_share)."""
-    sleep = sleep or time.sleep  # read at call time, so a patched time.sleep is the one used
+    lists `<file>: why` for each log not stored (red: LOG NOT STORED). With nothing carried and no line, nothing moves."""
     raws = [env.get(red_log_env(i), '') for i in range(RED_LOG_OUTPUTS)]
     lines = {m.group(1) for d in details.values() for m in RED_LOG_HANDED_LINE.finditer(d)}
     if not any(raws) and not lines:
@@ -1176,7 +1174,9 @@ def store_red_logs(env, cfg, details, opener=urllib.request.urlopen, clock=time.
             over += [o for o in b['over'] if isinstance(o, str)]
     except (Refused, ValueError, RecursionError) as e:
         logs, over = {}, []
-        print(f'x red logs: the carried bundle could not be read ({str(e)[:160]})')
+        # runner review of #1421 minor 3 (O-1421-RUNNER-REVIEW-MINORS): its reason can name a binding (a step-log file):
+        # the PUBLIC log gets its kind only.
+        print(f'x red logs: the carried bundle could not be read ({type(e).__name__}); no red log is stored')
     url = cfg.get('artifactUrl', '')
     secret = env.get('BRIDGE_REPORT_SECRET', '')
     master = env.get('NIKATRU_DETAIL_KEY', '')
@@ -1197,13 +1197,12 @@ def store_red_logs(env, cfg, details, opener=urllib.request.urlopen, clock=time.
             answers[file] = f'{RED_LOG_NOT_STORED}{file}: its seal did not open: {str(e)[:120]})'
             failed.append(f'{file}: its seal did not open')
             continue
+        if deadline is not None and clock() + RED_LOG_POST_TIMEOUT_S > deadline:
+            answers[file] = f'{RED_LOG_NOT_STORED}{file}: the red-log budget cannot fit its upload)'
+            failed.append(f'{file}: not started, the red-log budget cannot fit its upload')
+            continue
         if not url or not secret:
             why = 'the config names no artifactUrl' if not url else 'BRIDGE_REPORT_SECRET is not set'
-            answers[file] = f'{RED_LOG_NOT_STORED}{file}: {why})'
-            failed.append(f'{file}: {why}')
-            continue
-        if deadline is not None and clock() + RED_LOG_POST_TIMEOUT_S + (REPORT_OIDC_TIMEOUT_S if token is None else 0) > deadline:
-            why = "the red logs' share of the send budget is spent, so the status posts go out in time"
             answers[file] = f'{RED_LOG_NOT_STORED}{file}: {why})'
             failed.append(f'{file}: {why}')
             continue
@@ -1216,15 +1215,16 @@ def store_red_logs(env, cfg, details, opener=urllib.request.urlopen, clock=time.
             stored, why = post_red_log(url, secret, name, body, env, opener, token)
             if stored or not re.match(r'^(HTTP (0|429|5[0-9][0-9])|no answer)', why) or attempt_no == 2:
                 break
-            if deadline is not None and clock() + (2, 6)[attempt_no] + RED_LOG_POST_TIMEOUT_S > deadline:
-                why += "; no retry: the red logs' share of the send budget is spent"
+            pause = (2, 6)[attempt_no]
+            if deadline is not None and clock() + pause + RED_LOG_POST_TIMEOUT_S > deadline:
+                why = f'{why}; no retry: the red-log budget is spent'
                 break
-            sleep((2, 6)[attempt_no])
+            time.sleep(pause)
         if stored:
             member = member_of(key_name, f"{cfg['prefix']}{env['GITHUB_RUN_ID']}-{attempt}-") or ''
             answers[file] = (f"{RED_LOG_STORED}{stored} · read it: {RED_LOG_READER} {env.get('GITHUB_RUN_ID', '')} {member}"
                              " (its signed link is in the bridge's artifact comment)")
-            print(f'ok red log {name} stored privately ({len(body)} byte(s))')
+            print(f'ok red log stored privately ({len(body)} byte(s))')
         else:
             answers[file] = f'{RED_LOG_NOT_STORED}{file}: the upload failed: {why[:160]})'
             failed.append(f'{file}: the upload failed: {why[:160]}')
@@ -1710,7 +1710,6 @@ UNDISPATCHED_EVENTS = ('workflow_dispatch', 'schedule')
 def send_dispatch(env, cfg, opener=urllib.request.urlopen, clock=time.monotonic):
     """A workflow_dispatch or schedule run: no status (no private commit was dispatched), its red detail to the private home."""
     event = env.get('GITHUB_EVENT_NAME', '')
-    started = clock()
     url = cfg.get('dispatchDetailUrl')
     if not url:
         raise Lost('the config names no dispatchDetailUrl: this root does not declare workflow_dispatch to the generator')
@@ -1722,8 +1721,11 @@ def send_dispatch(env, cfg, opener=urllib.request.urlopen, clock=time.monotonic)
     except ValueError:
         raise Lost('NIKATRU_RESULTS is not the JSON map of job results the report job is given')
     details, lost = received_details(env, cfg)
-    share = red_log_share(cfg)
-    details, not_stored = store_red_logs(env, cfg, details, opener, clock=clock, deadline=None if share is None else started + share)
+    # ⏱ 2026-11-15 · reviews of d7aab07e MAJOR 5 and 2d8fac2c MAJOR 1: the dispatch send's red logs use the same own
+    # slice (redLogBudgetS) as the pull-request send.
+    log_budget = cfg.get('redLogBudgetS')
+    details, not_stored = store_red_logs(env, cfg, details, opener,
+                                         deadline=None if log_budget is None else clock() + log_budget, clock=clock)
     detail = dispatch_detail(details, lost, results, cfg)
     # ⏱ 2026-11-12 · O-C1111-DISPATCH-DETAIL-DROPPED-NOT-RED (lane c1116-ci-1; club-1111 review #9): a red job whose
     # detail no restore slot reached reds a manual or scheduled run too, as send() does for a dispatched one. Many roots
@@ -1749,7 +1751,7 @@ def send_dispatch(env, cfg, opener=urllib.request.urlopen, clock=time.monotonic)
                   ' (or no output had room for); each is named in the private detail with where its detail went')
         if not_stored:
             failed += 1
-            print(f"x LOG NOT STORED: {'; '.join(not_stored)[:600]}")
+            print(not_stored_line(not_stored))
         return 1 if failed else 0
     print(f"x  {event} red detail -> HTTP {status}{f' ({why})' if why else ''}")
     return 1
@@ -1928,9 +1930,6 @@ def send(env, cfg, opener=urllib.request.urlopen, clock=time.monotonic):
     except ValueError:
         raise Lost('NIKATRU_RESULTS is not the JSON map of job results the report job is given')
     details, lost = received_details(env, cfg)
-    # O-C1111-RED-LOGS-BEFORE-SEND-BUDGET: the budget's clock starts BEFORE the red-log uploads (red_log_share).
-    budget = cfg.get('sendBudgetS')
-    started = clock()
     failed = 0
     dropped = dropped_count(env)
     if dropped:
@@ -1939,16 +1938,23 @@ def send(env, cfg, opener=urllib.request.urlopen, clock=time.monotonic):
         failed += 1
         print(f"x {DETAIL_DROPPED} {cfg['gate']['context']}: {dropped} red job(s) whose detail no restore slot reached"
               ' (or no output had room for); each is named in the private detail with where its detail went')
-    share = red_log_share(cfg)
-    details, not_stored = store_red_logs(env, cfg, details, opener, clock=clock, deadline=None if share is None else started + share)
+    # ⏱ 2026-11-15 · review of 2d8fac2c MAJOR 1: the red-log uploads use their OWN slice (redLogBudgetS), and the send's
+    # budget starts after them, whole.
+    log_budget = cfg.get('redLogBudgetS')
+    details, not_stored = store_red_logs(env, cfg, details, opener,
+                                         deadline=None if log_budget is None else clock() + log_budget, clock=clock)
     if not_stored:
         # c1111-runner (option C): a red log the report job could not store is red, never best effort.
         failed += 1
-        print(f"x LOG NOT STORED: {'; '.join(not_stored)[:600]}")
+        print(not_stored_line(not_stored))
     # ⏱ 2026-10-08 (sysfix-a1-ci-shell, m6): ONE budget for the whole send, so it and its fallback end inside the
     # job's timeout (22 contexts x a hung bridge used to be ~36 min against 10); a post starts only while a whole
     # one still fits, and every context left is named, not sent. The gate goes first (items), so it is the last to lose.
-    # (`budget` and `started` are set above, before the red-log uploads.)
+    # ⏱ 2026-11-17 · merge of main c4c0419c: main's red_log_share (the uploads inside the send budget, lane c1116-ci-1)
+    # is superseded by the OWN red-log slice above (reviews of d7aab07e MAJOR 5 / 2d8fac2c MAJOR 1); the send's clock
+    # starts here, after the uploads.
+    budget = cfg.get('sendBudgetS')
+    started = clock()
     # O-CI-REPORTER-RED-ON-ALREADY-POSTED: one read before the posts, inside the budget, and only while the budget
     # still fits it AND one whole post after it (the gate's); otherwise unknown, and every context is posted.
     already, why = None, 'the send budget has no room for the read'
@@ -2060,6 +2066,7 @@ RUNNER_SOURCES = ('tooling/ci/quiet-step.mjs', 'tooling/ci/shell-report.py', 'to
                   'tooling/ci/flutter-release-build.mjs', 'tooling/ci/gate-verdict.mjs',
                   'tooling/ci/github-api-base.mjs', 'tooling/ci/previous-ci-history.mjs',
                   'tooling/ci/record-deployment.mjs', 'tooling/ci/run-context.mjs', 'tooling/ci/shell-handoff.mjs',
+                  'tooling/ci/shell-own-token.mjs',
                   'tooling/ci/tree-walk.mjs', 'tooling/ci/workflow-scan.mjs', 'tooling/generated/codehost.mjs',
                   'tooling/ops/actions-oidc.mjs', 'tooling/ops/bounded-retry.mjs',
                   'tooling/ops/retention-classes.mjs', 'tooling/ops/run-jobs.mjs')

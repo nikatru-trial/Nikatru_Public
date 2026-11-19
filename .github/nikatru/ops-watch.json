@@ -5,6 +5,7 @@
   "prefix": "nikatru-detail-",
   "slots": 32,
   "sendBudgetS": 360,
+  "redLogBudgetS": 240,
   "gate": {
     "job": "heartbeats",
     "context": "ops-watch",
@@ -81,6 +82,13 @@
       "context": "ops-watch/glitchtip",
       "members": [
         "ops-watch.glitchtip."
+      ]
+    },
+    {
+      "job": "money-reconcile-marker",
+      "context": "ops-watch/money-reconcile-marker",
+      "members": [
+        "ops-watch.money-reconcile-marker."
       ]
     },
     {
