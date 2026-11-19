@@ -296,6 +296,23 @@ jobs:
       - name: Read the status page's public origin from the register
         id: target
         run: node tooling/ci/site-target.mjs --emit status-site >> "$GITHUB_OUTPUT"
+      - name: Lay main's newest incidents over the vouched tree (incident text only), and grade them
+        id: incidents
+        run: |
+          set -uo pipefail
+          if node tooling/status/incident-overlay.mjs --from origin/main --github-output "$RUNNER_TEMP/incident-overlay.out" && node tooling/ci/assert-incidents.mjs; then
+            # ⏱ 2026-11-19 · review 78e6745b MINOR 7: a build that fails on main's incidents is refused like the overlay,
+            # never `exit 1` (that stopped the slot before a DOWN component was published): the vouched tree comes back.
+            if grep -qx 'changed=true' "$RUNNER_TEMP/incident-overlay.out" && ! node tooling/status/build-status.mjs; then
+              git checkout -- ops/incidents sites/status && git clean -fdq -- ops/incidents || exit 1
+              echo "::error title=Status incidents::the committed page could not be rebuilt from main's ops/incidents; this slot publishes the vouched tree's incidents (see the lines above)"
+              echo "refused=true" >> "$GITHUB_OUTPUT"
+            fi
+          else
+            git checkout -- ops/incidents && git clean -fdq -- ops/incidents || exit 1
+            echo "::error title=Status incidents::main's ops/incidents was refused or failed assert-incidents; this slot publishes the vouched tree's incidents (see the lines above)"
+            echo "refused=true" >> "$GITHUB_OUTPUT"
+          fi
       - name: Grade the committed status site
         run: |
           node tooling/status/build-status.mjs --sitemap
@@ -351,6 +368,11 @@ jobs:
           PAGES_DEPLOYMENT_ID: ${{ steps.deploy.outputs.pages-deployment-id }}
           SITE_ORIGIN: ${{ steps.target.outputs.origin }}
         run: node tooling/ci/record-deployment.mjs status-site "$SITE_ORIGIN" --pages-deployment-id "$PAGES_DEPLOYMENT_ID"
+      - name: Main's incidents were refused by the overlay (the page went out with the vouched tree's)
+        if: ${{ !cancelled() && steps.incidents.outputs.refused == 'true' }}
+        run: |
+          echo "::error title=Status incidents::main's ops/incidents was refused this slot: fix the path or the incident named above (assert-incidents IN-0..IN-5)"
+          exit 1
 
   nikatru-ran:
     name: Fail this run if it ran nothing (generated)

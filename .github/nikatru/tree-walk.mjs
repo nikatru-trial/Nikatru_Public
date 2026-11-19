@@ -23,7 +23,11 @@
 //       directory — i.e. it is the root of a NESTED CHECKOUT: a git worktree, a
 //       submodule, or a stray clone; or
 //     · it is named `.claude`, which is gitignored agent scratch space and is
-//       where this repository puts every agent worktree.
+//       where this repository puts every agent worktree; or
+//     · it is named `.worktrees`, the gitignored home of every detached
+//       checkout the tooling makes (preflight.mjs detachedCheckout) and of
+//       lane worktrees. Skipped BY NAME, because the `.git` rule is a
+//       point-in-time probe and races the checkout's own lifecycle (below).
 //
 //   The ROOT of the walk is never itself a candidate for exclusion — only
 //   entries found INSIDE it are — so pointing a guard at a checkout (which the
@@ -83,6 +87,26 @@ import { join } from 'node:path';
  *  recognisable as scratch. */
 export const SCRATCH_DIR_NAME = '.claude';
 
+/** The gitignored home of detached and lane checkouts, skipped by name at every
+ *  depth (as `.claude` is).
+ *
+ *  ⏱ 2026-11-18 · lane bl-wf-worktree-race-1119 (its row is being filed).
+ *  preflight.mjs `detachedCheckout` puts a base checkout at
+ *  `<main checkout>/.worktrees/<tag>-<sha8>-<pid>` — inside the tree when `.git`
+ *  sits at the checkout root, as on every CI runner. It must stay there (the
+ *  guards it re-runs find the workspace by walking UP; see rerunRedsOnBase).
+ *  real-submission-refusals makes one WHILE affected-guards (`--jobs 2`) runs
+ *  other guards, and the `.git` rule alone cannot hide it: `isNestedCheckout` is
+ *  asked once, when the parent is listed, and `git worktree remove --force`
+ *  deletes the checkout's files in directory order — `.git` can go first and the
+ *  rest is a full tree with no `.git`. #1586 run 44402756736: limb 16 of
+ *  assert-ports read `.worktrees/rsr-…/services/platform/src/adapters/mail/resend.ts`
+ *  as this tree's file. A name is not a probe, so it cannot lose that race. */
+export const WORKTREES_DIR_NAME = '.worktrees';
+
+/** Directory names that are never part of the tree under test, at any depth. */
+const SKIPPED_BY_NAME = new Set([SCRATCH_DIR_NAME, WORKTREES_DIR_NAME]);
+
 /** Is `absDir` the root of a different checkout? `.git` is a DIRECTORY in a
  *  clone or a submodule and a FILE (`gitdir: …`) in a worktree, so the test is
  *  existence, never `isDirectory()` — the worktree case is the one that bit. */
@@ -118,7 +142,7 @@ export function listDir(dir, options) {
   }
   const entries = readdirSync(dir, { withFileTypes: true });
   const kept = entries.filter(
-    (e) => !(e.isDirectory() && (e.name === SCRATCH_DIR_NAME || isNestedCheckout(join(dir, e.name)))),
+    (e) => !(e.isDirectory() && (SKIPPED_BY_NAME.has(e.name) || isNestedCheckout(join(dir, e.name)))),
   );
   return options?.withFileTypes ? kept : kept.map((e) => e.name);
 }
@@ -132,7 +156,7 @@ export function withinTree(root, relPath) {
   let cur = root;
   for (const segment of String(relPath).split(/[\\/]/).filter((s) => s !== '' && s !== '.')) {
     cur = join(cur, segment);
-    if (segment === SCRATCH_DIR_NAME || isNestedCheckout(cur)) return false;
+    if (SKIPPED_BY_NAME.has(segment) || isNestedCheckout(cur)) return false;
   }
   return true;
 }
