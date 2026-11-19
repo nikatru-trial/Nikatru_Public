@@ -697,11 +697,11 @@ jobs:
           NIKATRU_QUIET_EOF
           NIKATRU_SHELL="${BASH:-bash}"; if command -v cygpath >/dev/null 2>&1; then NIKATRU_SHELL="$(cygpath -w "$NIKATRU_SHELL")"; fi
           node "$GITHUB_WORKSPACE/../.nikatru-shell/quiet-step.mjs" --name submit-snap.dry-run.20 -- "$NIKATRU_SHELL" -e "$NIKATRU_QUIET"
-      - name: Every supported language is translated by the pipeline (linux-snap, dry run)
+      - name: Every supported language is translated by the pipeline (linux-snap, dry run; glossary non-vacuous, floor advisory)
         run: |
           NIKATRU_QUIET="$(mktemp "${RUNNER_TEMP:-/tmp}/nikatru-step.XXXXXX")"
           cat > "$NIKATRU_QUIET" <<'NIKATRU_QUIET_EOF'
-          node tooling/ci/assert-translations-generated.mjs --for-submission=linux-snap --real-submission
+          node tooling/ci/assert-translations-generated.mjs --for-submission=linux-snap --real-submission --glossary
           NIKATRU_QUIET_EOF
           NIKATRU_SHELL="${BASH:-bash}"; if command -v cygpath >/dev/null 2>&1; then NIKATRU_SHELL="$(cygpath -w "$NIKATRU_SHELL")"; fi
           node "$GITHUB_WORKSPACE/../.nikatru-shell/quiet-step.mjs" --name submit-snap.dry-run.21 -- "$NIKATRU_SHELL" -e "$NIKATRU_QUIET"
@@ -1362,8 +1362,8 @@ jobs:
           esac
       - name: Name clearance holds for linux-snap (owner HELD or PROVEN-FREE)
         run: node tooling/ci/assert-name-clearance.mjs --for-submission=linux-snap
-      - name: Every supported language is translated by the pipeline (linux-snap, real submission)
-        run: node tooling/ci/assert-translations-generated.mjs --for-submission=linux-snap --real-submission
+      - name: Every supported language is translated by the pipeline (linux-snap, real submission; glossary non-vacuous, floor advisory)
+        run: node tooling/ci/assert-translations-generated.mjs --for-submission=linux-snap --real-submission --glossary
       - name: The Snap Store screenshot set covers its declared device types
         run: node tooling/ci/assert-play-device-coverage.mjs --for-submission=linux-snap
       - name: A build that cannot sign in reaches no public risk (linux-snap)

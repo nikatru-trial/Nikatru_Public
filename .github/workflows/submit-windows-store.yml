@@ -920,9 +920,9 @@ jobs:
       - name: Name clearance holds for windows-store (owner HELD or PROVEN-FREE)
         shell: node ../.nikatru-shell/quiet-step.mjs --name submit-windows-store.dry-run.18 --default-shell {0}
         run: node tooling/ci/assert-name-clearance.mjs --for-submission=windows-store
-      - name: Every supported language is translated by the pipeline (windows-store, dry run)
+      - name: Every supported language is translated by the pipeline (windows-store, dry run; glossary non-vacuous, floor advisory)
         shell: node ../.nikatru-shell/quiet-step.mjs --name submit-windows-store.dry-run.19 --default-shell {0}
-        run: node tooling/ci/assert-translations-generated.mjs --for-submission=windows-store --real-submission
+        run: node tooling/ci/assert-translations-generated.mjs --for-submission=windows-store --real-submission --glossary
       - name: The app's Partner Center declarations are recorded (--for-submission)
         shell: bash
         run: |
@@ -1133,8 +1133,8 @@ jobs:
           esac
       - name: Name clearance holds for windows-store (owner HELD or PROVEN-FREE)
         run: node tooling/ci/assert-name-clearance.mjs --for-submission=windows-store
-      - name: Every supported language is translated by the pipeline (windows-store, real submission)
-        run: node tooling/ci/assert-translations-generated.mjs --for-submission=windows-store --real-submission
+      - name: Every supported language is translated by the pipeline (windows-store, real submission; glossary non-vacuous, floor advisory)
+        run: node tooling/ci/assert-translations-generated.mjs --for-submission=windows-store --real-submission --glossary
       - name: The app's Partner Center declarations are recorded (--for-submission)
         shell: bash
         run: node tooling/ci/assert-sworn-store-files.mjs --for-submission=windows-store --app "$APP" --real-submission

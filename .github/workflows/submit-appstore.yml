@@ -697,11 +697,11 @@ jobs:
           NIKATRU_QUIET_EOF
           NIKATRU_SHELL="${BASH:-bash}"; if command -v cygpath >/dev/null 2>&1; then NIKATRU_SHELL="$(cygpath -w "$NIKATRU_SHELL")"; fi
           node "$GITHUB_WORKSPACE/../.nikatru-shell/quiet-step.mjs" --name submit-appstore.dry-run.24 -- "$NIKATRU_SHELL" -e "$NIKATRU_QUIET"
-      - name: Every supported language is translated by the pipeline (ios-appstore, dry run)
+      - name: Every supported language is translated by the pipeline (ios-appstore, dry run; glossary non-vacuous, floor advisory)
         run: |
           NIKATRU_QUIET="$(mktemp "${RUNNER_TEMP:-/tmp}/nikatru-step.XXXXXX")"
           cat > "$NIKATRU_QUIET" <<'NIKATRU_QUIET_EOF'
-          node tooling/ci/assert-translations-generated.mjs --for-submission=ios-appstore --real-submission
+          node tooling/ci/assert-translations-generated.mjs --for-submission=ios-appstore --real-submission --glossary
           NIKATRU_QUIET_EOF
           NIKATRU_SHELL="${BASH:-bash}"; if command -v cygpath >/dev/null 2>&1; then NIKATRU_SHELL="$(cygpath -w "$NIKATRU_SHELL")"; fi
           node "$GITHUB_WORKSPACE/../.nikatru-shell/quiet-step.mjs" --name submit-appstore.dry-run.25 -- "$NIKATRU_SHELL" -e "$NIKATRU_QUIET"
@@ -713,11 +713,11 @@ jobs:
           NIKATRU_QUIET_EOF
           NIKATRU_SHELL="${BASH:-bash}"; if command -v cygpath >/dev/null 2>&1; then NIKATRU_SHELL="$(cygpath -w "$NIKATRU_SHELL")"; fi
           node "$GITHUB_WORKSPACE/../.nikatru-shell/quiet-step.mjs" --name submit-appstore.dry-run.26 -- "$NIKATRU_SHELL" -e "$NIKATRU_QUIET"
-      - name: Every supported language is translated by the pipeline (macos-appstore, dry run)
+      - name: Every supported language is translated by the pipeline (macos-appstore, dry run; glossary non-vacuous, floor advisory)
         run: |
           NIKATRU_QUIET="$(mktemp "${RUNNER_TEMP:-/tmp}/nikatru-step.XXXXXX")"
           cat > "$NIKATRU_QUIET" <<'NIKATRU_QUIET_EOF'
-          node tooling/ci/assert-translations-generated.mjs --for-submission=macos-appstore --real-submission
+          node tooling/ci/assert-translations-generated.mjs --for-submission=macos-appstore --real-submission --glossary
           NIKATRU_QUIET_EOF
           NIKATRU_SHELL="${BASH:-bash}"; if command -v cygpath >/dev/null 2>&1; then NIKATRU_SHELL="$(cygpath -w "$NIKATRU_SHELL")"; fi
           node "$GITHUB_WORKSPACE/../.nikatru-shell/quiet-step.mjs" --name submit-appstore.dry-run.27 -- "$NIKATRU_SHELL" -e "$NIKATRU_QUIET"
@@ -1054,12 +1054,12 @@ jobs:
         run: node tooling/ci/apple-signing.mjs --app "$APP" --channel ios-appstore --channel macos-appstore
       - name: Name clearance holds for ios-appstore (owner HELD or PROVEN-FREE)
         run: node tooling/ci/assert-name-clearance.mjs --for-submission=ios-appstore
-      - name: Every supported language is translated by the pipeline (ios-appstore, real submission)
-        run: node tooling/ci/assert-translations-generated.mjs --for-submission=ios-appstore --real-submission
+      - name: Every supported language is translated by the pipeline (ios-appstore, real submission; glossary non-vacuous, floor advisory)
+        run: node tooling/ci/assert-translations-generated.mjs --for-submission=ios-appstore --real-submission --glossary
       - name: Name clearance holds for macos-appstore (owner HELD or PROVEN-FREE)
         run: node tooling/ci/assert-name-clearance.mjs --for-submission=macos-appstore
-      - name: Every supported language is translated by the pipeline (macos-appstore, real submission)
-        run: node tooling/ci/assert-translations-generated.mjs --for-submission=macos-appstore --real-submission
+      - name: Every supported language is translated by the pipeline (macos-appstore, real submission; glossary non-vacuous, floor advisory)
+        run: node tooling/ci/assert-translations-generated.mjs --for-submission=macos-appstore --real-submission --glossary
       - name: Every auto-renewable has its review screenshot (--for-submission)
         env:
           APPLE_RELEASE_TARGET: testflight
