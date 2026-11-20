@@ -66,7 +66,7 @@ b99ddd9e8da2eb7e72dfe5a35a4c9ce216524e4e4a4225e226649ae2e24550a3
 shell/.github/workflows/ci.yml
 e73183fe173d63bb763e51587cdcf3e47528d1c75483b738d6bc4917ea44bad6
 shell/.github/workflows/claude-review.yml
-49c122e922aa71039f57b0498381fb20c749a9dbcda477a86458172dc96e4d5f
+6569e1b846becc72122ae939bb58eae8b260ca00a65e42ac883250b9e02bc97f
 shell/.github/workflows/claude-triage.yml
 6404b439edebcde894c50be553fb7f2ba86acb29ead8e3cbba213880958cdf33
 shell/.github/workflows/codeql.yml
