@@ -2060,10 +2060,11 @@ jobs:
           node "$GITHUB_WORKSPACE/../.nikatru-shell/quiet-step.mjs" --name lane-guards.guards-platform.66 -- "$NIKATRU_SHELL" -e "$NIKATRU_QUIET"
       - name: A new D1 migration names its rollback floor or says why none is needed
         if: ${{ !cancelled() }}
+        timeout-minutes: 3
         run: |
           NIKATRU_QUIET="$(mktemp "${RUNNER_TEMP:-/tmp}/nikatru-step.XXXXXX")"
           cat > "$NIKATRU_QUIET" <<'NIKATRU_QUIET_EOF'
-          node tooling/ci/assert-migration-floors.mjs
+          node --single-threaded tooling/ci/assert-migration-floors.mjs
           NIKATRU_QUIET_EOF
           NIKATRU_SHELL="${BASH:-bash}"; if command -v cygpath >/dev/null 2>&1; then NIKATRU_SHELL="$(cygpath -w "$NIKATRU_SHELL")"; fi
           node "$GITHUB_WORKSPACE/../.nikatru-shell/quiet-step.mjs" --name lane-guards.guards-platform.67 -- "$NIKATRU_SHELL" -e "$NIKATRU_QUIET"
