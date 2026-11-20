@@ -114,7 +114,7 @@ shell/.github/workflows/migrate-platform-db.yml
 shell/.github/workflows/money-sandbox-e2e.yml
 9aee1ae6b08bfe9b98353b1b3e362cdb6e945805a9daa07d0a9c0dcfefb98433
 shell/.github/workflows/money-sandbox-legs.yml
-350bb5b697ce040619a9af110c5de4116c2be56c818b0061067794ac7b7ac57c
+df0e64d966d375dd562e99de836f07dc0e2374ac908e0aa7a810ee8c213a4f01
 shell/.github/workflows/mutation-proofs.yml
 76fc526202f41203e7852d1b125d390de53de760837d486493a4b1eff6740bc5
 shell/.github/workflows/name-clearance.yml

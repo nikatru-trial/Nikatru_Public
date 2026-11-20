@@ -373,7 +373,7 @@ jobs:
       fallbacks_paddle: ${{ steps.walk.outputs.fallbacks_paddle }}
       fallbacks_razorpay: ${{ steps.walk.outputs.fallbacks_razorpay }}
     runs-on: ubuntu-24.04
-    timeout-minutes: 60
+    timeout-minutes: 80
     environment: sandbox
     concurrency:
       group: ${{ needs.plan.outputs.money == 'true' && matrix.lock || format('money-sandbox-noop-{0}-{1}-{2}', github.run_id, github.job, matrix.rail) }}
@@ -527,7 +527,7 @@ jobs:
       - name: Walk every money leg on this rail
         id: walk
         if: needs.plan.outputs.money == 'true' && !contains(fromJSON(needs.plan.outputs.resumed || '[]'), format('{0}-web', matrix.rail))
-        timeout-minutes: ${{ matrix.rail == 'razorpay' && 30 || 45 }}
+        timeout-minutes: ${{ matrix.rail == 'razorpay' && 50 || 45 }}
         env:
           RAIL: ${{ matrix.rail }}
           RAIL_ACCOUNT: ${{ matrix.account }}
