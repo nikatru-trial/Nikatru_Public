@@ -57,7 +57,7 @@ jobs:
   publish:
     name: Post main's health on the commit CI ran on
     runs-on: ubuntu-24.04
-    timeout-minutes: 132
+    timeout-minutes: 139
     permissions:
       contents: read
       actions: read
@@ -144,7 +144,7 @@ jobs:
               esac
             fi
             waited=$(( $(date +%s) - start ))
-            if [ "$waited" -ge 7620 ]; then break; fi
+            if [ "$waited" -ge 8040 ]; then break; fi
             if [ "$waited" -lt 180 ]; then pause=5; else pause=30; fi
             sleep "$pause"
           done

@@ -58,7 +58,7 @@ shell/.github/workflows/apple-expiry-write.yml
 shell/.github/workflows/artifact-drill.yml
 e516ea108b8bc722360988b47aabe59096fcc564c7154b5e98cf4364b571ae8a
 shell/.github/workflows/autopilot-watch.yml
-b4b5f2633ad607087c68098ed9a18c70d1bb3dbb86906656afa6b8def734eeaf
+a29362f5e953016fabdbbaa8b224e2f1dbd48ba7c99b3342cdf47d7ed294c98c
 shell/.github/workflows/build-platforms.yml
 4d82875f20f5c9707d145942b7e6f00d124b0324edf9c23872c68660cd3c13b7
 shell/.github/workflows/catalog-sync.yml
@@ -108,13 +108,13 @@ shell/.github/workflows/load-rehearsal.yml
 shell/.github/workflows/machinery-canary.yml
 6385211fd031b6d8c0c76feafec02fabf5f33f95908c17437ad796c8b982b71c
 shell/.github/workflows/main-healthy.yml
-f0b213daa7f24a8954abf4465e7d17692b09b4ee7b07ccd976455a8bfb6f9751
+342dc56faaf5cb67ae5c5f212dd368dba766b16f9cc77e70a5fd18a2ef59a98d
 shell/.github/workflows/migrate-platform-db.yml
 741ed19defc32a39f9d216d137907de683ada6df9cff245ee4f0c834b44a9d0c
 shell/.github/workflows/money-sandbox-e2e.yml
 9aee1ae6b08bfe9b98353b1b3e362cdb6e945805a9daa07d0a9c0dcfefb98433
 shell/.github/workflows/money-sandbox-legs.yml
-df0e64d966d375dd562e99de836f07dc0e2374ac908e0aa7a810ee8c213a4f01
+3a6cf411b362ba92e2651be9fe921dea52ebae380e844060d314ad1e51d7c211
 shell/.github/workflows/mutation-proofs.yml
 76fc526202f41203e7852d1b125d390de53de760837d486493a4b1eff6740bc5
 shell/.github/workflows/name-clearance.yml

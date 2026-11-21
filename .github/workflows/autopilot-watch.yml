@@ -161,7 +161,7 @@ jobs:
     name: Laptop state, PR board, run ledger
     if: (github.event.client_payload.ref || 'refs/heads/main') == 'refs/heads/main'
     runs-on: ubuntu-24.04
-    timeout-minutes: 137
+    timeout-minutes: 144
     permissions:
       contents: read
       statuses: read
@@ -243,7 +243,7 @@ jobs:
               esac
             fi
             waited=$(( $(date +%s) - start ))
-            if [ "$waited" -ge 7620 ]; then break; fi
+            if [ "$waited" -ge 8040 ]; then break; fi
             if [ "$waited" -lt 180 ]; then pause=5; else pause=30; fi
             sleep "$pause"
           done
@@ -331,7 +331,7 @@ jobs:
     name: E2E after a web deploy
     if: (github.event.client_payload.ref || 'refs/heads/main') == 'refs/heads/main'
     runs-on: ubuntu-24.04
-    timeout-minutes: 132
+    timeout-minutes: 139
     permissions:
       contents: read
       actions: write
@@ -412,7 +412,7 @@ jobs:
               esac
             fi
             waited=$(( $(date +%s) - start ))
-            if [ "$waited" -ge 7620 ]; then break; fi
+            if [ "$waited" -ge 8040 ]; then break; fi
             if [ "$waited" -lt 180 ]; then pause=5; else pause=30; fi
             sleep "$pause"
           done
