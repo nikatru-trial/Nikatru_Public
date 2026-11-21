@@ -94,7 +94,7 @@ shell/.github/workflows/guards-only.yml
 shell/.github/workflows/kill-switch.yml
 1de4d8fd1af46cb24c365aa6edad54ca843fc8fba5bdb3093fcd7024d73b41e6
 shell/.github/workflows/lane-apps.yml
-733fd5a2f1f4d0f135dad09d7be27d5e54f2c1d9ddff160cd8722eb07b8c0d2b
+e011d3082768020608111eb6ffcd2998a13fc69676d10268f32390fe1836e22f
 shell/.github/workflows/lane-build.yml
 ee00fc03682e71b6f49bf7bcff23bf6c84b10c362767ec27be0a05ef42cef34f
 shell/.github/workflows/lane-guards.yml
