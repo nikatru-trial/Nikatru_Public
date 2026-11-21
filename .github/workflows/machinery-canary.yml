@@ -356,6 +356,7 @@ jobs:
           path: .canary-machinery
           sparse-checkout: .github/ISSUE_TEMPLATE
           fetch-depth: 0
+          filter: blob:none
           ssh-key: ${{ secrets.PRIVATE_DEPLOY_KEY }}
           persist-credentials: false
         timeout-minutes: 3
@@ -367,6 +368,7 @@ jobs:
           path: .canary-peer
           sparse-checkout: .github/ISSUE_TEMPLATE
           fetch-depth: 0
+          filter: blob:none
           ssh-key: ${{ secrets.PRIVATE_DEPLOY_KEY }}
           persist-credentials: false
         timeout-minutes: 3
@@ -635,6 +637,7 @@ jobs:
           path: .canary-machinery
           sparse-checkout: .github/ISSUE_TEMPLATE
           fetch-depth: 0
+          filter: blob:none
           ssh-key: ${{ secrets.PRIVATE_DEPLOY_KEY }}
           persist-credentials: false
         timeout-minutes: 3
@@ -936,6 +939,7 @@ jobs:
           path: .canary-machinery
           sparse-checkout: .github/ISSUE_TEMPLATE
           fetch-depth: 0
+          filter: blob:none
           ssh-key: ${{ secrets.PRIVATE_DEPLOY_KEY }}
           persist-credentials: false
       - name: Verify private main's composite actions are the checked-out tree (generated)

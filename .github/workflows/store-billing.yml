@@ -149,15 +149,12 @@ jobs:
           echo "sha=$NIKATRU_PINNED" >> "$GITHUB_OUTPUT"
 
   generated:
-    needs: [nikatru-pin]
+    needs: [nikatru-pin, nikatru-detail-keys]
     name: The StoreKit configurations match the offerings register
     runs-on: ubuntu-24.04
     timeout-minutes: 10
     outputs:
       apps: ${{ steps.apps.outputs.apps }}
-    permissions:
-      contents: read
-      id-token: write
     steps:
       - name: Check out the private tree (generated)
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
@@ -285,30 +282,38 @@ jobs:
           NIKATRU_QUIET_EOF
           NIKATRU_SHELL="${BASH:-bash}"; if command -v cygpath >/dev/null 2>&1; then NIKATRU_SHELL="$(cygpath -w "$NIKATRU_SHELL")"; fi
           node "$GITHUB_WORKSPACE/../.nikatru-shell/quiet-step.mjs" --name store-billing.generated.5 -- "$NIKATRU_SHELL" -e "$NIKATRU_QUIET"
-      - name: Store this job's red detail in the bridge's private home (generated)
+      - name: Seal this job's red detail to this run's one-time key (generated)
+        id: nikatru-seal-detail
         if: always()
         continue-on-error: true
         shell: bash
         working-directory: ${{ github.workspace }}
         env:
-          NIKATRU_PATHS: ${{ runner.temp }}/report-detail.md
-          NIKATRU_ARTIFACT_NAME: report-detail-store-billing.generated.${{ strategy.job-index }}
-          NIKATRU_IF_NO_FILES: ignore
-          BRIDGE_ARTIFACT_SECRET: ${{ secrets.BRIDGE_ARTIFACT_SECRET }}
-          NIKATRU_BRIDGE_ARTIFACT_URL: https://gh-bridge.nikatru.workers.dev/artifact
-        run: node tooling/ops/bridge-artifact.mjs upload
+          NIKATRU_DETAIL_FILE: ${{ runner.temp }}/report-detail.md
+          NIKATRU_SEALED_OUT: ${{ runner.temp }}/nikatru-sealed-detail/sealed.bin
+          NIKATRU_HANDOFF_RECIPIENT: ${{ needs.nikatru-detail-keys.outputs.recipient }}
+          NIKATRU_HANDOFF_KEY: nikatru-sealed-detail-store-billing-generated-${{ strategy.job-index }}/${{ github.run_id }}
+        run: mkdir -p "$RUNNER_TEMP/nikatru-sealed-detail" && node tooling/ci/shell-handoff.mjs seal-detail
+      - name: Hand this job's sealed red detail to the store job (generated)
+        if: always() && steps.nikatru-seal-detail.outputs.sealed == 'true'
+        continue-on-error: true
+        timeout-minutes: 5
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9
+        with:
+          name: nikatru-sealed-detail-store-billing-generated-${{ strategy.job-index }}
+          path: ${{ runner.temp }}/nikatru-sealed-detail/sealed.bin
+          if-no-files-found: error
+          retention-days: 1
+          overwrite: true
 
   server:
-    needs: [nikatru-pin]
+    needs: [nikatru-pin, nikatru-detail-keys]
     name: Platform Worker — RTDN, locally-signed and altered JWS refused, iap suites
     runs-on: ubuntu-24.04
     timeout-minutes: 15
     defaults:
       run:
         working-directory: services/platform
-    permissions:
-      contents: read
-      id-token: write
     steps:
       - name: Check out the private tree (generated)
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
@@ -415,27 +420,35 @@ jobs:
           NIKATRU_QUIET_EOF
           NIKATRU_SHELL="${BASH:-bash}"; if command -v cygpath >/dev/null 2>&1; then NIKATRU_SHELL="$(cygpath -w "$NIKATRU_SHELL")"; fi
           node "$GITHUB_WORKSPACE/../.nikatru-shell/quiet-step.mjs" --name store-billing.server.4 -- "$NIKATRU_SHELL" -e "$NIKATRU_QUIET"
-      - name: Store this job's red detail in the bridge's private home (generated)
+      - name: Seal this job's red detail to this run's one-time key (generated)
+        id: nikatru-seal-detail
         if: always()
         continue-on-error: true
         shell: bash
         working-directory: ${{ github.workspace }}
         env:
-          NIKATRU_PATHS: ${{ runner.temp }}/report-detail.md
-          NIKATRU_ARTIFACT_NAME: report-detail-store-billing.server.${{ strategy.job-index }}
-          NIKATRU_IF_NO_FILES: ignore
-          BRIDGE_ARTIFACT_SECRET: ${{ secrets.BRIDGE_ARTIFACT_SECRET }}
-          NIKATRU_BRIDGE_ARTIFACT_URL: https://gh-bridge.nikatru.workers.dev/artifact
-        run: node tooling/ops/bridge-artifact.mjs upload
+          NIKATRU_DETAIL_FILE: ${{ runner.temp }}/report-detail.md
+          NIKATRU_SEALED_OUT: ${{ runner.temp }}/nikatru-sealed-detail/sealed.bin
+          NIKATRU_HANDOFF_RECIPIENT: ${{ needs.nikatru-detail-keys.outputs.recipient }}
+          NIKATRU_HANDOFF_KEY: nikatru-sealed-detail-store-billing-server-${{ strategy.job-index }}/${{ github.run_id }}
+        run: mkdir -p "$RUNNER_TEMP/nikatru-sealed-detail" && node tooling/ci/shell-handoff.mjs seal-detail
+      - name: Hand this job's sealed red detail to the store job (generated)
+        if: always() && steps.nikatru-seal-detail.outputs.sealed == 'true'
+        continue-on-error: true
+        timeout-minutes: 5
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9
+        with:
+          name: nikatru-sealed-detail-store-billing-server-${{ strategy.job-index }}
+          path: ${{ runner.temp }}/nikatru-sealed-detail/sealed.bin
+          if-no-files-found: error
+          retention-days: 1
+          overwrite: true
 
   client:
-    needs: [nikatru-pin]
+    needs: [nikatru-pin, nikatru-detail-keys]
     name: Dart client half — every scenario, Play and StoreKit (scripted store)
     runs-on: ubuntu-24.04
     timeout-minutes: 20
-    permissions:
-      contents: read
-      id-token: write
     steps:
       - name: Check out the private tree (generated)
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
@@ -547,22 +560,33 @@ jobs:
           NIKATRU_QUIET_EOF
           NIKATRU_SHELL="${BASH:-bash}"; if command -v cygpath >/dev/null 2>&1; then NIKATRU_SHELL="$(cygpath -w "$NIKATRU_SHELL")"; fi
           node "$GITHUB_WORKSPACE/../.nikatru-shell/quiet-step.mjs" --name store-billing.client.4 -- "$NIKATRU_SHELL" -e "$NIKATRU_QUIET"
-      - name: Store this job's red detail in the bridge's private home (generated)
+      - name: Seal this job's red detail to this run's one-time key (generated)
+        id: nikatru-seal-detail
         if: always()
         continue-on-error: true
         shell: bash
         working-directory: ${{ github.workspace }}
         env:
-          NIKATRU_PATHS: ${{ runner.temp }}/report-detail.md
-          NIKATRU_ARTIFACT_NAME: report-detail-store-billing.client.${{ strategy.job-index }}
-          NIKATRU_IF_NO_FILES: ignore
-          BRIDGE_ARTIFACT_SECRET: ${{ secrets.BRIDGE_ARTIFACT_SECRET }}
-          NIKATRU_BRIDGE_ARTIFACT_URL: https://gh-bridge.nikatru.workers.dev/artifact
-        run: node tooling/ops/bridge-artifact.mjs upload
+          NIKATRU_DETAIL_FILE: ${{ runner.temp }}/report-detail.md
+          NIKATRU_SEALED_OUT: ${{ runner.temp }}/nikatru-sealed-detail/sealed.bin
+          NIKATRU_HANDOFF_RECIPIENT: ${{ needs.nikatru-detail-keys.outputs.recipient }}
+          NIKATRU_HANDOFF_KEY: nikatru-sealed-detail-store-billing-client-${{ strategy.job-index }}/${{ github.run_id }}
+        run: mkdir -p "$RUNNER_TEMP/nikatru-sealed-detail" && node tooling/ci/shell-handoff.mjs seal-detail
+      - name: Hand this job's sealed red detail to the store job (generated)
+        if: always() && steps.nikatru-seal-detail.outputs.sealed == 'true'
+        continue-on-error: true
+        timeout-minutes: 5
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9
+        with:
+          name: nikatru-sealed-detail-store-billing-client-${{ strategy.job-index }}
+          path: ${{ runner.temp }}/nikatru-sealed-detail/sealed.bin
+          if-no-files-found: error
+          retention-days: 1
+          overwrite: true
 
   storekit:
     name: StoreKit Testing — ${{ matrix.app }} (simulator)
-    needs: [nikatru-pin, generated]
+    needs: [nikatru-pin, generated, nikatru-detail-keys]
     runs-on: macos-26
     timeout-minutes: 50
     strategy:
@@ -573,9 +597,6 @@ jobs:
       APP: ${{ matrix.app }}
       DEVELOPER_DIR: /Applications/Xcode_26.2.app/Contents/Developer
       STOREKIT_XCODE: '26.2'
-    permissions:
-      contents: read
-      id-token: write
     steps:
       - name: Check out the private tree (generated)
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
@@ -863,7 +884,8 @@ jobs:
           NIKATRU_QUIET_EOF
           NIKATRU_SHELL="${BASH:-bash}"; if command -v cygpath >/dev/null 2>&1; then NIKATRU_SHELL="$(cygpath -w "$NIKATRU_SHELL")"; fi
           node "$GITHUB_WORKSPACE/../.nikatru-shell/quiet-step.mjs" --name store-billing.storekit.14 -- "$NIKATRU_SHELL" -e "$NIKATRU_QUIET"
-      - name: Store storekit-xcresult-${{ matrix.app }} in the bridge's private home (generated)
+      - name: Seal storekit-xcresult-${{ matrix.app }} to this run's one-time key (generated)
+        id: nikatru-seal-upload-1
         if: always()
         continue-on-error: true
         shell: bash
@@ -872,11 +894,22 @@ jobs:
           NIKATRU_PATHS: |
             ${{ runner.temp }}/xcodebuild.log
             ${{ runner.temp }}/StoreBillingTests.xcresult
-          NIKATRU_ARTIFACT_NAME: storekit-xcresult-${{ matrix.app }}
           NIKATRU_IF_NO_FILES: ignore
-          BRIDGE_ARTIFACT_SECRET: ${{ secrets.BRIDGE_ARTIFACT_SECRET }}
-          NIKATRU_BRIDGE_ARTIFACT_URL: https://gh-bridge.nikatru.workers.dev/artifact
-        run: node tooling/ops/bridge-artifact.mjs upload
+          NIKATRU_SEALED_OUT: ${{ runner.temp }}/nikatru-sealed-upload-1/sealed.bin
+          NIKATRU_HANDOFF_RECIPIENT: ${{ needs.nikatru-detail-keys.outputs.recipient }}
+          NIKATRU_HANDOFF_KEY: nikatru-sealed-upload-store-billing-storekit-xcresult-${{ matrix.app }}/${{ github.run_id }}
+        run: mkdir -p "$RUNNER_TEMP/nikatru-sealed-upload-1" && node tooling/ci/shell-handoff.mjs seal-upload
+      - name: Hand storekit-xcresult-${{ matrix.app }} sealed to the store job (generated)
+        if: ${{ (always()) && steps.nikatru-seal-upload-1.outputs.sealed == 'true' }}
+        continue-on-error: true
+        timeout-minutes: 10
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9
+        with:
+          name: nikatru-sealed-upload-store-billing-storekit-xcresult-${{ matrix.app }}
+          path: ${{ runner.temp }}/nikatru-sealed-upload-1/sealed.bin
+          if-no-files-found: error
+          retention-days: 1
+          overwrite: true
       - run: |
           NIKATRU_QUIET="$(mktemp "${RUNNER_TEMP:-/tmp}/nikatru-step.XXXXXX")"
           cat > "$NIKATRU_QUIET" <<'NIKATRU_QUIET_EOF'
@@ -896,18 +929,29 @@ jobs:
           NIKATRU_QUIET_EOF
           NIKATRU_SHELL="${BASH:-bash}"; if command -v cygpath >/dev/null 2>&1; then NIKATRU_SHELL="$(cygpath -w "$NIKATRU_SHELL")"; fi
           node "$GITHUB_WORKSPACE/../.nikatru-shell/quiet-step.mjs" --name store-billing.storekit.17 -- "$NIKATRU_SHELL" -e "$NIKATRU_QUIET"
-      - name: Store this job's red detail in the bridge's private home (generated)
+      - name: Seal this job's red detail to this run's one-time key (generated)
+        id: nikatru-seal-detail
         if: always()
         continue-on-error: true
         shell: bash
         working-directory: ${{ github.workspace }}
         env:
-          NIKATRU_PATHS: ${{ runner.temp }}/report-detail.md
-          NIKATRU_ARTIFACT_NAME: report-detail-store-billing.storekit.${{ strategy.job-index }}
-          NIKATRU_IF_NO_FILES: ignore
-          BRIDGE_ARTIFACT_SECRET: ${{ secrets.BRIDGE_ARTIFACT_SECRET }}
-          NIKATRU_BRIDGE_ARTIFACT_URL: https://gh-bridge.nikatru.workers.dev/artifact
-        run: node tooling/ops/bridge-artifact.mjs upload
+          NIKATRU_DETAIL_FILE: ${{ runner.temp }}/report-detail.md
+          NIKATRU_SEALED_OUT: ${{ runner.temp }}/nikatru-sealed-detail/sealed.bin
+          NIKATRU_HANDOFF_RECIPIENT: ${{ needs.nikatru-detail-keys.outputs.recipient }}
+          NIKATRU_HANDOFF_KEY: nikatru-sealed-detail-store-billing-storekit-${{ strategy.job-index }}/${{ github.run_id }}
+        run: mkdir -p "$RUNNER_TEMP/nikatru-sealed-detail" && node tooling/ci/shell-handoff.mjs seal-detail
+      - name: Hand this job's sealed red detail to the store job (generated)
+        if: always() && steps.nikatru-seal-detail.outputs.sealed == 'true'
+        continue-on-error: true
+        timeout-minutes: 5
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9
+        with:
+          name: nikatru-sealed-detail-store-billing-storekit-${{ strategy.job-index }}
+          path: ${{ runner.temp }}/nikatru-sealed-detail/sealed.bin
+          if-no-files-found: error
+          retention-days: 1
+          overwrite: true
 
   apple-notification:
     name: Apple test notification reaches us and is verified — ${{ matrix.app }}
@@ -1185,6 +1229,113 @@ jobs:
         env:
           NIKATRU_PATHS: ${{ runner.temp }}/report-detail.md
           NIKATRU_ARTIFACT_NAME: report-detail-store-billing.device-proof.${{ strategy.job-index }}
+          NIKATRU_IF_NO_FILES: ignore
+          BRIDGE_ARTIFACT_SECRET: ${{ secrets.BRIDGE_ARTIFACT_SECRET }}
+          NIKATRU_BRIDGE_ARTIFACT_URL: https://gh-bridge.nikatru.workers.dev/artifact
+        run: node tooling/ops/bridge-artifact.mjs upload
+
+  nikatru-detail-keys:
+    name: Make this run's one-time key for the branch jobs' sealed red detail (generated)
+    needs: [nikatru-pin]
+    runs-on: ubuntu-24.04
+    defaults:
+      run:
+        working-directory: ${{ github.workspace }}
+    timeout-minutes: 10
+    permissions:
+      contents: read
+    outputs:
+      recipient: ${{ steps.nikatru-detail-pair.outputs.recipient }}
+    steps:
+      - name: Check out private main's hand-off script (generated)
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
+        with:
+          repository: ${{ env.NIKATRU_PRIVATE_REPO }}
+          ref: main
+          sparse-checkout: |
+            tooling/ci
+          ssh-key: ${{ secrets.PRIVATE_DEPLOY_KEY }}
+          persist-credentials: false
+      - name: This run's public key for the sealed red detail (generated)
+        id: nikatru-detail-pair
+        shell: bash
+        env:
+          NIKATRU_DETAIL_KEY: ${{ secrets.NIKATRU_DETAIL_KEY }}
+        run: node tooling/ci/shell-handoff.mjs detail-recipient
+
+  nikatru-detail-store:
+    name: Store the branch jobs' sealed red detail privately, with private main's uploader (generated)
+    needs: [nikatru-pin, nikatru-detail-keys, generated, server, client, storekit]
+    if: "!cancelled() && needs.nikatru-detail-keys.result == 'success'"
+    runs-on: ubuntu-24.04
+    defaults:
+      run:
+        working-directory: ${{ github.workspace }}
+    timeout-minutes: 15
+    permissions:
+      contents: read
+      id-token: write
+    steps:
+      - name: Check out private main's hand-off script and uploader (generated)
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
+        with:
+          repository: ${{ env.NIKATRU_PRIVATE_REPO }}
+          ref: main
+          sparse-checkout: |
+            tooling/ci
+            tooling/ops
+            tooling/app-yaml
+            tooling/catalog
+            tooling/entity
+            tooling/legal
+            tooling/ports
+            services/gh-bridge
+          ssh-key: ${{ secrets.PRIVATE_DEPLOY_KEY }}
+          persist-credentials: false
+      - name: Download this run's sealed red detail (generated)
+        continue-on-error: true
+        timeout-minutes: 6
+        uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333
+        with:
+          pattern: nikatru-sealed-detail-store-billing-*
+          path: ${{ runner.temp }}/nikatru-sealed-cells
+      - name: Open each branch job's sealed red detail (generated)
+        shell: bash
+        env:
+          NIKATRU_DETAIL_KEY: ${{ secrets.NIKATRU_DETAIL_KEY }}
+        run: node tooling/ci/shell-handoff.mjs open-detail-cells --dir "$RUNNER_TEMP/nikatru-sealed-cells" --prefix nikatru-sealed-detail-store-billing- --out "$RUNNER_TEMP/report-detail.md"
+      - name: Download this run's sealed uploads (generated)
+        if: ${{ !cancelled() }}
+        continue-on-error: true
+        timeout-minutes: 6
+        uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333
+        with:
+          pattern: nikatru-sealed-upload-store-billing-*
+          path: ${{ runner.temp }}/nikatru-sealed-uploads
+      - name: Open each branch job's sealed upload (generated)
+        if: ${{ !cancelled() }}
+        shell: bash
+        env:
+          NIKATRU_DETAIL_KEY: ${{ secrets.NIKATRU_DETAIL_KEY }}
+        run: node tooling/ci/shell-handoff.mjs open-upload-cells --dir "$RUNNER_TEMP/nikatru-sealed-uploads" --prefix nikatru-sealed-upload-store-billing- --out "$RUNNER_TEMP/nikatru-opened-uploads"
+      - name: Store the branch jobs' sealed uploads in the bridge's private home (generated)
+        if: ${{ !cancelled() }}
+        shell: bash
+        working-directory: ${{ github.workspace }}
+        env:
+          NIKATRU_UPLOAD_MANIFEST: ${{ runner.temp }}/nikatru-opened-uploads/manifest.json
+          NIKATRU_UPLOAD_DECLARED: '[{"name":"storekit-xcresult-*","retention":null}]'
+          BRIDGE_ARTIFACT_SECRET: ${{ secrets.BRIDGE_ARTIFACT_SECRET }}
+          NIKATRU_BRIDGE_ARTIFACT_URL: https://gh-bridge.nikatru.workers.dev/artifact
+        run: node tooling/ops/bridge-artifact.mjs upload
+      - name: Store this job's red detail in the bridge's private home (generated)
+        if: always()
+        continue-on-error: true
+        shell: bash
+        working-directory: ${{ github.workspace }}
+        env:
+          NIKATRU_PATHS: ${{ runner.temp }}/report-detail.md
+          NIKATRU_ARTIFACT_NAME: report-detail-store-billing.nikatru-detail-store.${{ strategy.job-index }}
           NIKATRU_IF_NO_FILES: ignore
           BRIDGE_ARTIFACT_SECRET: ${{ secrets.BRIDGE_ARTIFACT_SECRET }}
           NIKATRU_BRIDGE_ARTIFACT_URL: https://gh-bridge.nikatru.workers.dev/artifact

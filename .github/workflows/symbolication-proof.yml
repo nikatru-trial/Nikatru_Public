@@ -455,7 +455,7 @@ jobs:
         run: |
           NIKATRU_QUIET="$(mktemp "${RUNNER_TEMP:-/tmp}/nikatru-step.XXXXXX")"
           cat > "$NIKATRU_QUIET" <<'NIKATRU_QUIET_EOF'
-          flutter build linux --release --obfuscate --split-debug-info="$SYMBOLS_DIR" -t "$PROBE_SOURCE" --dart-define=GLITCHTIP_DSN="$GLITCHTIP_DSN"
+          node "$GITHUB_WORKSPACE/tooling/ops/sentry-native-prefetch.mjs" --out "$RUNNER_TEMP/sentry-native" --root "$GITHUB_WORKSPACE" --exec -- flutter build linux --release --obfuscate --split-debug-info="$SYMBOLS_DIR" -t "$PROBE_SOURCE" --dart-define=GLITCHTIP_DSN="$GLITCHTIP_DSN"
           NIKATRU_QUIET_EOF
           NIKATRU_SHELL="${BASH:-bash}"; if command -v cygpath >/dev/null 2>&1; then NIKATRU_SHELL="$(cygpath -w "$NIKATRU_SHELL")"; fi
           node "$GITHUB_WORKSPACE/../.nikatru-shell/quiet-step.mjs" --name symbolication-proof.prove.9 -- "$NIKATRU_SHELL" -e "$NIKATRU_QUIET"

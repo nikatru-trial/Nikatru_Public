@@ -729,46 +729,7 @@ jobs:
         run: |
           NIKATRU_QUIET="$(mktemp "${RUNNER_TEMP:-/tmp}/nikatru-step.XXXXXX")"
           cat > "$NIKATRU_QUIET" <<'NIKATRU_QUIET_EOF'
-          set -euo pipefail  # 🔴 FIXED 2026-08-22, same pre-existing hole as the gate-inventory job's `set` line above and the same fix. GitHub runs an explicit `shell: bash` as `bash --noprofile --norc -eo pipefail {0}`, so `-e` IS ALREADY ON when this body starts. This line used to read `set -uo pipefail`, which added `-u` and removed nothing — and under `-e` a command whose failure this step means to REPORT kills the shell first, so the report is dead code on the runner. `-e` is spelled out here so the flag a reader sees is the flag that is running, and every reported command below carries its own `||`. Here the reported command is `discover.mjs --all`: a bare `code=$?` after it was unreachable as anything but 0, so `::error::discover.mjs exited N` never printed. MEASURED 2026-08-22 on this exact body with discover.mjs stubbed to `process.exit(3)`: runner flags EXIT 3, 20 bytes, no `::error::`; bare `bash` EXIT 1, 120 bytes, the diagnosis present.
-          # templates/ carries a tool.json too — it is the thing a tool is stamped
-          # FROM, not a tool: it does not ship, and it has no id a reporter could
-          # name. (_skeleton/ was its location before the move recorded in
-          # ref/pre-prune-2026-09-08:extensions/MIGRATION.md; the exclusion is kept because new-tool.mjs deliberately
-          # keeps that path as a fallback.) private/ is gitignored and absent on a runner;
-          # it is excluded anyway so this reads the same on the owner's machine.
-          # toolinfo.mjs excludes the same directories, which is what makes the
-          # two counts comparable at all.
-          found=$(find . -mindepth 3 -maxdepth 3 -name tool.json \
-                    -not -path './.git/*' -not -path './templates/*' \
-                    -not -path './_skeleton/*' -not -path './private/*' \
-                    -not -path './node_modules/*')
-          n_find=$(printf '%s' "$found" | grep -c . || true)
-          echo "tool.json on disk: $n_find"
-          [ -n "$found" ] && printf '%s\n' "$found" | sed 's|^\./||'
-
-          out="$RUNNER_TEMP/discover-all.txt"
-          : > "$out"
-          code=0  # ← initialised, and `|| code=$?` below rather than a bare `code=$?`; see this body's `set -euo` line.
-          node scripts/discover.mjs --all --out "$out" || code=$?
-          if [ "$code" -ne 0 ]; then
-            echo "::error::discover.mjs exited $code — the matrix cannot be trusted, so nothing below it can be either."
-            exit 1
-          fi
-          ids=$(sed -n 's/^tools=//p' "$out" | tail -1)
-          if [ -z "$ids" ]; then
-            echo "::error::discover.mjs exited 0 but wrote no tools= line to --out. Its output contract changed, and every count derived from it below would be a guess."
-            exit 1
-          fi
-          n_disc=$(node -p 'JSON.parse(process.argv[1]).length' "$ids")
-          echo "discover.mjs --all sees: $n_disc  $ids"
-
-          if [ "$n_find" -ne "$n_disc" ]; then
-            echo "::error::discovery disagrees with the filesystem — $n_find tool.json file(s) on disk, $n_disc tool(s) seen by discover.mjs. One of the two is wrong, and the expensive version of being wrong is the low one: a tool that gets no CI looks exactly like a tool that passed."
-            exit 1
-          fi
-          if [ "$n_find" -eq 0 ]; then
-            echo "::notice::no tool has been onboarded to tool.json yet. That is a real state, not a search failure — the per-tool jobs below have nothing to grade, and say so rather than reporting a green run over an empty set."
-          fi
+          bash "$GITHUB_WORKSPACE/tooling/ci/steps/extensions-ci-discover-crosscheck.sh"
           NIKATRU_QUIET_EOF
           NIKATRU_SHELL="${BASH:-bash}"; if command -v cygpath >/dev/null 2>&1; then NIKATRU_SHELL="$(cygpath -w "$NIKATRU_SHELL")"; fi
           node "$GITHUB_WORKSPACE/../.nikatru-shell/quiet-step.mjs" --name extensions-ci.discover.3 -- "$NIKATRU_SHELL" --noprofile --norc -eo pipefail "$NIKATRU_QUIET"

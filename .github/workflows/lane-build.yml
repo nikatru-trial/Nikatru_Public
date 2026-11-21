@@ -290,6 +290,7 @@ jobs:
           repository: ${{ env.NIKATRU_PRIVATE_REPO }}
           ref: ${{ inputs.nikatru_sha || (github.event.client_payload.event == 'pull_request' && format('refs/pull/{0}/merge', github.event.client_payload.pr) || github.event.client_payload.sha || 'main') }}
           fetch-depth: 0
+          filter: blob:none
           ssh-key: ${{ secrets.PRIVATE_DEPLOY_KEY }}
           persist-credentials: false
       - name: Name the private commit (generated)
@@ -972,7 +973,7 @@ jobs:
         run: |
           NIKATRU_QUIET="$(mktemp "${RUNNER_TEMP:-/tmp}/nikatru-step.XXXXXX")"
           cat > "$NIKATRU_QUIET" <<'NIKATRU_QUIET_EOF'
-          node "$GITHUB_WORKSPACE/tooling/ci/retry-transient.mjs" -- apps/${APP}/android/gradlew --no-daemon -p packages/telemetry/android/jvm test
+          node "$GITHUB_WORKSPACE/tooling/ci/retry-transient.mjs" -- apps/${APP}/android/gradlew --no-daemon -Dorg.gradle.internal.plugins.portal.url.override=http://127.0.0.1:9/m2/ -p packages/telemetry/android/jvm test
           NIKATRU_QUIET_EOF
           NIKATRU_SHELL="${BASH:-bash}"; if command -v cygpath >/dev/null 2>&1; then NIKATRU_SHELL="$(cygpath -w "$NIKATRU_SHELL")"; fi
           node "$GITHUB_WORKSPACE/../.nikatru-shell/quiet-step.mjs" --name lane-build.android-jvm-tests.7 -- "$NIKATRU_SHELL" -e "$NIKATRU_QUIET"
