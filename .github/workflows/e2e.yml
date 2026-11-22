@@ -330,7 +330,7 @@ jobs:
           node "$GITHUB_WORKSPACE/../.nikatru-shell/quiet-step.mjs" --name e2e.last-green.3 -- "$NIKATRU_SHELL" -e "$NIKATRU_QUIET"
       - name: Propose the legs' last green into main (pull request)
         env:
-          NIKATRU_PROPOSE_PATHS: tooling/e2e-leg-register.json
+          NIKATRU_PROPOSE_PATHS: tooling/e2e-leg-last-green.json
           NIKATRU_PROPOSE_BRANCH: chore/e2e-last-green-${{ github.run_id }}
           NIKATRU_PROPOSE_BASE: main
           NIKATRU_PROPOSE_TITLE: 'e2e: the legs last green run, written by the run itself'

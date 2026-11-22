@@ -1738,7 +1738,13 @@ def send_dispatch(env, cfg, opener=urllib.request.urlopen, clock=time.monotonic)
         print(f'-- {event} run: nothing red and no detail; nothing sent to the private home')
         return 0
     body = {'run_id': int(env['GITHUB_RUN_ID']), 'run_attempt': int(env['GITHUB_RUN_ATTEMPT']), 'detail': fit_bytes(detail, DETAIL_MAX_BYTES)}
-    status, why = post(url, secret, body, cfg['postTimeoutS'], opener)
+    # ⏱ 2026-11-21 · integ-m1120 (sec-audit-1114 SEC-L1, the sender half; lead ruling 07:11Z): every attempt carries a FRESH
+    # token of this report job (X-Bridge-OIDC, as /report's do), so the bridge binds the detail to the run's own live report
+    # job (services/gh-bridge/src/dispatch-detail.ts). The bridge ships DISPATCH_DETAIL_OIDC.required = false (review of #1623
+    # F6, lead ruling): a tokenless post is still filed and logged unbound, and the flag flips to true only after this synced
+    # sender is SEEN sending the token (tooling/deadlines.json gh-bridge-dispatch-detail-oidc-flip, 2026-11-28). A token the
+    # endpoint will not mint posts nothing (post() answers 0 with the why): never an unbound detail in place of a bound one.
+    status, why = post(url, secret, body, cfg['postTimeoutS'], opener, oidc=lambda: report_token(env, opener))
     if 200 <= status < 300 or status == 409:
         print(f'ok {event} red detail -> HTTP {status} (filed privately{"; already filed for this attempt" if status == 409 else ""})')
         if lost:

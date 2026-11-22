@@ -1995,7 +1995,7 @@ jobs:
             sudo apt-get install -y \
             xvfb
           # ⏱ 2026-11-17 · integ-m2-1117b main merge: the xvfb-run PATH check is the end of this step, not a second
-          # copied step (std-one-step-one-place, assert-workflow-hardening limb 22).
+          # copied step (std-one-app-input-gate, assert-workflow-hardening limb 22).
           if ! command -v xvfb-run; then
             echo "::error::xvfb is installed but xvfb-run is not on PATH; a suite that declares e2e-display: headful cannot run"
             exit 1

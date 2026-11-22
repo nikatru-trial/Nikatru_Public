@@ -2,6 +2,7 @@
 # Do not edit: `node tooling/ci/gen-public-shell.mjs --check` re-generates it and fails on any difference.
 env:
   NIKATRU_PRIVATE_REPO: com-nikatru/Nikatru_Private
+  MONEY_WALK_PLATFORM_ORIGIN: ${{ inputs.walk_origin }}
 
 name: Part of money proof · Sandbox legs
 
@@ -40,6 +41,21 @@ on:
         type: string
       resume:
         description: "money-sandbox-e2e.yml's resume job output only (JSON); empty walks every unit. Ignored when called as the gate."
+        required: false
+        default: ''
+        type: string
+      fault_inject:
+        description: "A branch proof only: '<leg id>:external|assert' plants a fault on that leg's first attempt; '<leg id>:cancel-provider-error' plants ONE provider error on that leg's sandbox cancel (the executor-retry proof). Empty (always, on main and in the gate) plants nothing."
+        required: false
+        default: ''
+        type: string
+      gate_attempt:
+        description: "money-sandbox-e2e.yml's gate-job run attempt; a re-run whose attempt differs is refused. Empty refuses nothing."
+        required: false
+        default: ''
+        type: string
+      walk_origin:
+        description: "A slot walk's platform origin (money-sandbox-e2e.yml walk-slot); empty walks platform-sandbox."
         required: false
         default: ''
         type: string
@@ -169,6 +185,32 @@ jobs:
           NIKATRU_QUIET_EOF
           NIKATRU_SHELL="${BASH:-bash}"; if command -v cygpath >/dev/null 2>&1; then NIKATRU_SHELL="$(cygpath -w "$NIKATRU_SHELL")"; fi
           node "$GITHUB_WORKSPACE/../.nikatru-shell/quiet-step.mjs" --name money-sandbox-legs.plan.1 -- "$NIKATRU_SHELL" -e "$NIKATRU_QUIET"
+      - name: Every setup step of this job succeeded (generated)
+        id: nikatru-setup-ok
+        run: echo "every setup step before the first check succeeded"
+      - name: A planted fault (MONEY_FAULT_INJECT) only on a branch proof
+        env:
+          GATE: ${{ inputs.gate == true }}
+          EVIDENCE: ${{ inputs.evidence }}
+          FAULT: ${{ inputs.fault_inject }}
+        run: |
+          NIKATRU_QUIET="$(mktemp "${RUNNER_TEMP:-/tmp}/nikatru-step.XXXXXX")"
+          cat > "$NIKATRU_QUIET" <<'NIKATRU_QUIET_EOF'
+          set -euo pipefail
+          if [ -z "$FAULT" ]; then echo "no planted fault: every leg walks as it ships."; exit 0; fi
+          # integ-m1120 (review of #1623 NIT 17): the SHAPE is checked first and the raw value is never echoed before it.
+          if ! [[ "$FAULT" =~ ^[a-z0-9-]+:(external|assert|cancel-provider-error)$ ]]; then
+            echo "::error title=Money fault inject refused::fault_inject is not <leg id>:external|assert|cancel-provider-error (its value is not echoed)."
+            exit 1
+          fi
+          if [ "$GATE" = "true" ] || [ "$EVIDENCE" != "false" ]; then
+            echo "::error title=Money fault inject refused::fault_inject=\"$FAULT\" in the production gate or a run that keeps evidence (a walk of main): a walk that proves what ships never carries a planted fault."
+            exit 1
+          fi
+          echo "::warning title=Money fault planted::$FAULT on its leg's first attempt (a branch proof of the external leg retry; never a landing proof)."
+          NIKATRU_QUIET_EOF
+          NIKATRU_SHELL="${BASH:-bash}"; if command -v cygpath >/dev/null 2>&1; then NIKATRU_SHELL="$(cygpath -w "$NIKATRU_SHELL")"; fi
+          node "$GITHUB_WORKSPACE/../.nikatru-shell/quiet-step.mjs" --name money-sandbox-legs.plan.2 -- "$NIKATRU_SHELL" -e "$NIKATRU_QUIET"
       - name: The proof units an earlier run at this commit already proved (a resume), or none
         id: resume
         env:
@@ -193,7 +235,7 @@ jobs:
           printf '%s' "$RESUME" | jq -r '"resume of run \(.of) at \(.sha): kept " + ((.units // {}) | keys | join(", "))'
           NIKATRU_QUIET_EOF
           NIKATRU_SHELL="${BASH:-bash}"; if command -v cygpath >/dev/null 2>&1; then NIKATRU_SHELL="$(cygpath -w "$NIKATRU_SHELL")"; fi
-          node "$GITHUB_WORKSPACE/../.nikatru-shell/quiet-step.mjs" --name money-sandbox-legs.plan.2 -- "$NIKATRU_SHELL" -e "$NIKATRU_QUIET"
+          node "$GITHUB_WORKSPACE/../.nikatru-shell/quiet-step.mjs" --name money-sandbox-legs.plan.3 -- "$NIKATRU_SHELL" -e "$NIKATRU_QUIET"
       - name: Hand this job's red detail to the report job, sealed (generated)
         id: nikatru-handoff
         if: always()
@@ -295,6 +337,13 @@ jobs:
           ref: ${{ inputs.ref || inputs.nikatru_sha || (github.event.client_payload.event == 'pull_request' && format('refs/pull/{0}/merge', github.event.client_payload.pr) || github.event.client_payload.sha || 'main') }}
           ssh-key: ${{ secrets.PRIVATE_DEPLOY_KEY }}
           persist-credentials: false
+      - name: A re-run of failed jobs never redeploys the head, so it is refused (dispatch a resume)
+        if: inputs.gate_attempt != '' && inputs.gate_attempt != github.run_attempt
+        env:
+          RUN_ID: ${{ github.run_id }}
+          GATE_ATTEMPT: ${{ inputs.gate_attempt }}
+          RUN_ATTEMPT: ${{ github.run_attempt }}
+        run: echo "::error title=Re-run of failed jobs refused::attempt $RUN_ATTEMPT re-runs the legs but not the gate and deploy of attempt $GATE_ATTEMPT, so the sandbox does not run this head. Dispatch a resume instead - gh workflow run money-sandbox-e2e.yml -f resume_of=$RUN_ID (or re-run all jobs)." && exit 1
       - name: Verify private main's composite actions are the checked-out tree (generated)
         if: needs.plan.outputs.money == 'true'
         shell: bash
@@ -507,10 +556,10 @@ jobs:
       result_paddle: ${{ steps.stamp.outputs.result_paddle }}
       result_razorpay: ${{ steps.stamp.outputs.result_razorpay }}
     runs-on: ubuntu-24.04
-    timeout-minutes: 80
+    timeout-minutes: 88
     environment: sandbox
     concurrency:
-      group: ${{ needs.plan.outputs.money == 'true' && matrix.lock || format('money-sandbox-noop-{0}-{1}-{2}', github.run_id, github.job, matrix.rail) }}
+      group: ${{ needs.plan.outputs.money == 'true' && format('{0}-run-{1}-{2}', matrix.lock, github.run_id, matrix.rail) || format('money-sandbox-noop-{0}-{1}-{2}', github.run_id, github.job, matrix.rail) }}
       cancel-in-progress: false
     permissions:
       contents: read
@@ -653,10 +702,16 @@ jobs:
         if: needs.plan.outputs.money == 'true' && !contains(fromJSON(needs.plan.outputs.resumed || '[]'), format('{0}-web', matrix.rail))
         working-directory: _playwright
         run: node "$GITHUB_WORKSPACE/tooling/ops/npm-ci-retry.mjs" -- npm ci --ignore-scripts --no-audit --no-fund
+      - name: Install Playwright's Chromium (no secrets)
+        if: needs.plan.outputs.money == 'true' && !contains(fromJSON(needs.plan.outputs.resumed || '[]'), format('{0}-web', matrix.rail))
+        timeout-minutes: 5
+        working-directory: _playwright
+        run: node node_modules/playwright/cli.js install chromium
       - name: Ensure the paywall is open on the SANDBOX Worker only (no write while it is served open)
         if: needs.plan.outputs.money == 'true' && !contains(fromJSON(needs.plan.outputs.resumed || '[]'), format('{0}-web', matrix.rail))
         env:
           SANDBOX_ADMIN_ROUTE_SECRET: ${{ secrets.SANDBOX_ADMIN_ROUTE_SECRET }}
+        timeout-minutes: 15
         run: node tooling/e2e/money/sandbox-paywall.mjs --ensure-open --unless-superseded --history .money-history --by "$GITHUB_RUN_ID"
       - name: The harness, the sandbox Worker and the pinned commit are one commit
         if: needs.plan.outputs.money == 'true' && !contains(fromJSON(needs.plan.outputs.resumed || '[]'), format('{0}-web', matrix.rail))
@@ -664,12 +719,13 @@ jobs:
       - name: Walk every money leg on this rail
         id: walk
         if: needs.plan.outputs.money == 'true' && !contains(fromJSON(needs.plan.outputs.resumed || '[]'), format('{0}-web', matrix.rail))
-        timeout-minutes: ${{ matrix.rail == 'razorpay' && 50 || 45 }}
+        timeout-minutes: ${{ matrix.rail == 'razorpay' && 53 || 45 }}
         env:
           RAIL: ${{ matrix.rail }}
           RAIL_ACCOUNT: ${{ matrix.account }}
-          APP: subscriptiontracker
+          APP: ${{ needs.preflight.outputs.app }}
           MONEY_EVIDENCE_DIR: ${{ runner.temp }}/money-evidence
+          MONEY_FAULT_INJECT: ${{ inputs.gate != true && inputs.evidence == 'false' && inputs.fault_inject || '' }}
           SANDBOX_ADMIN_ROUTE_SECRET: ${{ secrets.SANDBOX_ADMIN_ROUTE_SECRET }}
           SUPABASE_URL: ${{ secrets.SUPABASE_URL }}
           SUPABASE_ANON_KEY: ${{ secrets.SUPABASE_ANON_KEY }}
@@ -690,17 +746,18 @@ jobs:
           esac
           chrome="$(command -v google-chrome)"
           status=0
-          out="$RUNNER_TEMP/throwaway-${RAIL}.out"
-          : > "$out"
-          # why: the start BEFORE the throwaway is provisioned, so a cancel from here on still has its purge (next step).
+          # why: the start BEFORE the buyers are provisioned, so a cancel from here on still has its purge (next step).
           walk_started="$(date +%s)"; echo "$walk_started" > "$RUNNER_TEMP/walk-started-${RAIL}"
-          if ! GITHUB_OUTPUT="$out" node tooling/e2e/provision_user.mjs; then
-            echo "::error title=Money sandbox proof (${RAIL})::the throwaway second account could not be provisioned; the ${RAIL} legs did not run."
-            exit 1
-          fi
-          email="$(sed -n 's/^email=//p' "$out")"
-          password="$(sed -n 's/^password=//p' "$out")"
-          echo "::add-mask::${password}"
+          # why TWO per-run buyers (⏱ 2026-11-21 · lane web-rail-throwaway-1121, accounts.mjs WEB_RAIL_THROWAWAY): B, then
+          # A (walkBuyerA), each its own file, so no walk of any run ever signs in as another's account; B first, so a
+          # failed A still leaves B's purge a file to read.
+          for who in b a; do
+            out="$RUNNER_TEMP/throwaway-${who}-${RAIL}.out"; : > "$out"
+            GITHUB_OUTPUT="$out" node tooling/e2e/provision_user.mjs || { echo "::error title=Money sandbox proof (${RAIL})::per-run buyer ${who} could not be provisioned; the ${RAIL} legs did not run."; exit 1; }
+            echo "::add-mask::$(sed -n 's/^password=//p' "$out")"
+          done
+          kv() { sed -n "s/^$2=//p" "$RUNNER_TEMP/throwaway-$1-${RAIL}.out"; }
+          export THROWAWAY_EMAIL="$(kv b email)" THROWAWAY_PASSWORD="$(kv b password)" THROWAWAY_A_EMAIL="$(kv a email)" THROWAWAY_A_PASSWORD="$(kv a password)"
           # why: THE RAIL'S CONSENT ROWS (money run 38905635333 passed every leg and went red here on "no consent
           # anon_id resolved"): the spec logs each consent request its contexts issue (consent-log.mjs), and the
           # purge deletes by that log, or proves from it that no row was written (consent_anon_id.mjs
@@ -708,9 +765,12 @@ jobs:
           consent_log="$RUNNER_TEMP/money-consent-${RAIL}.log"
           rm -f "$consent_log"
           # why: the before-walk purge, then the spec under the rail's bound, as ONE chain: a purge that could not finish
-          # leaves A Pro, so this rail's legs are NOT walked (red, named by the purge); the throwaway's purge below still
+          # leaves A Pro, so this rail's legs are NOT walked (red, named by the purge); the buyers' purge below still
           # runs. One line, so this step stays under the inline-run standard (24 code lines, O-STD-INLINE-RUN-CEILING).
-          node tooling/e2e/money/leftovers.mjs --before-walk --budget-minutes 3 --email-var "$RAIL_ACCOUNT" && MONEY_RAIL="$RAIL" THROWAWAY_EMAIL="$email" THROWAWAY_PASSWORD="$password" MONEY_CHROME="$chrome" MONEY_CONSENT_LOG="$consent_log" node tooling/e2e/money/rail-bound.mjs --rail "$RAIL" -- node --import "$SPAWN_CEILING" --test-timeout=600000 --test --test-reporter=spec tooling/e2e/money/money-sandbox.spec.mjs || status=1
+          # A is the walk's own per-run buyer (--email-var THROWAWAY_A_EMAIL): a fresh account, so the purge finds nothing —
+          # KEPT as a cheap invariant (one sign-in, one list; review nit): a provisioner that ever hands back a used address
+          # gets its plans ended before the first leg instead of a red purchase-sandbox.
+          node tooling/e2e/money/leftovers.mjs --before-walk --budget-minutes 3 --email-var THROWAWAY_A_EMAIL && MONEY_RAIL="$RAIL" MONEY_CHROME="$chrome" MONEY_CONSENT_LOG="$consent_log" node tooling/e2e/money/rail-bound.mjs --rail "$RAIL" -- node --import "$SPAWN_CEILING" --test-timeout=600000 --test --test-reporter=spec tooling/e2e/money/money-sandbox.spec.mjs || status=1
           # why: the verdict job reads this rail's own key: a proof that never reached this line proved nothing.
           echo "walked_${RAIL}=true" >> "$GITHUB_OUTPUT"
           exit "$status"
@@ -748,13 +808,25 @@ jobs:
           status=0
           started="$RUNNER_TEMP/walk-started-${RAIL}"
           if [ ! -s "$started" ]; then
-            echo "the ${RAIL} walk never reached its start (no start file): it provisioned no throwaway and bought no plan, none to end."
+            echo "the ${RAIL} walk never reached its start (no start file): it provisioned no buyer and bought no plan, none to end."
           else
-            uid="$(sed -n 's/^user_id=//p' "$RUNNER_TEMP/throwaway-${RAIL}.out" 2>/dev/null)"
-            node tooling/e2e/money/leftovers.mjs --after-walk --since "$(cat "$started")" ${uid:+--user-id "$uid"} --budget-minutes 3 --email-var "$RAIL_ACCOUNT" || status=1
-            # why: a user or not: the consent rows belong to the browser profiles, not to the user.
-            E2E_USER_ID="$uid" E2E_APP_ID=subscriptiontracker E2E_MONEY_CONSENT_LOG="$RUNNER_TEMP/money-consent-${RAIL}.log" PLATFORM_D1_DATABASE_ID="$(node tooling/e2e/money/preflight.mjs --print-sandbox-platform-db)" \
-              node tooling/e2e/purge.mjs || status=1
+            # why both per-run buyers (lane web-rail-throwaway-1121): B's and A's plans since the start are ended (one
+            # comma list), and each is purged. A never provisioned (its file empty) falls back to the rail's account A.
+            uid_of() { sed -n 's/^user_id=//p' "$RUNNER_TEMP/throwaway-$1-${RAIL}.out" 2>/dev/null; }
+            THROWAWAY_A_EMAIL="$(sed -n 's/^email=//p' "$RUNNER_TEMP/throwaway-a-${RAIL}.out" 2>/dev/null)"; export THROWAWAY_A_EMAIL
+            # why a NAME, never a value (review of 9c25e9ff F1): --email-var takes the env var's name; A's when it was provisioned.
+            a_var=THROWAWAY_A_EMAIL; [ -n "$THROWAWAY_A_EMAIL" ] || a_var="$RAIL_ACCOUNT"
+            node tooling/e2e/money/leftovers.mjs --after-walk --since "$(cat "$started")" --user-id "$(uid_of b),$(uid_of a)" --budget-minutes 3 --email-var "$a_var" || status=1
+            # why the id and the app in variables: env values with no space, so assert-live-writer-provenance reads the purge
+            # line; the app from its ONE source (preflight.mjs --print-app, review of 9c25e9ff F4), never typed here.
+            db="$(node tooling/e2e/money/preflight.mjs --print-sandbox-platform-db)"
+            app="$(node tooling/e2e/money/preflight.mjs --print-app)"
+            for who in b a; do
+              uid="$(uid_of "$who")"
+              if [ "$who" = a ] && [ -z "$uid" ]; then continue; fi
+              # why: B a user or not: the consent rows belong to the browser profiles (the same log twice deletes nothing more).
+              E2E_USER_ID="$uid" E2E_APP_ID="$app" E2E_MONEY_CONSENT_LOG="$RUNNER_TEMP/money-consent-${RAIL}.log" PLATFORM_D1_DATABASE_ID="$db" node tooling/e2e/purge.mjs || status=1
+            done
           fi
           exit "$status"
       - name: "Money walk fallbacks: ${{ steps.walk.outputs.fallbacks || 'none' }}"
@@ -831,7 +903,7 @@ jobs:
     timeout-minutes: 114
     environment: sandbox
     concurrency:
-      group: ${{ needs.plan.outputs.money == 'true' && 'money-sandbox-legs' || format('money-sandbox-noop-{0}-{1}', github.run_id, github.job) }}
+      group: ${{ format('money-sandbox-desktop-{0}-{1}', github.run_id, github.job) }}
       cancel-in-progress: false
     permissions:
       contents: read
@@ -993,7 +1065,7 @@ jobs:
         working-directory: _playwright
         run: node "$GITHUB_WORKSPACE/tooling/ops/npm-ci-retry.mjs" -- npm ci --ignore-scripts --no-audit --no-fund
       - name: Ensure the paywall is open on the SANDBOX Worker only (no write while it is served open)
-        timeout-minutes: 9
+        timeout-minutes: 15
         if: success() && !cancelled() && needs.plan.outputs.money == 'true' && needs.preflight.result == 'success' && needs.open-paywall.result == 'success' && !contains(fromJSON(needs.plan.outputs.resumed || '[]'), 'desktop-linux')
         env:
           SANDBOX_ADMIN_ROUTE_SECRET: ${{ secrets.SANDBOX_ADMIN_ROUTE_SECRET }}
@@ -1003,7 +1075,7 @@ jobs:
         run: node tooling/e2e/money/preflight.mjs --one-commit "$NIKATRU_SHA"
       - name: Walk every desktop leg on Linux
         id: walk
-        timeout-minutes: 75
+        timeout-minutes: 69
         if: success() && !cancelled() && needs.plan.outputs.money == 'true' && needs.preflight.result == 'success' && needs.open-paywall.result == 'success' && !contains(fromJSON(needs.plan.outputs.resumed || '[]'), 'desktop-linux')
         env:
           SUPABASE_URL: ${{ secrets.SUPABASE_URL }}
@@ -1011,6 +1083,7 @@ jobs:
           SUPABASE_SERVICE_ROLE_KEY: ${{ secrets.SUPABASE_SERVICE_ROLE_KEY }}
           APP: ${{ needs.preflight.outputs.app }}
           PADDLE_SANDBOX_API_KEY: ${{ secrets.PADDLE_SANDBOX_API_KEY }}
+          SANDBOX_ADMIN_ROUTE_SECRET: ${{ secrets.SANDBOX_ADMIN_ROUTE_SECRET }}
           PADDLE_SANDBOX_CLIENT_TOKEN: ${{ secrets.PADDLE_SANDBOX_CLIENT_TOKEN }}
           RAZORPAY_TEST_KEY_ID: ${{ secrets.RAZORPAY_TEST_KEY_ID }}
           NK_KEYRING_PROBE: required
@@ -1091,7 +1164,7 @@ jobs:
 
   desktop-windows:
     name: Desktop money legs — Windows app (sandbox)
-    needs: [plan, preflight, open-paywall, legs, desktop-linux]
+    needs: [plan, preflight, open-paywall]
     if: always()
     outputs:
       walked: ${{ steps.walk.outputs.walked }}
@@ -1100,7 +1173,7 @@ jobs:
     timeout-minutes: 114
     environment: sandbox
     concurrency:
-      group: ${{ needs.plan.outputs.money == 'true' && 'money-sandbox-legs' || format('money-sandbox-noop-{0}-{1}', github.run_id, github.job) }}
+      group: ${{ format('money-sandbox-desktop-{0}-{1}', github.run_id, github.job) }}
       cancel-in-progress: false
     defaults:
       run:
@@ -1249,7 +1322,7 @@ jobs:
         working-directory: _playwright
         run: node "$GITHUB_WORKSPACE/tooling/ops/npm-ci-retry.mjs" -- npm ci --ignore-scripts --no-audit --no-fund
       - name: Ensure the paywall is open on the SANDBOX Worker only (no write while it is served open)
-        timeout-minutes: 9
+        timeout-minutes: 15
         if: success() && !cancelled() && needs.plan.outputs.money == 'true' && needs.preflight.result == 'success' && needs.open-paywall.result == 'success' && !contains(fromJSON(needs.plan.outputs.resumed || '[]'), 'desktop-windows')
         env:
           SANDBOX_ADMIN_ROUTE_SECRET: ${{ secrets.SANDBOX_ADMIN_ROUTE_SECRET }}
@@ -1259,7 +1332,7 @@ jobs:
         run: node tooling/e2e/money/preflight.mjs --one-commit "$NIKATRU_SHA"
       - name: Walk every desktop leg on Windows
         id: walk
-        timeout-minutes: 75
+        timeout-minutes: 69
         if: success() && !cancelled() && needs.plan.outputs.money == 'true' && needs.preflight.result == 'success' && needs.open-paywall.result == 'success' && !contains(fromJSON(needs.plan.outputs.resumed || '[]'), 'desktop-windows')
         env:
           SUPABASE_URL: ${{ secrets.SUPABASE_URL }}
@@ -1267,6 +1340,7 @@ jobs:
           SUPABASE_SERVICE_ROLE_KEY: ${{ secrets.SUPABASE_SERVICE_ROLE_KEY }}
           APP: ${{ needs.preflight.outputs.app }}
           PADDLE_SANDBOX_API_KEY: ${{ secrets.PADDLE_SANDBOX_API_KEY }}
+          SANDBOX_ADMIN_ROUTE_SECRET: ${{ secrets.SANDBOX_ADMIN_ROUTE_SECRET }}
           PADDLE_SANDBOX_CLIENT_TOKEN: ${{ secrets.PADDLE_SANDBOX_CLIENT_TOKEN }}
           RAZORPAY_TEST_KEY_ID: ${{ secrets.RAZORPAY_TEST_KEY_ID }}
         run: |
@@ -1339,15 +1413,244 @@ jobs:
           NIKATRU_BRIDGE_ARTIFACT_URL: https://gh-bridge.nikatru.workers.dev/artifact
         run: node tooling/ops/bridge-artifact.mjs upload
 
+  apk-android:
+    name: APK money legs — the apps.gov.in APK on an Android emulator (sandbox)
+    needs: [plan, preflight, open-paywall]
+    if: always()
+    outputs:
+      walked: ${{ steps.walk.outputs.walked }}
+      minutes: ${{ steps.walk.outputs.minutes }}
+    runs-on: ubuntu-24.04
+    timeout-minutes: 114
+    environment: sandbox
+    concurrency:
+      group: ${{ format('money-sandbox-apk-{0}-{1}', github.run_id, github.job) }}
+      cancel-in-progress: false
+    steps:
+      - name: Check out the private tree (generated)
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
+        with:
+          repository: ${{ env.NIKATRU_PRIVATE_REPO }}
+          ref: ${{ inputs.nikatru_sha || (github.event.client_payload.event == 'pull_request' && format('refs/pull/{0}/merge', github.event.client_payload.pr) || github.event.client_payload.sha || 'main') }}
+          ssh-key: ${{ secrets.PRIVATE_DEPLOY_KEY }}
+          persist-credentials: false
+      - name: Name the private commit (generated)
+        shell: bash
+        working-directory: ${{ github.workspace }}
+        env:
+          NIKATRU_P_EVENT: ${{ github.event.client_payload.event || github.event_name }}
+          NIKATRU_P_REF: ${{ github.event.client_payload.ref || 'refs/heads/main' }}
+          NIKATRU_P_BASE_SHA: ${{ github.event.client_payload.base_sha }}
+          NIKATRU_P_BASE_REF: ${{ github.event.client_payload.base_ref }}
+          NIKATRU_P_PR: ${{ github.event.client_payload.pr }}
+          NIKATRU_P_PR_CREATED_AT: ${{ github.event.client_payload.pr_created_at }}
+          NIKATRU_P_DRAFT: ${{ github.event.client_payload.draft }}
+          NIKATRU_P_SHA: ${{ github.event.client_payload.sha }}
+        run: |
+          if [ "$NIKATRU_P_EVENT" = pull_request ]; then
+            set -- $(git cat-file -p HEAD | sed -n '1,/^$/s/^parent //p')
+            if [ "${2:-}" != "$NIKATRU_P_SHA" ]; then
+              echo "::error::the checked-out merge of PR #$NIKATRU_P_PR is not the merge of the dispatched head $NIKATRU_P_SHA (its second parent is ${2:-none}); the nikatru-pin job pins it — re-run the whole workflow, not this job"
+              exit 1
+            fi
+          fi
+          {
+            echo "NIKATRU_SHA=$(git rev-parse HEAD)"
+            echo "NIKATRU_HEAD_SHA=${NIKATRU_P_SHA:-$(git rev-parse HEAD)}"
+            echo "NIKATRU_EVENT_NAME=$NIKATRU_P_EVENT"
+            echo "NIKATRU_REF=$NIKATRU_P_REF"
+            echo "NIKATRU_REF_NAME=${NIKATRU_P_REF#refs/*/}"
+            echo "NIKATRU_BASE_SHA=$NIKATRU_P_BASE_SHA"
+            echo "NIKATRU_BASE_REF=$NIKATRU_P_BASE_REF"
+            echo "NIKATRU_PR=$NIKATRU_P_PR"
+            echo "NIKATRU_PR_CREATED_AT=$NIKATRU_P_PR_CREATED_AT"
+            echo "NIKATRU_DRAFT=$NIKATRU_P_DRAFT"
+          } >> "$GITHUB_ENV"
+      - name: Check out private main's composite actions (generated)
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
+        with:
+          repository: ${{ env.NIKATRU_PRIVATE_REPO }}
+          ref: refs/heads/main
+          path: .nikatru-trusted
+          sparse-checkout: .github/actions
+          ssh-key: ${{ secrets.PRIVATE_DEPLOY_KEY }}
+          persist-credentials: false
+      - name: Keep private main's composite actions out of the branch's tree (generated)
+        id: nikatru-trusted-tree
+        shell: bash
+        working-directory: ${{ github.workspace }}
+        run: |
+          if x="$(git rev-parse --git-path info/exclude 2>/dev/null)"; then mkdir -p "${x%/*}"; grep -qxF '/.nikatru-trusted/' "$x" 2>/dev/null || printf '/.nikatru-trusted/\n' >> "$x"; fi
+          NIKATRU_TRUSTED_GIT="$(command -v git)"; case "$NIKATRU_TRUSTED_GIT" in /*) ;; *) echo "::error::git does not resolve to an absolute path ($NIKATRU_TRUSTED_GIT)"; exit 1 ;; esac
+          tree="$(for v in $(compgen -e); do case "$v" in (GIT_*) unset "$v" ;; esac; done && d="$RUNNER_TEMP/nikatru-trusted.$$.$RANDOM" && [ ! -e "$d.git" ] && [ ! -e "$d.index" ] && export GIT_DIR="$d.git" GIT_INDEX_FILE="$d.index" GIT_CONFIG_GLOBAL=/dev/null GIT_CONFIG_NOSYSTEM=1 && "$NIKATRU_TRUSTED_GIT" init -q --bare --template= "$GIT_DIR" && "$NIKATRU_TRUSTED_GIT" -C .nikatru-trusted --work-tree=. add -A -f .github/actions && "$NIKATRU_TRUSTED_GIT" write-tree --prefix=.github/actions/)"
+          main="$(git -C .nikatru-trusted rev-parse HEAD:.github/actions)"
+          if [ -z "$tree" ] || [ "$tree" != "$main" ]; then echo "::error::.nikatru-trusted: the working tree ($tree) is not private main's .github/actions ($main)"; exit 1; fi
+          rm -rf "$RUNNER_TEMP/nikatru-trusted-actions" && mkdir -p "$RUNNER_TEMP/nikatru-trusted-actions" && cp -R .nikatru-trusted/.github "$RUNNER_TEMP/nikatru-trusted-actions/"
+          echo "tree=$tree" >> "$GITHUB_OUTPUT"
+          echo "git=$NIKATRU_TRUSTED_GIT" >> "$GITHUB_OUTPUT"
+      - name: Check out the private tree (generated)
+        if: success() && !cancelled() && needs.plan.outputs.money == 'true' && needs.preflight.result == 'success' && needs.open-paywall.result == 'success' && !contains(fromJSON(needs.plan.outputs.resumed || '[]'), 'apk-android')
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
+        with:
+          repository: ${{ env.NIKATRU_PRIVATE_REPO }}
+          ref: ${{ inputs.ref || inputs.nikatru_sha || (github.event.client_payload.event == 'pull_request' && format('refs/pull/{0}/merge', github.event.client_payload.pr) || github.event.client_payload.sha || 'main') }}
+          ssh-key: ${{ secrets.PRIVATE_DEPLOY_KEY }}
+          persist-credentials: false
+      - name: "Check out the private history beside it (every branch's commits, no file) (generated: the private tree)"
+        if: success() && !cancelled() && needs.plan.outputs.money == 'true' && needs.preflight.result == 'success' && needs.open-paywall.result == 'success' && !contains(fromJSON(needs.plan.outputs.resumed || '[]'), 'apk-android')
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
+        with:
+          repository: ${{ env.NIKATRU_PRIVATE_REPO }}
+          ref: ${{ inputs.ref || inputs.nikatru_sha || (github.event.client_payload.event == 'pull_request' && format('refs/pull/{0}/merge', github.event.client_payload.pr) || github.event.client_payload.sha || 'main') }}
+          path: .money-history
+          fetch-depth: 0
+          filter: tree:0
+          sparse-checkout: .github/ISSUE_TEMPLATE
+          ssh-key: ${{ secrets.PRIVATE_DEPLOY_KEY }}
+          persist-credentials: false
+      - name: Verify private main's composite actions are the checked-out tree (generated)
+        if: success() && !cancelled() && needs.plan.outputs.money == 'true' && needs.preflight.result == 'success' && needs.open-paywall.result == 'success' && !contains(fromJSON(needs.plan.outputs.resumed || '[]'), 'apk-android')
+        shell: bash
+        working-directory: ${{ github.workspace }}
+        env:
+          NIKATRU_TRUSTED_TREE: ${{ steps.nikatru-trusted-tree.outputs.tree }}
+          NIKATRU_TRUSTED_GIT: ${{ steps.nikatru-trusted-tree.outputs.git }}
+        run: |
+          case "$NIKATRU_TRUSTED_GIT" in /*) ;; *) echo "::error::.nikatru-trusted: no git path was recorded before the job's own steps ($NIKATRU_TRUSTED_GIT)"; exit 1 ;; esac
+          rm -rf .nikatru-trusted/.github && mkdir -p .nikatru-trusted && cp -R "$RUNNER_TEMP/nikatru-trusted-actions/.github" .nikatru-trusted/
+          if x="$(git rev-parse --git-path info/exclude 2>/dev/null)"; then mkdir -p "${x%/*}"; grep -qxF '/.nikatru-trusted/' "$x" 2>/dev/null || printf '/.nikatru-trusted/\n' >> "$x"; fi
+          tree="$(for v in $(compgen -e); do case "$v" in (GIT_*) unset "$v" ;; esac; done && d="$RUNNER_TEMP/nikatru-trusted.$$.$RANDOM" && [ ! -e "$d.git" ] && [ ! -e "$d.index" ] && export GIT_DIR="$d.git" GIT_INDEX_FILE="$d.index" GIT_CONFIG_GLOBAL=/dev/null GIT_CONFIG_NOSYSTEM=1 && "$NIKATRU_TRUSTED_GIT" init -q --bare --template= "$GIT_DIR" && "$NIKATRU_TRUSTED_GIT" -C .nikatru-trusted --work-tree=. add -A -f .github/actions && "$NIKATRU_TRUSTED_GIT" write-tree --prefix=.github/actions/)"
+          if [ -z "$NIKATRU_TRUSTED_TREE" ] || [ "$tree" != "$NIKATRU_TRUSTED_TREE" ]; then echo "::error::.nikatru-trusted is not the tree checked out from private main ($NIKATRU_TRUSTED_TREE, now $tree): a step of this job edited its copy"; exit 1; fi
+      - uses: ./.nikatru-trusted/.github/actions/setup-node
+        if: success() && !cancelled() && needs.plan.outputs.money == 'true' && needs.preflight.result == 'success' && needs.open-paywall.result == 'success' && !contains(fromJSON(needs.plan.outputs.resumed || '[]'), 'apk-android')
+        env:
+          NIKATRU_REF: ${{ github.event.client_payload.ref || 'refs/heads/main' }}
+          NIKATRU_EVENT_NAME: ${{ github.event.client_payload.event || github.event_name }}
+          NIKATRU_PR: ${{ github.event.client_payload.pr }}
+      - name: Stamp this proof job's start
+        if: success() && !cancelled() && needs.plan.outputs.money == 'true' && needs.preflight.result == 'success' && needs.open-paywall.result == 'success' && !contains(fromJSON(needs.plan.outputs.resumed || '[]'), 'apk-android')
+        run: echo "T0=$(date +%s)" >> "$GITHUB_ENV"
+      - name: Verify private main's composite actions are the checked-out tree (generated)
+        if: success() && !cancelled() && needs.plan.outputs.money == 'true' && needs.preflight.result == 'success' && needs.open-paywall.result == 'success' && !contains(fromJSON(needs.plan.outputs.resumed || '[]'), 'apk-android')
+        shell: bash
+        working-directory: ${{ github.workspace }}
+        env:
+          NIKATRU_TRUSTED_TREE: ${{ steps.nikatru-trusted-tree.outputs.tree }}
+          NIKATRU_TRUSTED_GIT: ${{ steps.nikatru-trusted-tree.outputs.git }}
+        run: |
+          case "$NIKATRU_TRUSTED_GIT" in /*) ;; *) echo "::error::.nikatru-trusted: no git path was recorded before the job's own steps ($NIKATRU_TRUSTED_GIT)"; exit 1 ;; esac
+          rm -rf .nikatru-trusted/.github && mkdir -p .nikatru-trusted && cp -R "$RUNNER_TEMP/nikatru-trusted-actions/.github" .nikatru-trusted/
+          if x="$(git rev-parse --git-path info/exclude 2>/dev/null)"; then mkdir -p "${x%/*}"; grep -qxF '/.nikatru-trusted/' "$x" 2>/dev/null || printf '/.nikatru-trusted/\n' >> "$x"; fi
+          tree="$(for v in $(compgen -e); do case "$v" in (GIT_*) unset "$v" ;; esac; done && d="$RUNNER_TEMP/nikatru-trusted.$$.$RANDOM" && [ ! -e "$d.git" ] && [ ! -e "$d.index" ] && export GIT_DIR="$d.git" GIT_INDEX_FILE="$d.index" GIT_CONFIG_GLOBAL=/dev/null GIT_CONFIG_NOSYSTEM=1 && "$NIKATRU_TRUSTED_GIT" init -q --bare --template= "$GIT_DIR" && "$NIKATRU_TRUSTED_GIT" -C .nikatru-trusted --work-tree=. add -A -f .github/actions && "$NIKATRU_TRUSTED_GIT" write-tree --prefix=.github/actions/)"
+          if [ -z "$NIKATRU_TRUSTED_TREE" ] || [ "$tree" != "$NIKATRU_TRUSTED_TREE" ]; then echo "::error::.nikatru-trusted is not the tree checked out from private main ($NIKATRU_TRUSTED_TREE, now $tree): a step of this job edited its copy"; exit 1; fi
+      - uses: ./.nikatru-trusted/.github/actions/setup-flutter
+        if: success() && !cancelled() && needs.plan.outputs.money == 'true' && needs.preflight.result == 'success' && needs.open-paywall.result == 'success' && !contains(fromJSON(needs.plan.outputs.resumed || '[]'), 'apk-android')
+        with:
+          cache: 'false'
+          android-ndk: 'true'
+        env:
+          NIKATRU_REF: ${{ github.event.client_payload.ref || 'refs/heads/main' }}
+          NIKATRU_EVENT_NAME: ${{ github.event.client_payload.event || github.event_name }}
+          NIKATRU_PR: ${{ github.event.client_payload.pr }}
+      - name: Resolve the workspace
+        if: success() && !cancelled() && needs.plan.outputs.money == 'true' && needs.preflight.result == 'success' && needs.open-paywall.result == 'success' && !contains(fromJSON(needs.plan.outputs.resumed || '[]'), 'apk-android')
+        run: flutter pub get --enforce-lockfile
+      - name: Install the fleet Playwright (lockfile)
+        if: success() && !cancelled() && needs.plan.outputs.money == 'true' && needs.preflight.result == 'success' && needs.open-paywall.result == 'success' && !contains(fromJSON(needs.plan.outputs.resumed || '[]'), 'apk-android')
+        working-directory: _playwright
+        run: node "$GITHUB_WORKSPACE/tooling/ops/npm-ci-retry.mjs" -- npm ci --ignore-scripts --no-audit --no-fund
+      - name: Verify private main's composite actions are the checked-out tree (generated)
+        if: success() && !cancelled() && needs.plan.outputs.money == 'true' && needs.preflight.result == 'success' && needs.open-paywall.result == 'success' && !contains(fromJSON(needs.plan.outputs.resumed || '[]'), 'apk-android')
+        shell: bash
+        working-directory: ${{ github.workspace }}
+        env:
+          NIKATRU_TRUSTED_TREE: ${{ steps.nikatru-trusted-tree.outputs.tree }}
+          NIKATRU_TRUSTED_GIT: ${{ steps.nikatru-trusted-tree.outputs.git }}
+        run: |
+          case "$NIKATRU_TRUSTED_GIT" in /*) ;; *) echo "::error::.nikatru-trusted: no git path was recorded before the job's own steps ($NIKATRU_TRUSTED_GIT)"; exit 1 ;; esac
+          rm -rf .nikatru-trusted/.github && mkdir -p .nikatru-trusted && cp -R "$RUNNER_TEMP/nikatru-trusted-actions/.github" .nikatru-trusted/
+          if x="$(git rev-parse --git-path info/exclude 2>/dev/null)"; then mkdir -p "${x%/*}"; grep -qxF '/.nikatru-trusted/' "$x" 2>/dev/null || printf '/.nikatru-trusted/\n' >> "$x"; fi
+          tree="$(for v in $(compgen -e); do case "$v" in (GIT_*) unset "$v" ;; esac; done && d="$RUNNER_TEMP/nikatru-trusted.$$.$RANDOM" && [ ! -e "$d.git" ] && [ ! -e "$d.index" ] && export GIT_DIR="$d.git" GIT_INDEX_FILE="$d.index" GIT_CONFIG_GLOBAL=/dev/null GIT_CONFIG_NOSYSTEM=1 && "$NIKATRU_TRUSTED_GIT" init -q --bare --template= "$GIT_DIR" && "$NIKATRU_TRUSTED_GIT" -C .nikatru-trusted --work-tree=. add -A -f .github/actions && "$NIKATRU_TRUSTED_GIT" write-tree --prefix=.github/actions/)"
+          if [ -z "$NIKATRU_TRUSTED_TREE" ] || [ "$tree" != "$NIKATRU_TRUSTED_TREE" ]; then echo "::error::.nikatru-trusted is not the tree checked out from private main ($NIKATRU_TRUSTED_TREE, now $tree): a step of this job edited its copy"; exit 1; fi
+      - uses: ./.nikatru-trusted/.github/actions/enable-kvm
+        if: success() && !cancelled() && needs.plan.outputs.money == 'true' && needs.preflight.result == 'success' && needs.open-paywall.result == 'success' && !contains(fromJSON(needs.plan.outputs.resumed || '[]'), 'apk-android')
+        env:
+          NIKATRU_REF: ${{ github.event.client_payload.ref || 'refs/heads/main' }}
+          NIKATRU_EVENT_NAME: ${{ github.event.client_payload.event || github.event_name }}
+          NIKATRU_PR: ${{ github.event.client_payload.pr }}
+      - name: Boot an emulator
+        if: success() && !cancelled() && needs.plan.outputs.money == 'true' && needs.preflight.result == 'success' && needs.open-paywall.result == 'success' && !contains(fromJSON(needs.plan.outputs.resumed || '[]'), 'apk-android')
+        timeout-minutes: 10
+        env:
+          API_LEVEL: '34'
+        run: bash tooling/ci/boot-emulator.sh --avd money --api "$API_LEVEL"
+      - name: Ensure the paywall is open on the SANDBOX Worker only (no write while it is served open)
+        timeout-minutes: 15
+        if: success() && !cancelled() && needs.plan.outputs.money == 'true' && needs.preflight.result == 'success' && needs.open-paywall.result == 'success' && !contains(fromJSON(needs.plan.outputs.resumed || '[]'), 'apk-android')
+        env:
+          SANDBOX_ADMIN_ROUTE_SECRET: ${{ secrets.SANDBOX_ADMIN_ROUTE_SECRET }}
+        run: node tooling/e2e/money/sandbox-paywall.mjs --ensure-open --unless-superseded --history .money-history --by "$GITHUB_RUN_ID"
+      - name: The harness, the sandbox Worker and the pinned commit are one commit
+        if: success() && !cancelled() && needs.plan.outputs.money == 'true' && needs.preflight.result == 'success' && needs.open-paywall.result == 'success' && !contains(fromJSON(needs.plan.outputs.resumed || '[]'), 'apk-android')
+        run: node tooling/e2e/money/preflight.mjs --one-commit "$NIKATRU_SHA"
+      - name: Walk every APK leg on the emulator
+        id: walk
+        timeout-minutes: 60
+        if: success() && !cancelled() && needs.plan.outputs.money == 'true' && needs.preflight.result == 'success' && needs.open-paywall.result == 'success' && !contains(fromJSON(needs.plan.outputs.resumed || '[]'), 'apk-android')
+        env:
+          SUPABASE_URL: ${{ secrets.SUPABASE_URL }}
+          SUPABASE_ANON_KEY: ${{ secrets.SUPABASE_ANON_KEY }}
+          SUPABASE_SERVICE_ROLE_KEY: ${{ secrets.SUPABASE_SERVICE_ROLE_KEY }}
+          APP: ${{ needs.preflight.outputs.app }}
+          RAZORPAY_TEST_KEY_ID: ${{ secrets.RAZORPAY_TEST_KEY_ID }}
+          RAZORPAY_TEST_KEY_SECRET: ${{ secrets.RAZORPAY_TEST_KEY_SECRET }}
+          PADDLE_SANDBOX_CLIENT_TOKEN: ${{ secrets.PADDLE_SANDBOX_CLIENT_TOKEN }}
+          SANDBOX_ADMIN_ROUTE_SECRET: ${{ secrets.SANDBOX_ADMIN_ROUTE_SECRET }}
+        run: |
+          set -euo pipefail
+          # why ITS OWN BUYER (lead ruling 2026-11-18: every proof job walks with its own accounts): a fresh throwaway made
+          # by THIS job on every attempt; apk.mjs (desktop.mjs desktopBuyer, APK_BUYER) refuses any other address. Removed
+          # by this job's always() step below, its Razorpay plans first.
+          date +%s > "$RUNNER_TEMP/apk-walk-started"
+          out="$RUNNER_TEMP/apk-buyer.out"
+          : > "$out"
+          if ! GITHUB_OUTPUT="$out" node tooling/e2e/provision_user.mjs; then
+            echo "::error title=APK money proof::this job's own buyer could not be provisioned; no APK leg ran."
+            exit 1
+          fi
+          MONEY_APK_EMAIL="$(sed -n 's/^email=//p' "$out")"
+          MONEY_APK_PASSWORD="$(sed -n 's/^password=//p' "$out")"
+          echo "::add-mask::${MONEY_APK_PASSWORD}"
+          export MONEY_APK_EMAIL MONEY_APK_PASSWORD
+          node tooling/e2e/money/apk.mjs --device emulator-5554 --log "$RUNNER_TEMP/money-apk.log"
+          echo "walked=true" >> "$GITHUB_OUTPUT"
+          echo "minutes=$(( ($(date +%s) - ${T0:-$(date +%s)}) / 60 ))" >> "$GITHUB_OUTPUT"
+      - name: Remove this job's own APK buyer
+        if: ${{ (always()) && needs.plan.outputs.money == 'true' && needs.preflight.result == 'success' && needs.open-paywall.result == 'success' && !contains(fromJSON(needs.plan.outputs.resumed || '[]'), 'apk-android') }}
+        timeout-minutes: 10
+        env:
+          SANDBOX_ADMIN_ROUTE_SECRET: ${{ secrets.SANDBOX_ADMIN_ROUTE_SECRET }}
+          SUPABASE_URL: ${{ secrets.SUPABASE_URL }}
+          SUPABASE_SERVICE_ROLE_KEY: ${{ secrets.SUPABASE_SERVICE_ROLE_KEY }}
+          RAZORPAY_TEST_KEY_ID: ${{ secrets.RAZORPAY_TEST_KEY_ID }}
+          RAZORPAY_TEST_KEY_SECRET: ${{ secrets.RAZORPAY_TEST_KEY_SECRET }}
+        run: |
+          out="$RUNNER_TEMP/apk-buyer.out"
+          uid=""
+          if [ -f "$out" ]; then uid="$(sed -n 's/^user_id=//p' "$out")"; fi
+          since=""
+          if [ -s "$RUNNER_TEMP/apk-walk-started" ]; then since="$(cat "$RUNNER_TEMP/apk-walk-started")"; fi
+          node tooling/e2e/money/apk.mjs --purge-buyer "$uid" ${since:+--since "$since"}
+
   close-paywall:
     name: Close the sandbox paywall once every money leg is done
-    needs: [plan, preflight, open-paywall, legs, desktop-linux, desktop-windows]
+    needs: [plan, preflight, open-paywall, legs, desktop-linux, desktop-windows, apk-android]
     if: always()
     runs-on: ubuntu-24.04
     timeout-minutes: 15
     environment: sandbox
     concurrency:
-      group: ${{ needs.plan.outputs.money == 'true' && 'money-sandbox-legs' || format('money-sandbox-noop-{0}-{1}', github.run_id, github.job) }}
+      group: ${{ needs.plan.outputs.money == 'true' && format('money-sandbox-close-{0}', github.run_id) || format('money-sandbox-noop-{0}-{1}', github.run_id, github.job) }}
       cancel-in-progress: false
     steps:
       - name: Check out the private tree (generated)
@@ -1463,10 +1766,16 @@ jobs:
           STARTED: ${{ needs.plan.outputs.started }}
           ATTEMPT: ${{ github.run_attempt }}
         run: node tooling/e2e/money/proof-table.mjs
+      - name: The webhook router's per-run counts (this run)
+        if: ${{ (always()) && needs.plan.outputs.money == 'true' }}
+        env:
+          SANDBOX_ADMIN_ROUTE_SECRET: ${{ secrets.SANDBOX_ADMIN_ROUTE_SECRET }}
+        timeout-minutes: 5
+        run: node tooling/e2e/money/route-counts.mjs --run-id "$GITHUB_RUN_ID"
 
   verdict:
     name: The money proof ran (every proof job walked its legs)
-    needs: [plan, preflight, open-paywall, legs, desktop-linux, desktop-windows, close-paywall]
+    needs: [plan, preflight, open-paywall, legs, desktop-linux, desktop-windows, apk-android, close-paywall]
     runs-on: ubuntu-24.04
     timeout-minutes: 5
     steps:
@@ -1539,6 +1848,7 @@ jobs:
           NEEDS: ${{ toJSON(needs) }}
           LINUX: ${{ needs.desktop-linux.outputs.walked }}
           WINDOWS: ${{ needs.desktop-windows.outputs.walked }}
+          ANDROID: ${{ needs.apk-android.outputs.walked }}
         run: |
           NIKATRU_QUIET="$(mktemp "${RUNNER_TEMP:-/tmp}/nikatru-step.XXXXXX")"
           cat > "$NIKATRU_QUIET" <<'NIKATRU_QUIET_EOF'
@@ -1576,6 +1886,10 @@ jobs:
           if kept desktop-windows; then row desktop-windows ""; else
             [ "$WINDOWS" = "true" ] || missing="$missing windows"
             row desktop-windows "$([ "$WINDOWS" = "true" ] && echo success || echo 'not walked')"
+          fi
+          if kept apk-android; then row apk-android ""; else
+            [ "$ANDROID" = "true" ] || missing="$missing apk-android"
+            row apk-android "$([ "$ANDROID" = "true" ] && echo success || echo 'not walked')"
           fi
           echo "$table"
           printf '### Money proof units\n\n%s\n' "$table" >> "${GITHUB_STEP_SUMMARY:-/dev/null}"

@@ -5,7 +5,7 @@ env:
 
 name: Money sandbox E2E
 
-run-name: "${{ !(inputs.private_pr) && ((github.event.schedule || github.event.inputs.worker_slot) && '[slot] ' || '[hand] ') || !(inputs.private_ref) && '[pr] ' || startsWith(inputs.private_ref, 'refs/heads/rehearsal/') && '[rehearsal] ' || startsWith(inputs.private_ref, 'refs/heads/club/') && '[club] ' || startsWith(inputs.private_ref, 'refs/heads/train/') && '[club] ' || startsWith(inputs.private_ref, 'refs/heads/integ/') && '[club] ' || startsWith(inputs.private_ref, 'refs/heads/renovate/') && '[bot] ' || startsWith(inputs.private_ref, 'refs/heads/dependabot/') && '[bot] ' || '[single] ' }}Money sandbox E2E${{ inputs.rail && format(' · rail {0}', inputs.rail) || '' }}${{ inputs.gate_mode && format(' · gate {0}', inputs.gate_mode) || '' }}${{ inputs.resume_of && format(' · resume of {0}', inputs.resume_of) || '' }}${{ inputs.worker_slot && format(' [worker slot {0}]', inputs.worker_slot) || '' }}${{ inputs.private_pr && format(' — branch proof {0} (PR #{1})', inputs.private_ref, inputs.private_pr) || '' }}"
+run-name: "${{ !(inputs.private_pr) && ((github.event.schedule || github.event.inputs.worker_slot) && '[slot] ' || '[hand] ') || !(inputs.private_ref) && '[pr] ' || startsWith(inputs.private_ref, 'refs/heads/rehearsal/') && '[rehearsal] ' || startsWith(inputs.private_ref, 'refs/heads/club/') && '[club] ' || startsWith(inputs.private_ref, 'refs/heads/train/') && '[club] ' || startsWith(inputs.private_ref, 'refs/heads/integ/') && '[club] ' || startsWith(inputs.private_ref, 'refs/heads/renovate/') && '[bot] ' || startsWith(inputs.private_ref, 'refs/heads/dependabot/') && '[bot] ' || '[single] ' }}Money sandbox E2E${{ inputs.rail && format(' · rail {0}', inputs.rail) || '' }}${{ inputs.gate_mode && format(' · gate {0}', inputs.gate_mode) || '' }}${{ inputs.resume_of && format(' · resume of {0}', inputs.resume_of) || '' }}${{ inputs.fault_inject && format(' · planted fault {0}', inputs.fault_inject) || '' }}${{ inputs.worker_slot && format(' [worker slot {0}]', inputs.worker_slot) || '' }}${{ inputs.private_pr && format(' — branch proof {0} (PR #{1})', inputs.private_ref, inputs.private_pr) || '' }}"
 
 on:
   workflow_dispatch:
@@ -42,6 +42,11 @@ on:
         required: false
         default: ''
         type: string
+      fault_inject:
+        description: "A branch proof only: '<leg id>:external|assert' plants a fault on that leg's first attempt (the leg retry's live proof); '<leg id>:cancel-provider-error' plants ONE provider error on its sandbox cancel (the executor-retry proof). Empty on main."
+        required: false
+        default: ''
+        type: string
       private_ref:
         description: The PRIVATE ref this run builds, refs/heads/<branch> (generated; empty is the private main).
         required: false
@@ -52,7 +57,7 @@ permissions:
   contents: read
 
 concurrency:
-  group: deploy-sandbox
+  group: ${{ (inputs.private_pr != '' && vars.MONEY_WALK_SLOTS == 'on') && format('money-walk-slot-{0}', '1') || 'deploy-sandbox' }}
   cancel-in-progress: false
 
 jobs:
@@ -210,6 +215,7 @@ jobs:
       id-token: write
     outputs:
       sha: ${{ steps.verdict.outputs.sha }}
+      attempt: ${{ github.run_attempt }}
     steps:
       - name: Check out the private tree (generated)
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
@@ -352,6 +358,7 @@ jobs:
       id-token: write
     outputs:
       resume: ${{ steps.judge.outputs.resume }}
+      skip: ${{ steps.judge.outputs.skip }}
     steps:
       - name: Check out the private tree (generated)
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
@@ -453,6 +460,7 @@ jobs:
             node tooling/e2e/money/walked.mjs --resume
           elif [ -z "$RESUME_OF" ]; then
             echo "resume=" >> "$GITHUB_OUTPUT"
+            echo "skip=" >> "$GITHUB_OUTPUT"
             echo "main's walked.mjs predates --resume: a first walk, every proof unit walks."
           else
             echo "::error title=Money proof resume refused::main's walked.mjs predates --resume, so resume_of ${RESUME_OF} cannot be judged: dispatch a first walk."
@@ -474,16 +482,153 @@ jobs:
           NIKATRU_BRIDGE_ARTIFACT_URL: https://gh-bridge.nikatru.workers.dev/artifact
         run: node tooling/ops/bridge-artifact.mjs upload
 
+  walk-slot:
+    name: where this run walks (platform-sandbox, or a walk slot of its own)
+    if: needs.nikatru-pin.result == 'success' && (needs.nikatru-approve.result == 'success' || (needs.nikatru-approve.result == 'skipped' && !((inputs.private_ref || '') != ''))) && !cancelled() && !failure() && needs.gate.result == 'success'
+    needs: [nikatru-pin, nikatru-approve, gate]
+    runs-on: ubuntu-24.04
+    timeout-minutes: 10
+    permissions:
+      contents: read
+      id-token: write
+    outputs:
+      mode: ${{ steps.plan.outputs.mode }}
+      slot: ${{ steps.plan.outputs.slot }}
+      stamp: ${{ steps.plan.outputs.stamp }}
+      platform_origin: ${{ steps.plan.outputs.platform_origin }}
+    steps:
+      - name: Check out the private tree (generated)
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
+        with:
+          repository: ${{ env.NIKATRU_PRIVATE_REPO }}
+          ref: main
+          ssh-key: ${{ secrets.PRIVATE_DEPLOY_KEY }}
+          persist-credentials: false
+      - name: Name the private commit (generated)
+        shell: bash
+        working-directory: ${{ github.workspace }}
+        env:
+          NIKATRU_P_EVENT: ${{ github.event.client_payload.event || github.event_name }}
+          NIKATRU_P_REF: ${{ github.event.client_payload.ref || inputs.private_ref || 'refs/heads/main' }}
+          NIKATRU_P_BASE_SHA: ${{ github.event.client_payload.base_sha }}
+          NIKATRU_P_BASE_REF: ${{ github.event.client_payload.base_ref }}
+          NIKATRU_P_PR: ${{ github.event.client_payload.pr }}
+          NIKATRU_P_PR_CREATED_AT: ${{ github.event.client_payload.pr_created_at }}
+          NIKATRU_P_DRAFT: ${{ github.event.client_payload.draft }}
+          NIKATRU_P_SHA: ${{ github.event.client_payload.sha }}
+        run: |
+          {
+            echo "NIKATRU_SHA=$(git rev-parse HEAD)"
+            echo "NIKATRU_HEAD_SHA=${NIKATRU_P_SHA:-$(git rev-parse HEAD)}"
+            echo "NIKATRU_EVENT_NAME=$NIKATRU_P_EVENT"
+            echo "NIKATRU_REF=$NIKATRU_P_REF"
+            echo "NIKATRU_REF_NAME=${NIKATRU_P_REF#refs/*/}"
+            echo "NIKATRU_BASE_SHA=$NIKATRU_P_BASE_SHA"
+            echo "NIKATRU_BASE_REF=$NIKATRU_P_BASE_REF"
+            echo "NIKATRU_PR=$NIKATRU_P_PR"
+            echo "NIKATRU_PR_CREATED_AT=$NIKATRU_P_PR_CREATED_AT"
+            echo "NIKATRU_DRAFT=$NIKATRU_P_DRAFT"
+          } >> "$GITHUB_ENV"
+      - name: Check out this shell repository's own step wrapper and reporter (generated)
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
+        with:
+          path: .nikatru-shell
+          sparse-checkout: .github/nikatru
+          persist-credentials: false
+      - name: Stage the shell's own copies outside the private checkout (generated)
+        shell: bash
+        working-directory: ${{ github.workspace }}
+        run: |
+          rm -rf ../.nikatru-shell
+          mv .nikatru-shell/.github/nikatru ../.nikatru-shell
+          rm -rf .nikatru-shell
+      - name: Check out private main's composite actions (generated)
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
+        with:
+          repository: ${{ env.NIKATRU_PRIVATE_REPO }}
+          ref: refs/heads/main
+          path: .nikatru-trusted
+          sparse-checkout: .github/actions
+          ssh-key: ${{ secrets.PRIVATE_DEPLOY_KEY }}
+          persist-credentials: false
+      - name: Keep private main's composite actions out of the branch's tree (generated)
+        id: nikatru-trusted-tree
+        shell: bash
+        working-directory: ${{ github.workspace }}
+        run: |
+          if x="$(git rev-parse --git-path info/exclude 2>/dev/null)"; then mkdir -p "${x%/*}"; grep -qxF '/.nikatru-trusted/' "$x" 2>/dev/null || printf '/.nikatru-trusted/\n' >> "$x"; fi
+          NIKATRU_TRUSTED_GIT="$(command -v git)"; case "$NIKATRU_TRUSTED_GIT" in /*) ;; *) echo "::error::git does not resolve to an absolute path ($NIKATRU_TRUSTED_GIT)"; exit 1 ;; esac
+          tree="$(for v in $(compgen -e); do case "$v" in (GIT_*) unset "$v" ;; esac; done && d="$RUNNER_TEMP/nikatru-trusted.$$.$RANDOM" && [ ! -e "$d.git" ] && [ ! -e "$d.index" ] && export GIT_DIR="$d.git" GIT_INDEX_FILE="$d.index" GIT_CONFIG_GLOBAL=/dev/null GIT_CONFIG_NOSYSTEM=1 && "$NIKATRU_TRUSTED_GIT" init -q --bare --template= "$GIT_DIR" && "$NIKATRU_TRUSTED_GIT" -C .nikatru-trusted --work-tree=. add -A -f .github/actions && "$NIKATRU_TRUSTED_GIT" write-tree --prefix=.github/actions/)"
+          main="$(git -C .nikatru-trusted rev-parse HEAD:.github/actions)"
+          if [ -z "$tree" ] || [ "$tree" != "$main" ]; then echo "::error::.nikatru-trusted: the working tree ($tree) is not private main's .github/actions ($main)"; exit 1; fi
+          rm -rf "$RUNNER_TEMP/nikatru-trusted-actions" && mkdir -p "$RUNNER_TEMP/nikatru-trusted-actions" && cp -R .nikatru-trusted/.github "$RUNNER_TEMP/nikatru-trusted-actions/"
+          echo "tree=$tree" >> "$GITHUB_OUTPUT"
+          echo "git=$NIKATRU_TRUSTED_GIT" >> "$GITHUB_OUTPUT"
+      - name: Verify private main's composite actions are the checked-out tree (generated)
+        shell: bash
+        working-directory: ${{ github.workspace }}
+        env:
+          NIKATRU_TRUSTED_TREE: ${{ steps.nikatru-trusted-tree.outputs.tree }}
+          NIKATRU_TRUSTED_GIT: ${{ steps.nikatru-trusted-tree.outputs.git }}
+        run: |
+          case "$NIKATRU_TRUSTED_GIT" in /*) ;; *) echo "::error::.nikatru-trusted: no git path was recorded before the job's own steps ($NIKATRU_TRUSTED_GIT)"; exit 1 ;; esac
+          rm -rf .nikatru-trusted/.github && mkdir -p .nikatru-trusted && cp -R "$RUNNER_TEMP/nikatru-trusted-actions/.github" .nikatru-trusted/
+          if x="$(git rev-parse --git-path info/exclude 2>/dev/null)"; then mkdir -p "${x%/*}"; grep -qxF '/.nikatru-trusted/' "$x" 2>/dev/null || printf '/.nikatru-trusted/\n' >> "$x"; fi
+          tree="$(for v in $(compgen -e); do case "$v" in (GIT_*) unset "$v" ;; esac; done && d="$RUNNER_TEMP/nikatru-trusted.$$.$RANDOM" && [ ! -e "$d.git" ] && [ ! -e "$d.index" ] && export GIT_DIR="$d.git" GIT_INDEX_FILE="$d.index" GIT_CONFIG_GLOBAL=/dev/null GIT_CONFIG_NOSYSTEM=1 && "$NIKATRU_TRUSTED_GIT" init -q --bare --template= "$GIT_DIR" && "$NIKATRU_TRUSTED_GIT" -C .nikatru-trusted --work-tree=. add -A -f .github/actions && "$NIKATRU_TRUSTED_GIT" write-tree --prefix=.github/actions/)"
+          if [ -z "$NIKATRU_TRUSTED_TREE" ] || [ "$tree" != "$NIKATRU_TRUSTED_TREE" ]; then echo "::error::.nikatru-trusted is not the tree checked out from private main ($NIKATRU_TRUSTED_TREE, now $tree): a step of this job edited its copy"; exit 1; fi
+      - uses: ./.nikatru-trusted/.github/actions/setup-node
+        env:
+          NIKATRU_REF: ${{ github.event.client_payload.ref || inputs.private_ref || 'refs/heads/main' }}
+          NIKATRU_EVENT_NAME: ${{ github.event.client_payload.event || github.event_name }}
+          NIKATRU_PR: ${{ github.event.client_payload.pr }}
+      - name: Plan this run's walk (main's copy)
+        id: plan
+        env:
+          PRIVATE_PR: ${{ inputs.private_pr }}
+          GATE: ${{ vars.MONEY_WALK_SLOTS }}
+        run: |
+          NIKATRU_QUIET="$(mktemp "${RUNNER_TEMP:-/tmp}/nikatru-step.XXXXXX")"
+          cat > "$NIKATRU_QUIET" <<'NIKATRU_QUIET_EOF'
+          set -euo pipefail
+          if [ ! -f tooling/ci/sandbox-walk-version.mjs ]; then
+            echo "::warning::BOOTSTRAP: main's checkout has no tooling/ci/sandbox-walk-version.mjs yet, so this run walks serially (platform-sandbox, the deploy-sandbox group): today's path until main carries the planner"
+            printf 'mode=serial\nwalk slots: bootstrap, serial\n' > "$RUNNER_TEMP/walk-slot.out"
+          else
+            node tooling/ci/sandbox-walk-version.mjs --slot-plan --pr "$PRIVATE_PR" --run-id "$GITHUB_RUN_ID" --attempt "$GITHUB_RUN_ATTEMPT" --gate "$GATE" --main . > "$RUNNER_TEMP/walk-slot.out"
+          fi
+          cat "$RUNNER_TEMP/walk-slot.out"
+          grep -E '^(mode|slot|stamp|platform_origin)=' "$RUNNER_TEMP/walk-slot.out" >> "$GITHUB_OUTPUT"
+          NIKATRU_QUIET_EOF
+          NIKATRU_SHELL="${BASH:-bash}"; if command -v cygpath >/dev/null 2>&1; then NIKATRU_SHELL="$(cygpath -w "$NIKATRU_SHELL")"; fi
+          node "$GITHUB_WORKSPACE/../.nikatru-shell/quiet-step.mjs" --name money-sandbox-e2e.walk-slot.3 -- "$NIKATRU_SHELL" -e "$NIKATRU_QUIET"
+      - name: Store this job's red detail in the bridge's private home (generated)
+        if: always()
+        continue-on-error: true
+        shell: bash
+        working-directory: ${{ github.workspace }}
+        env:
+          NIKATRU_PATHS: ${{ runner.temp }}/report-detail.md
+          NIKATRU_ARTIFACT_NAME: report-detail-money-sandbox-e2e.walk-slot.${{ strategy.job-index }}
+          NIKATRU_IF_NO_FILES: ignore
+          BRIDGE_ARTIFACT_SECRET: ${{ secrets.BRIDGE_ARTIFACT_SECRET }}
+          NIKATRU_BRIDGE_ARTIFACT_URL: https://gh-bridge.nikatru.workers.dev/artifact
+        run: node tooling/ops/bridge-artifact.mjs upload
+
   sandbox-slot:
     name: sandbox-slot
-    if: needs.nikatru-pin.result == 'success' && (needs.nikatru-approve.result == 'success' || (needs.nikatru-approve.result == 'skipped' && !((inputs.private_ref || '') != ''))) && !cancelled() && !failure() && needs.gate.result == 'success' && needs.resume.result == 'success'
-    needs: [nikatru-pin, nikatru-approve, gate, resume]
+    needs: [nikatru-pin, nikatru-approve, gate, resume, walk-slot]
+    if: needs.nikatru-pin.result == 'success' && (needs.nikatru-approve.result == 'success' || (needs.nikatru-approve.result == 'skipped' && !((inputs.private_ref || '') != ''))) && !cancelled() && !failure() && needs.gate.result == 'success' && needs.resume.result == 'success' && needs.walk-slot.result == 'success' && (needs.resume.outputs.skip == '')
     runs-on: ubuntu-24.04
     timeout-minutes: 107
     permissions:
       contents: read
       actions: read
       id-token: write
+    outputs:
+      mode: ${{ needs.walk-slot.outputs.mode }}
+      slot: ${{ needs.walk-slot.outputs.slot }}
+      stamp: ${{ needs.walk-slot.outputs.stamp }}
+      platform_origin: ${{ needs.walk-slot.outputs.platform_origin }}
     steps:
       - name: Check out the private tree (generated)
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
@@ -570,6 +715,7 @@ jobs:
           NIKATRU_EVENT_NAME: ${{ github.event.client_payload.event || github.event_name }}
           NIKATRU_PR: ${{ github.event.client_payload.pr }}
       - name: Wait until no main run's money legs hold the sandbox
+        if: needs.walk-slot.outputs.mode != 'slot'
         env:
           GITHUB_TOKEN: ${{ github.token }}
         run: |
@@ -579,6 +725,17 @@ jobs:
           NIKATRU_QUIET_EOF
           NIKATRU_SHELL="${BASH:-bash}"; if command -v cygpath >/dev/null 2>&1; then NIKATRU_SHELL="$(cygpath -w "$NIKATRU_SHELL")"; fi
           node "$GITHUB_WORKSPACE/../.nikatru-shell/quiet-step.mjs" --name money-sandbox-e2e.sandbox-slot.3 -- "$NIKATRU_SHELL" -e "$NIKATRU_QUIET"
+      - name: A slot walk waits on no main run (its own scripts)
+        if: needs.walk-slot.outputs.mode == 'slot'
+        env:
+          SLOT: ${{ needs.walk-slot.outputs.slot }}
+        run: |
+          NIKATRU_QUIET="$(mktemp "${RUNNER_TEMP:-/tmp}/nikatru-step.XXXXXX")"
+          cat > "$NIKATRU_QUIET" <<'NIKATRU_QUIET_EOF'
+          echo "walk slots: this run walks slot ${SLOT}; platform-sandbox and main's legs are not waited on"
+          NIKATRU_QUIET_EOF
+          NIKATRU_SHELL="${BASH:-bash}"; if command -v cygpath >/dev/null 2>&1; then NIKATRU_SHELL="$(cygpath -w "$NIKATRU_SHELL")"; fi
+          node "$GITHUB_WORKSPACE/../.nikatru-shell/quiet-step.mjs" --name money-sandbox-e2e.sandbox-slot.4 -- "$NIKATRU_SHELL" -e "$NIKATRU_QUIET"
       - name: Store this job's red detail in the bridge's private home (generated)
         if: always()
         continue-on-error: true
@@ -779,6 +936,8 @@ jobs:
       gate_rule: lanes
       platform_db: ${{ needs.ephemeral-db.outputs.id }}
       platform_db_name: ${{ needs.ephemeral-db.outputs.name }}
+      walk_slot: ${{ needs.sandbox-slot.outputs.slot }}
+      walk_stamp: ${{ needs.sandbox-slot.outputs.stamp }}
       nikatru_sha: ${{ needs.gate.outputs.sha || 'nikatru-pin-did-not-succeed..' }}
     permissions:
       contents: read
@@ -800,6 +959,9 @@ jobs:
       rail: ${{ inputs.rail || 'all' }}
       ref: ${{ needs.gate.outputs.sha }}
       resume: ${{ needs.resume.outputs.resume }}
+      fault_inject: ${{ inputs.fault_inject }}
+      gate_attempt: ${{ needs.gate.outputs.attempt }}
+      walk_origin: ${{ needs.deploy.outputs.walk_origin }}
       evidence: ${{ (github.event.client_payload.ref || inputs.private_ref || 'refs/heads/main') == 'refs/heads/main' && 'true' || 'false' }}
       nikatru_sha: ${{ needs.gate.outputs.sha || 'nikatru-pin-did-not-succeed..' }}
     permissions:
@@ -949,12 +1111,13 @@ jobs:
 
   restore:
     name: restore
-    needs: [nikatru-pin, nikatru-approve, main-gate, ephemeral-db]
+    needs: [nikatru-pin, nikatru-approve, main-gate, ephemeral-db, sandbox-slot]
     if: needs.nikatru-pin.result == 'success' && (needs.nikatru-approve.result == 'success' || (needs.nikatru-approve.result == 'skipped' && !((inputs.private_ref || '') != ''))) && (always() && (github.event.client_payload.ref || inputs.private_ref || 'refs/heads/main') != 'refs/heads/main' && needs.main-gate.result == 'success')
     uses: ./.github/workflows/deploy-sandbox-unit.yml
     with:
       worker: all
       ref: ${{ needs.main-gate.outputs.sha }}
+      walk_slot: ${{ needs.sandbox-slot.outputs.slot }}
       migrate_after: ${{ needs.ephemeral-db.outputs.id != '' && 'true' || 'false' }}
       nikatru_sha: ${{ needs.main-gate.outputs.sha || 'nikatru-pin-did-not-succeed..' }}
     permissions:
@@ -970,8 +1133,8 @@ jobs:
 
   stranded:
     name: the sandbox still runs the branch (main-gate did not succeed)
-    needs: [nikatru-pin, nikatru-approve, gate, deploy, main-gate]
-    if: needs.nikatru-pin.result == 'success' && (needs.nikatru-approve.result == 'success' || (needs.nikatru-approve.result == 'skipped' && !((inputs.private_ref || '') != ''))) && (always() && (github.event.client_payload.ref || inputs.private_ref || 'refs/heads/main') != 'refs/heads/main' && needs.deploy.result != 'skipped' && needs.main-gate.result != 'success')
+    needs: [nikatru-pin, nikatru-approve, gate, deploy, main-gate, walk-slot]
+    if: needs.nikatru-pin.result == 'success' && (needs.nikatru-approve.result == 'success' || (needs.nikatru-approve.result == 'skipped' && !((inputs.private_ref || '') != ''))) && (always() && (github.event.client_payload.ref || inputs.private_ref || 'refs/heads/main') != 'refs/heads/main' && needs.deploy.result != 'skipped' && needs.main-gate.result != 'success' && needs.walk-slot.outputs.mode != 'slot')
     runs-on: ubuntu-24.04
     timeout-minutes: 5
     permissions:
@@ -1185,7 +1348,7 @@ jobs:
 
   nikatru-ran:
     name: Fail this run if it ran nothing (generated)
-    needs: [gate, resume, sandbox-slot, ephemeral-db, deploy, proof, main-gate, restore, stranded, ephemeral-drop]
+    needs: [gate, resume, walk-slot, sandbox-slot, ephemeral-db, deploy, proof, main-gate, restore, stranded, ephemeral-drop]
     if: "!cancelled()"
     runs-on: ubuntu-24.04
     defaults:
@@ -1205,7 +1368,7 @@ jobs:
       - name: Fail when every job of this run was skipped (generated)
         shell: bash
         env:
-          NIKATRU_RESULTS: gate=${{ needs.gate.result }} resume=${{ needs.resume.result }} sandbox-slot=${{ needs.sandbox-slot.result }} ephemeral-db=${{ needs.ephemeral-db.result }} deploy=${{ needs.deploy.result }} proof=${{ needs.proof.result }} main-gate=${{ needs.main-gate.result }} restore=${{ needs.restore.result }} stranded=${{ needs.stranded.result }} ephemeral-drop=${{ needs.ephemeral-drop.result }}
+          NIKATRU_RESULTS: gate=${{ needs.gate.result }} resume=${{ needs.resume.result }} walk-slot=${{ needs.walk-slot.result }} sandbox-slot=${{ needs.sandbox-slot.result }} ephemeral-db=${{ needs.ephemeral-db.result }} deploy=${{ needs.deploy.result }} proof=${{ needs.proof.result }} main-gate=${{ needs.main-gate.result }} restore=${{ needs.restore.result }} stranded=${{ needs.stranded.result }} ephemeral-drop=${{ needs.ephemeral-drop.result }}
         run: |
           for r in $NIKATRU_RESULTS; do
             if [ "${r#*=}" != skipped ]; then echo "ran: $NIKATRU_RESULTS"; exit 0; fi
