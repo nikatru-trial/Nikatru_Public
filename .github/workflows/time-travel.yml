@@ -1327,6 +1327,7 @@ jobs:
     timeout-minutes: 15
     permissions:
       contents: read
+      actions: read
       id-token: write
     steps:
       - name: Check out private main's hand-off script and uploader (generated)
@@ -1336,6 +1337,7 @@ jobs:
           ref: main
           sparse-checkout: |
             tooling/ci
+            tooling/generated
             tooling/ops
             tooling/app-yaml
             tooling/catalog
@@ -1352,11 +1354,16 @@ jobs:
         with:
           pattern: nikatru-sealed-detail-time-travel-*
           path: ${{ runner.temp }}/nikatru-sealed-cells
+      - name: List this run's artifacts, to name a single flattened cell (generated)
+        shell: bash
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: node tooling/ops/run-artifact-names.mjs --out "$RUNNER_TEMP/nikatru-run-artifacts.json"
       - name: Open each branch job's sealed red detail (generated)
         shell: bash
         env:
           NIKATRU_DETAIL_KEY: ${{ secrets.NIKATRU_DETAIL_KEY }}
-        run: node tooling/ci/shell-handoff.mjs open-detail-cells --dir "$RUNNER_TEMP/nikatru-sealed-cells" --prefix nikatru-sealed-detail-time-travel- --out "$RUNNER_TEMP/report-detail.md"
+        run: node tooling/ci/shell-handoff.mjs open-detail-cells --dir "$RUNNER_TEMP/nikatru-sealed-cells" --prefix nikatru-sealed-detail-time-travel- --out "$RUNNER_TEMP/report-detail.md" --run-names "$RUNNER_TEMP/nikatru-run-artifacts.json"
       - name: Store this job's red detail in the bridge's private home (generated)
         if: always()
         continue-on-error: true
