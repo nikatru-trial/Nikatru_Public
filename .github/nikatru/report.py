@@ -241,7 +241,7 @@ HANDOFF_MAX_BYTES = 16 * 1024
 # bundle of SEALED_MAX_CHARS (~5 sealed hand-offs), so restored hand-offs past it were dropped, and each was
 # sealed under its own run key, so nobody could ever read them. collect now spills into DETAIL_OUTPUTS
 # bundles, the job outputs `detail`, `detail_2` .. `detail_<DETAIL_OUTPUTS>` (each one environment string;
-# all of them well inside a job's 1 MB of outputs), and send reads every one. Enough for every restore slot's
+# all of them inside a job's 1 MiB of outputs BY GITHUB'S COUNT, github_output_bytes), and send reads every one. Enough for every restore slot's
 # hand-off at its cap (gen-public-shell.mjs REPORT_SLOTS; shell-report.test.mjs holds it); what is named
 # now is only what no restore slot reached.
 DETAIL_OUTPUTS = 3
@@ -1005,7 +1005,8 @@ RED_LOG_FILE = re.compile(r'^[A-Za-z0-9][A-Za-z0-9._()-]{0,120}\.log$')
 # fits one collect output.
 RED_LOG_SEALED_MAX = 100 * 1024
 # @ceiling — the collect job's red-log outputs, `red_logs` then `red_logs_2` .. (gen-public-shell.mjs RED_LOG_OUTPUTS;
-# the test holds the two equal). With DETAIL_OUTPUTS they stay under a job's 1 MB of outputs (7 x 120 KiB = 840 KiB).
+# the test holds the two equal). They take what the DETAIL_OUTPUTS leave of COLLECT_OUTPUTS_BUDGET, by GitHub's count
+# (github_output_bytes: 2 bytes a character), never all seven at their cap (7 x 120 Ki characters = 1,720,320 bytes).
 # Today a red run hands over 1-3 logs; at the cap, each log no output has room for is named and reads NOT stored
 # (over the report's carry budget), which is red, never silently dropped.
 RED_LOG_OUTPUTS = 4
@@ -1017,15 +1018,36 @@ RED_LOG_OUTPUTS = 4
 # detail/core pattern): few reds carry whole 100 KiB logs, REPORT_SLOTS reds each carry a small one, none NOT stored.
 # @ceiling — derived, never typed: REPORT_SLOTS small logs (with their binding names) fit RED_LOG_OUTPUTS bundles;
 # shell-report.test.mjs pins RED_LOG_OUTPUTS x (SEALED_MAX_CHARS - 1024) >= REPORT_SLOTS x (RED_LOG_SMALL_MAX + 512).
-RED_LOG_SMALL_MAX = 12 * 1024
+# ⏱ 2026-11-24 · lane fixfirst-collect-cap-1124: 12 KiB was sized by the UTF-8 count GitHub does not use. By GitHub's
+# count (github_output_bytes) the DETAIL_OUTPUTS at their cap leave 250,640 bytes, about 125,000 characters, of
+# COLLECT_OUTPUTS_BUDGET to the red logs: REPORT_SLOTS (32) small logs fit it at 3 KiB each (32 x 3,584 = 114,688), at
+# 12 KiB only 9 did. red-log-report.test.mjs pins REPORT_SLOTS x the small log's GitHub bytes within that room.
+RED_LOG_SMALL_MAX = 3 * 1024
 RED_LOG_SMALL_BINDING = '#small'
 RED_LOG_SMALL_SUFFIX = '.small.sealed'
 # @ceiling — ONE budget for EVERY output the collect job writes (GitHub refuses a job whose outputs exceed 1,048,576
 # bytes: "Job outputs exceed 1,048,576 bytes", the collect job of the 2026-11-18T19:44Z run, row O-RED-DETAIL-COMPLETE).
-# collect() counts each `name=value` line it writes against it; a red-log bundle the budget has no room for is not
-# written, and its logs read NOT stored (over the carry budget), red and named, never a refused job.
+# collect() counts each output it writes against it, BY GITHUB'S COUNT (github_output_bytes); a red-log bundle the
+# budget has no room for is not written, and its logs read NOT stored (over the carry budget), red and named, never a
+# refused job.
+# ⏱ 2026-11-24 · lane fixfirst-collect-cap-1124 (row O-CI-COLLECT-OUTPUTS-OVER-JOB-CAP-1121): rehearsals 45455893884 and
+# 45459110028 printed `ok collect: 702695 byte(s) of job outputs, under the 983040-byte budget` and GitHub refused the
+# SAME job: "Job outputs exceed 1,048,576 bytes". The old count was the UTF-8 bytes of each `name=value` line. GitHub
+# (a .NET service: the message's "1,048,576" is .NET's N0 format) sizes the evaluated job outputs as .NET strings, two
+# bytes for each UTF-16 code unit: 702,695 ASCII bytes are 1,405,390 bytes to GitHub, over 1,048,576 by 356,814. The
+# 64 KiB under the cap stays as the margin, now on GitHub's count; GITHUB_OUTPUT_OVERHEAD adds each string's own
+# overhead (name and value, a .NET string's header) so the count errs high, never low.
 JOB_OUTPUTS_MAX_BYTES = 1_048_576
 COLLECT_OUTPUTS_BUDGET = JOB_OUTPUTS_MAX_BYTES - 64 * 1024
+GITHUB_OUTPUT_OVERHEAD = 64
+
+
+def github_output_bytes(name, value):
+    """GitHub's count of ONE job output `name` = `value`: two bytes per UTF-16 code unit of each string (a character
+    past U+FFFF is two units), plus GITHUB_OUTPUT_OVERHEAD. Never the UTF-8 length of the `name=value` line, which
+    counts an ASCII output at half what GitHub does."""
+    return len(name.encode('utf-16-le')) + len(value.encode('utf-16-le')) + GITHUB_OUTPUT_OVERHEAD
+
 RED_LOG_BUNDLE_VERSION = 1
 # What the report-signed upload signs (services/gh-bridge/src/artifact.ts REPORT_ARTIFACT_PREFIX): never `artifact\n`,
 # and never a /report body, so neither signature opens the other door.
@@ -1148,13 +1170,16 @@ def collected_red_logs(prefix, small=False):
 
 def bundle_red_logs(logs, smalls=None, room=None):
     """Up to RED_LOG_OUTPUTS bundles {v, logs: {binding: sealed}, small: {binding: sealed}, over: [binding]}, each within
-    SEALED_MAX_CHARS and all of them within `room` characters (None: no limit past the bundles'). Every log's SMALL form
+    SEALED_MAX_CHARS and all of them within `room` bytes BY GITHUB'S COUNT, github_output_bytes (None: no limit past
+    the bundles'). Every log's SMALL form
     (`smalls`) is placed first, then each is upgraded to its full form while a bundle has room (O-RED-LOG-CARRY-SIZE); a
     log with neither form placed is named in `over` of the first (the report reads it NOT stored, over the carry budget)."""
     smalls = smalls or {}
     bundles = [{'v': RED_LOG_BUNDLE_VERSION, 'logs': {}, 'over': []}]
     size = lambda b: len(json.dumps(b, separators=(',', ':')))
-    total_ok = lambda: room is None or sum(size(b) + 32 for b in bundles) <= room
+    # `room` is in GitHub's bytes (github_output_bytes), the unit COLLECT_OUTPUTS_BUDGET is in.
+    total_ok = lambda: room is None or sum(github_output_bytes(red_log_output(i), json.dumps(b, separators=(',', ':')))
+                                           for i, b in enumerate(bundles)) <= room
     fits = lambda b: size(b) <= SEALED_MAX_CHARS - 1024 and total_ok()
 
     def put(field, binding, sealed):
@@ -1620,11 +1645,11 @@ def collect(env, cfg):
                     bundles[0]['unrestored'].append(last)
     written = 0
     with open(env['GITHUB_OUTPUT'], 'a', encoding='utf-8') as f:
-        lines = [detail_output(0) + '=' + (json.dumps(bundles[0], separators=(',', ':')) if handed or unrestored else '') + '\n']
-        lines += [detail_output(i) + '=' + json.dumps(b, separators=(',', ':')) + '\n' for i, b in enumerate(bundles[1:], start=1)]
-        for line in lines:
-            f.write(line)
-            written += len(line.encode('utf-8'))
+        outs = [(detail_output(0), json.dumps(bundles[0], separators=(',', ':')) if handed or unrestored else '')]
+        outs += [(detail_output(i), json.dumps(b, separators=(',', ':'))) for i, b in enumerate(bundles[1:], start=1)]
+        for name, value in outs:
+            f.write(f'{name}={value}\n')
+            written += github_output_bytes(name, value)
     for b in bundles:
         if not b.get('cores'):
             b.pop('cores', None)
@@ -1639,13 +1664,13 @@ def collect(env, cfg):
         rb = bundle_red_logs(logs, collected_red_logs(prefix, small=True), COLLECT_OUTPUTS_BUDGET - written - 1024)
         with open(env['GITHUB_OUTPUT'], 'a', encoding='utf-8') as f:
             for i, b in enumerate(rb):
-                line = red_log_output(i) + '=' + json.dumps(b, separators=(',', ':')) + '\n'
-                f.write(line)
-                written += len(line.encode('utf-8'))
+                value = json.dumps(b, separators=(',', ':'))
+                f.write(f'{red_log_output(i)}={value}\n')
+                written += github_output_bytes(red_log_output(i), value)
         print(f"ok collect: {sum(len(b['logs']) for b in rb)} whole and {sum(len(b.get('small', {})) for b in rb)} small sealed red log(s)"
               f" carried in {len(rb)} output(s), {len(rb[0]['over'])} over the budget")
-    print(f'ok collect: {written} byte(s) of job outputs, under the {COLLECT_OUTPUTS_BUDGET}-byte budget'
-          if written <= COLLECT_OUTPUTS_BUDGET else f'x collect: {written} byte(s) of job outputs, OVER the {COLLECT_OUTPUTS_BUDGET}-byte budget')
+    print(f"ok collect: {written} byte(s) of job outputs by GitHub's count, under the {COLLECT_OUTPUTS_BUDGET}-byte budget"
+          if written <= COLLECT_OUTPUTS_BUDGET else f"x collect: {written} byte(s) of job outputs by GitHub's count, OVER the {COLLECT_OUTPUTS_BUDGET}-byte budget")
     return 0
 
 
