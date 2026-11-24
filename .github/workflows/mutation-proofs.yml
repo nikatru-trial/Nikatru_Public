@@ -143,6 +143,20 @@ jobs:
           echo "pinned $NIKATRU_PINNED"
           echo "sha=$NIKATRU_PINNED" >> "$GITHUB_OUTPUT"
 
+  nikatru-pin-name:
+    name: Name the private commit this run built (generated) · private commit ${{ needs.nikatru-pin.outputs.sha }}
+    needs: [nikatru-pin]
+    runs-on: ubuntu-24.04
+    timeout-minutes: 5
+    permissions: {}
+    steps:
+      - name: Name the pinned private commit (generated)
+        shell: bash
+        working-directory: ${{ github.workspace }}
+        env:
+          NIKATRU_PINNED: ${{ needs.nikatru-pin.outputs.sha }}
+        run: echo "this run built the pinned private commit $NIKATRU_PINNED"
+
   execute:
     needs: [nikatru-pin]
     name: Every proven mutation still turns its test red, green control first

@@ -1989,11 +1989,11 @@ jobs:
           NIKATRU_QUIET_EOF
           NIKATRU_SHELL="${BASH:-bash}"; if command -v cygpath >/dev/null 2>&1; then NIKATRU_SHELL="$(cygpath -w "$NIKATRU_SHELL")"; fi
           node "$GITHUB_WORKSPACE/../.nikatru-shell/quiet-step.mjs" --name ops-watch.runner-budget.7 -- "$NIKATRU_SHELL" -e "$NIKATRU_QUIET"
-      - name: List the merged train/* branches of the code repository (pruned only on the owner's dispatch)
+      - name: List the merged train/* branches of the code repository (a Worker slot prunes those merged over 2 days)
         if: ${{ !cancelled() && (inputs.worker_slot != '' || inputs.prune_trains) && ((env.NIKATRU_REF || (github.event.client_payload.ref || 'refs/heads/main')) == 'refs/heads/main' && contains(fromJSON('["push","schedule","workflow_dispatch"]'), env.NIKATRU_EVENT_NAME || (github.event.client_payload.event || github.event_name)) && !env.NIKATRU_PR) }}
         timeout-minutes: 4
         env:
-          PRUNE: ${{ inputs.prune_trains && '--prune' || '' }}
+          PRUNE: ${{ inputs.prune_trains && '--prune' || inputs.worker_slot != '' && '--prune-merged' || '' }}
           BRIDGE_READ_SECRET: ${{ (github.event.client_payload.event || github.event_name) != 'pull_request' && secrets.BRIDGE_READ_SECRET || '' }}
           BRIDGE_OPS_SECRET: ${{ (github.event.client_payload.event || github.event_name) != 'pull_request' && secrets.BRIDGE_OPS_SECRET || '' }}
           NIKATRU_BRIDGE_OPS_URL: ${{ (github.event.client_payload.event || github.event_name) != 'pull_request' && 'https://gh-bridge.nikatru.workers.dev/ops' || '' }}
@@ -2620,6 +2620,46 @@ jobs:
           NIKATRU_QUIET_EOF
           NIKATRU_SHELL="${BASH:-bash}"; if command -v cygpath >/dev/null 2>&1; then NIKATRU_SHELL="$(cygpath -w "$NIKATRU_SHELL")"; fi
           node "$GITHUB_WORKSPACE/../.nikatru-shell/quiet-step.mjs" --name ops-watch.glitchtip.6 -- "$NIKATRU_SHELL" -e "$NIKATRU_QUIET"
+      - name: The Turnstile site key the web ships and Box C's captcha secret are one widget's pair
+        if: always()
+        env:
+          CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_READ_TOKEN }}
+          CLOUDFLARE_ACCOUNT_ID: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
+          TURNSTILE_SITE_KEY: ${{ vars.TURNSTILE_SITE_KEY }}
+        run: |
+          NIKATRU_QUIET="$(mktemp "${RUNNER_TEMP:-/tmp}/nikatru-step.XXXXXX")"
+          cat > "$NIKATRU_QUIET" <<'NIKATRU_QUIET_EOF'
+          set +e
+          node tooling/ops/check-turnstile-pairing.mjs
+          code=$?
+          set -e
+          if [ "$code" -eq 2 ]; then
+            echo "::error title=The Turnstile pairing is UNKNOWN - Box C's captcha secret was not compared with the shipped site key::No token, no posted gotrue-captcha hash, a stale box manifest, or the widget unread. An unjudged pair is not a matching one: the step log names which."
+          elif [ "$code" -eq 1 ]; then
+            echo "::error title=Box C's captcha secret is NOT the shipped widget's - EVERY WEB SIGN-UP AND PASSWORD SIGN-IN IS REFUSED::GoTrue answers captcha_failed while the page loads and the widget draws. Set GOTRUE_SECURITY_CAPTCHA_SECRET on Box C to the secret of the widget carrying TURNSTILE_SITE_KEY, recreate the auth service, and let the box manifest post again."
+          fi
+          exit "$code"
+          NIKATRU_QUIET_EOF
+          NIKATRU_SHELL="${BASH:-bash}"; if command -v cygpath >/dev/null 2>&1; then NIKATRU_SHELL="$(cygpath -w "$NIKATRU_SHELL")"; fi
+          node "$GITHUB_WORKSPACE/../.nikatru-shell/quiet-step.mjs" --name ops-watch.glitchtip.7 -- "$NIKATRU_SHELL" -e "$NIKATRU_QUIET"
+      - name: The production OAuth front door redirects to Google and Apple with our callback
+        if: always()
+        run: |
+          NIKATRU_QUIET="$(mktemp "${RUNNER_TEMP:-/tmp}/nikatru-step.XXXXXX")"
+          cat > "$NIKATRU_QUIET" <<'NIKATRU_QUIET_EOF'
+          set +e
+          node tooling/ops/check-oauth-front-door.mjs
+          code=$?
+          set -e
+          if [ "$code" -eq 2 ]; then
+            echo "::error title=The OAuth front door is UNKNOWN - an authorize call was not seen::No answer, a 429 or edge challenge that outlived its one retry, or an answer this script cannot read. An unread door is not an open one: the step log names the provider."
+          elif [ "$code" -eq 1 ]; then
+            echo "::error title=Sign in with Google or Apple is BROKEN at the front door - real users cannot sign in::The authorize call answered an error, or redirected to the wrong host, with the wrong redirect_uri or a different client_id. The failure is silent to every automated sign-in (they use a harness token). The step log names the provider and the limb."
+          fi
+          exit "$code"
+          NIKATRU_QUIET_EOF
+          NIKATRU_SHELL="${BASH:-bash}"; if command -v cygpath >/dev/null 2>&1; then NIKATRU_SHELL="$(cygpath -w "$NIKATRU_SHELL")"; fi
+          node "$GITHUB_WORKSPACE/../.nikatru-shell/quiet-step.mjs" --name ops-watch.glitchtip.8 -- "$NIKATRU_SHELL" -e "$NIKATRU_QUIET"
       - name: No retired name is still a live resource in the account
         if: always()
         env:
@@ -2646,7 +2686,7 @@ jobs:
           exit "$code"
           NIKATRU_QUIET_EOF
           NIKATRU_SHELL="${BASH:-bash}"; if command -v cygpath >/dev/null 2>&1; then NIKATRU_SHELL="$(cygpath -w "$NIKATRU_SHELL")"; fi
-          node "$GITHUB_WORKSPACE/../.nikatru-shell/quiet-step.mjs" --name ops-watch.glitchtip.7 -- "$NIKATRU_SHELL" -e "$NIKATRU_QUIET"
+          node "$GITHUB_WORKSPACE/../.nikatru-shell/quiet-step.mjs" --name ops-watch.glitchtip.9 -- "$NIKATRU_SHELL" -e "$NIKATRU_QUIET"
       - name: No sandbox Worker holds the service-role key
         if: always()
         env:
@@ -2667,7 +2707,7 @@ jobs:
           exit "$code"
           NIKATRU_QUIET_EOF
           NIKATRU_SHELL="${BASH:-bash}"; if command -v cygpath >/dev/null 2>&1; then NIKATRU_SHELL="$(cygpath -w "$NIKATRU_SHELL")"; fi
-          node "$GITHUB_WORKSPACE/../.nikatru-shell/quiet-step.mjs" --name ops-watch.glitchtip.8 -- "$NIKATRU_SHELL" -e "$NIKATRU_QUIET"
+          node "$GITHUB_WORKSPACE/../.nikatru-shell/quiet-step.mjs" --name ops-watch.glitchtip.10 -- "$NIKATRU_SHELL" -e "$NIKATRU_QUIET"
       - name: Hand this job's red detail to the report job, sealed (generated)
         id: nikatru-handoff
         if: always()
@@ -3069,6 +3109,27 @@ jobs:
           NIKATRU_QUIET_EOF
           NIKATRU_SHELL="${BASH:-bash}"; if command -v cygpath >/dev/null 2>&1; then NIKATRU_SHELL="$(cygpath -w "$NIKATRU_SHELL")"; fi
           node "$GITHUB_WORKSPACE/../.nikatru-shell/quiet-step.mjs" --name ops-watch.config-drift.16 -- "$NIKATRU_SHELL" -e "$NIKATRU_QUIET"
+      - name: No gh-bridge door threw an unhandled error in the last day
+        if: ${{ !cancelled() }}
+        env:
+          CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_READ_TOKEN }}
+          CLOUDFLARE_ACCOUNT_ID: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
+        run: |
+          NIKATRU_QUIET="$(mktemp "${RUNNER_TEMP:-/tmp}/nikatru-step.XXXXXX")"
+          cat > "$NIKATRU_QUIET" <<'NIKATRU_QUIET_EOF'
+          set +e
+          node tooling/ops/check-gh-bridge-unhandled.mjs
+          code=$?
+          set -e
+          if [ "$code" -eq 2 ]; then
+            echo "::error title=gh-bridge unhandled throws are UNKNOWN::Workers Logs could not be read (no token, no account id, or a token without Workers Observability Read), so nothing is known about gh-bridge doors answering 500. That is never a pass. The step log names the reason."
+          elif [ "$code" -eq 1 ]; then
+            echo "::error title=A gh-bridge door threw and answered 500::CI reports, proposals, ops issues or Renovate tokens may be failing. The step log names each door, its count and the newest error. Read the gh-bridge Worker's logs for that time."
+          fi
+          exit "$code"
+          NIKATRU_QUIET_EOF
+          NIKATRU_SHELL="${BASH:-bash}"; if command -v cygpath >/dev/null 2>&1; then NIKATRU_SHELL="$(cygpath -w "$NIKATRU_SHELL")"; fi
+          node "$GITHUB_WORKSPACE/../.nikatru-shell/quiet-step.mjs" --name ops-watch.config-drift.17 -- "$NIKATRU_SHELL" -e "$NIKATRU_QUIET"
       - name: Hand this job's red detail to the report job, sealed (generated)
         id: nikatru-handoff
         if: always()

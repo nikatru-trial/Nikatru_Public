@@ -47,6 +47,27 @@
 // live-probe-webhook-refusal.test.ts drives every such row through the real Worker app). `canary: true` marks a row
 // tooling/ops/gradual-deploy.mjs also sends to the pinned new version at every split.
 //
+// ⏱ 2026-11-21 · O-PROD-PROBES-ONE-VANTAGE-1121 (lane front-door-probes-1121; lead ruling 10:20Z): WHERE A RUN STOOD.
+// The probes ran from one box and never said which Cloudflare edge answered them, so "the India book is served" was
+// never asked from India. Each run now reads `/cdn-cgi/trace` ONCE (on the host of the market-book row, through the
+// same liveAnswer as every probe) and prints ONE line `colo=<CODE> loc=<CC> vantage=<name>` before its probe lines;
+// the line also rides runs.jsonl. `--vantage box-a|box-b` names the box (VANTAGES) — never inferred; absent, it is
+// printed `vantage=undeclared`. A missing or unreadable trace is `colo=UNKNOWN loc=UNKNOWN`, never a probe failure.
+// `loc` (the country the edge sees, which is the CF-IPCountry services/platform/src/routes/config.ts prices by) JUDGES
+// the market; `colo` is printed only. The kind `expect.marketBook` judges `GET /config/<app>` with NO declared market:
+// when `loc` is in its `byLoc` table the body must carry that market's book (`paywall.market` and every offering's
+// `currency_code`); for any other loc it records the book it got without judging (tooling/ci/assert-live-ops.mjs
+// holds `byLoc` to services/platform/src/config.ts MARKET_PRICE_BOOKS).
+// ⏱ 2026-11-21 · review of 9b39f66e (F2, F4): A DELIBERATE "NO PRICES" IS ITS OWN VERDICT, AND A WRONG BOOK PAGES ONCE.
+// A body with `purchases_paused: true`, or whose paywall offerings the Worker withheld (`offerings: []`), is
+// `NO PRICES (deliberate: …)` — an ok verdict, named apart, never judged as "the wrong book". A row marked
+// `alert: "once-per-state"` (every marketBook row: assert-live-ops limb 11) pages ONCE when it turns (after the same
+// failuresToPage runs) and again only when its failure CHANGES (a different `why`); it never escalates or reminds,
+// because a wrong book is a pricing fault to fix the same day, not an outage to CONTAIN in 15 minutes.
+// DETECTION TIME (F4): the trace read runs IN PARALLEL with the probes, each bounded by the same alerting.timeoutMs,
+// and the verdicts are taken after both — so a run still ends within ONE timeout (10 s today) and DETECT is unchanged:
+// failuresToPage (2) x the 1-minute cron + one timeout. A trace that has not answered by then is UNKNOWN.
+//
 // CONFIG: /etc/nikatru/live-probe.conf (LIVE_PROBE_CONF overrides; the tests do), KEY=VALUE lines:
 //   PAGE_URL=https://ntfy.sh/<owner topic>             the owner page, leg 1 = the PRIMARY (required unless --dry-run)
 //   PAGE_TOKEN_FILE=<leg 1's token file>               mode 0600; optional; sent to leg 1 ONLY
@@ -65,7 +86,7 @@
 // No secret is ever printed: a token and the heartbeat URL are read from files and never echoed.
 //
 // Usage:
-//   node live-probe.mjs --once [--dry-run] [--now <ISO>] [--fixtures <file.json>]
+//   node live-probe.mjs --once [--vantage box-a|box-b] [--dry-run] [--now <ISO>] [--fixtures <file.json>]
 //   --dry-run   probe and decide, print the message, send nothing and write no state.
 //   --fixtures  answers from a JSON file keyed `<METHOD> <url>` -> {status, body} (tests; never the network).
 // Exit: 0 the run completed and every alert it owed was delivered (a failing probe is an ALERT, not an
@@ -78,6 +99,7 @@ import { appendFileSync, closeSync, existsSync, fstatSync, ftruncateSync, mkdirS
 import { dirname, join, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { parseArgs } from 'node:util';
+import { pageAllLegs, pageLegs, readSecretFile } from './box-page.mjs';
 
 const HERE = dirname(fileURLToPath(import.meta.url));
 export const DEFAULT_CONF = '/etc/nikatru/live-probe.conf';
@@ -124,8 +146,10 @@ export function validateProbes(doc) {
       if (r.padTo !== undefined && !(Number.isInteger(r.padTo) && r.padTo > Buffer.byteLength(String(r.body ?? '')))) errors.push(`${id}: padTo must be an integer larger than the body`);
       if (e.json === undefined) errors.push(`${id}: a POST is judged by the exact JSON it is answered (expect.json)`);
     } else if (r.body !== undefined || r.padTo !== undefined) errors.push(`${id}: only a POST sends a body`);
+    if (e.marketBook !== undefined) errors.push(...marketBookErrors(id, r.method, e.marketBook));
     if (e.json !== undefined && (e.json === null || typeof e.json !== 'object' || Array.isArray(e.json))) errors.push(`${id}: expect.json must be an object`);
     if (r.canary !== undefined && r.canary !== true) errors.push(`${id}: canary is true or absent`);
+    if (r.alert !== undefined && r.alert !== 'once-per-state') errors.push(`${id}: alert is "once-per-state" or absent`);
     if (e.bodyIncludes !== undefined && !(Array.isArray(e.bodyIncludes) && e.bodyIncludes.every((s) => typeof s === 'string' && s.length > 0))) {
       errors.push(`${id}: expect.bodyIncludes must be an array of non-empty strings`);
     }
@@ -136,6 +160,59 @@ export function validateProbes(doc) {
     }
   }
   return errors;
+}
+
+/** PURE. The structural rules of an `expect.marketBook` judge (O-PROD-PROBES-ONE-VANTAGE-1121). */
+function marketBookErrors(id, method, mb) {
+  const out = [];
+  if (method !== 'GET') out.push(`${id}: a marketBook is a GET judge (the config is read, never posted)`);
+  if (!mb || typeof mb !== 'object' || Array.isArray(mb)) return [...out, `${id}: expect.marketBook must be an object`];
+  if (typeof mb.why !== 'string' || mb.why.trim() === '') out.push(`${id}: expect.marketBook.why must say why each loc is judged`);
+  const by = mb.byLoc;
+  if (!by || typeof by !== 'object' || Array.isArray(by) || Object.keys(by).length === 0) return [...out, `${id}: expect.marketBook.byLoc must be a non-empty object of loc -> {market, currency}`];
+  for (const [loc, want] of Object.entries(by)) {
+    if (!/^[A-Z]{2}$/.test(loc)) out.push(`${id}: marketBook.byLoc key ${JSON.stringify(loc)} is not a two-letter country code`);
+    if (typeof want?.market !== 'string' || !/^[A-Z]{2}$/.test(want.market)) out.push(`${id}: marketBook.byLoc.${loc}.market must be a two-letter market`);
+    if (typeof want?.currency !== 'string' || !/^[A-Z]{3}$/.test(want.currency)) out.push(`${id}: marketBook.byLoc.${loc}.currency must be a three-letter currency`);
+  }
+  return out;
+}
+
+/** The boxes a run may say it stands on. Named by the operator (`--vantage`), never inferred. */
+export const VANTAGES = Object.freeze(['box-a', 'box-b']);
+
+/** PURE. `colo` and `loc` out of a `/cdn-cgi/trace` answer (`k=v` lines); `UNKNOWN` for each one it does not carry. */
+export function parseTrace(answer) {
+  const out = { colo: 'UNKNOWN', loc: 'UNKNOWN' };
+  if (!answer || answer.error || answer.status !== 200) return out;
+  for (const line of String(answer.body ?? '').split(/\r?\n/)) {
+    const m = /^(colo|loc)=([A-Za-z0-9]{2,8})$/.exec(line.trim());
+    if (m) out[m[1]] = m[2].toUpperCase();
+  }
+  return out;
+}
+
+/** PURE. Where the run reads its trace: the origin of the market-book row (the edge whose country prices the book),
+ *  else of the first row. */
+export function traceUrlOf(doc) {
+  const rows = doc?.rows ?? [];
+  const r = rows.find((x) => x?.expect?.marketBook) ?? rows[0];
+  return r ? `${new URL(r.url).origin}/cdn-cgi/trace` : null;
+}
+
+/** PURE. The one line a run prints before its probe lines. */
+export const vantageLine = ({ colo, loc }, vantage) => `colo=${colo} loc=${loc} vantage=${vantage ?? 'undeclared'}`;
+
+/** PURE. What one config body offers: `{noPrices: why}` for a DELIBERATE no-prices answer (purchases paused, or
+ *  every offering withheld), `{market, currencies, paywallOff}` for a book, or null when it has no paywall offerings
+ *  list at all (a shape this cannot read). */
+function bookOf(got) {
+  const pw = got?.paywall;
+  if (got?.purchases_paused === true) return { noPrices: 'purchases_paused' };
+  const offers = Array.isArray(pw?.offerings) ? pw.offerings : null;
+  if (!pw || !offers) return null;
+  if (offers.length === 0) return { noPrices: 'the Worker withheld every offering' };
+  return { market: pw.market ?? null, currencies: [...new Set(offers.map((o) => o?.currency_code ?? '(none)'))].sort(), paywallOff: pw.enabled === false };
 }
 
 /** The methods a probe may send. */
@@ -186,8 +263,9 @@ export function launcherFindings(html, l) {
   return out;
 }
 
-/** PURE. One probe's verdict from one answer: `{ok, why}`. `answer` is {status, body} or {error}. */
-export function judge(row, answer) {
+/** PURE. One probe's verdict from one answer: `{ok, why}`. `answer` is {status, body} or {error}; `ctx.loc` is the
+ *  run's trace country (a marketBook row judges by it; absent = UNKNOWN, not judged). */
+export function judge(row, answer, ctx = {}) {
   if (!answer || answer.error) return { ok: false, why: `no answer (${answer?.error ?? 'none'})` };
   const e = row.expect;
   const statusOk = e.status === 'below-500' ? answer.status < 500 : e.status.includes(answer.status);
@@ -200,6 +278,20 @@ export function judge(row, answer) {
     try { got = JSON.parse(body); } catch { return { ok: false, why: `HTTP ${answer.status} but the body is not JSON` }; }
     // The body is the route's refusal (a fixed error code), never a customer's data, so naming it is safe.
     if (JSON.stringify(canonical(got)) !== JSON.stringify(canonical(e.json))) return { ok: false, why: `HTTP ${answer.status} but the body is ${JSON.stringify(got).slice(0, 120)}, expected ${JSON.stringify(e.json)}` };
+  }
+  if (e.marketBook) {
+    let got;
+    try { got = JSON.parse(body); } catch { return { ok: false, why: `HTTP ${answer.status} but the config body is not JSON` }; }
+    const book = bookOf(got);
+    const loc = ctx.loc ?? 'UNKNOWN';
+    if (book?.noPrices) return { ok: true, why: `HTTP ${answer.status}, NO PRICES (deliberate: ${book.noPrices}) at loc=${loc} — no book to judge` };
+    const want = Object.prototype.hasOwnProperty.call(e.marketBook.byLoc, loc) ? e.marketBook.byLoc[loc] : null;
+    const said = book ? `market=${book.market ?? 'default'} currency=${book.currencies.join('+')}${book.paywallOff ? ' (paywall off)' : ''}` : 'no paywall offerings';
+    if (!want) return { ok: true, why: `HTTP ${answer.status}, book ${said} (not judged: loc=${loc})` };
+    if (!book || book.market !== want.market || book.currencies.length !== 1 || book.currencies[0] !== want.currency) {
+      return { ok: false, why: `HTTP ${answer.status} but loc=${loc} was served ${said}, not the ${want.market} book in ${want.currency}` };
+    }
+    return { ok: true, why: `HTTP ${answer.status}, loc=${loc} served the ${want.market} book (${want.currency})${book.paywallOff ? ' (paywall off)' : ''}` };
   }
   if (e.launcher) {
     const f = launcherFindings(body, e.launcher);
@@ -242,7 +334,16 @@ export function decide(prev, results, nowMs, alerting) {
     if (!p.paged) {
       if (p.fails >= alerting.failuresToPage) {
         alerts.push({ kind: 'page', id: r.id, why: r.why, fails: p.fails, since: p.firstFailAt });
-        p.paged = { at, level: 'page', lastNotifiedAt: at };
+        p.paged = { at, level: 'page', lastNotifiedAt: at, why: r.why };
+      }
+      continue;
+    }
+    // ⏱ 2026-11-21 · review of 9b39f66e F2: a once-per-state row pages again only when its failure CHANGES; it never
+    // escalates or reminds (a wrong price book is fixed the same day, not CONTAINED in 15 minutes).
+    if (r.oncePerState) {
+      if (r.why !== p.paged.why) {
+        alerts.push({ kind: 'page', id: r.id, why: r.why, fails: p.fails, since: p.firstFailAt });
+        p.paged = { ...p.paged, lastNotifiedAt: at, why: r.why };
       }
       continue;
     }
@@ -315,10 +416,6 @@ export function parseConf(text) {
   return out;
 }
 
-function readSecretFile(path) {
-  if (!path) return null;
-  try { return readFileSync(path, 'utf8').trim() || null; } catch { return null; }
-}
 
 /** One probe's live answer, `{status, body}` or `{error}`. Exported for tooling/ops/owner-page-watch.mjs, the off-Cloudflare
  *  backstop that runs the same probes from GitHub's runners (T-65). */
@@ -337,14 +434,9 @@ function fixtureAnswerer(file) {
   return async (row) => table[`${row.method} ${row.url}`] ?? { error: 'fixture has no answer' };
 }
 
-/** The owner page's legs, in order: leg 1 (PAGE_URL, the primary) and, when set, leg 2 (PAGE_URL_2). Each leg
- *  carries ITS OWN token file only: a token is never sent to the other leg's host. */
-export function pageLegs(conf) {
-  return [
-    ...(conf.PAGE_URL ? [{ leg: 'primary', url: conf.PAGE_URL, tokenFile: conf.PAGE_TOKEN_FILE }] : []),
-    ...(conf.PAGE_URL_2 ? [{ leg: 'leg2', url: conf.PAGE_URL_2, tokenFile: conf.PAGE_TOKEN_FILE_2 }] : []),
-  ];
-}
+/** The owner page's legs: hoisted to tooling/ops/box-page.mjs (O-STD-BOX-PAGE-BOTH-LEGS-CODEMOD, 2026-11-20), the one shared
+ *  legs pager; re-exported here for the importers that read it from this file (gh-budget.mjs). */
+export { pageLegs };
 
 /** The lead stream's token: its own (LEAD_TOKEN_FILE), else the token of the page leg on the SAME ORIGIN as LEAD_URL,
  *  else none. Chosen by host, never by which keys are set: a token never reaches a host it was not named for. */
@@ -365,12 +457,12 @@ async function post(url, body, headers, timeoutMs) {
 }
 
 export async function main(argv = process.argv.slice(2), env = process.env) {
-  const usage = 'usage: live-probe.mjs --once [--dry-run] [--now <ISO>] [--fixtures <file>]';
+  const usage = 'usage: live-probe.mjs --once [--vantage box-a|box-b] [--dry-run] [--now <ISO>] [--fixtures <file>]';
   // Every flag is declared: an undeclared one (a mistyped --dry-run above all) is refused before any probe, page or
   // state write, so a typo can never run the real thing.
   let values;
   try {
-    ({ values } = parseArgs({ args: argv, options: { once: { type: 'boolean' }, 'dry-run': { type: 'boolean' }, now: { type: 'string' }, fixtures: { type: 'string' } }, allowPositionals: true, strict: true }));
+    ({ values } = parseArgs({ args: argv, options: { once: { type: 'boolean' }, 'dry-run': { type: 'boolean' }, now: { type: 'string' }, fixtures: { type: 'string' }, vantage: { type: 'string' } }, allowPositionals: true, strict: true }));
   } catch (e) {
     console.error(`live-probe: refused, nothing probed or sent — ${e.message}\n${usage}`);
     return 2;
@@ -378,6 +470,11 @@ export async function main(argv = process.argv.slice(2), env = process.env) {
   const arg = (n) => values[n] ?? null;
   if (!values.once) {
     console.error(usage);
+    return 2;
+  }
+  const vantage = values.vantage ?? null;
+  if (vantage !== null && !VANTAGES.includes(vantage)) {
+    console.error(`live-probe: refused, nothing probed or sent — --vantage ${JSON.stringify(vantage)} is not one of ${VANTAGES.join(', ')}\n${usage}`);
     return 2;
   }
   const dry = values['dry-run'] === true;
@@ -408,12 +505,21 @@ export async function main(argv = process.argv.slice(2), env = process.env) {
   }
 
   const answer = arg('fixtures') ? fixtureAnswerer(arg('fixtures')) : (row) => liveAnswer(row, doc.alerting.timeoutMs);
-  const results = await Promise.all(doc.rows.map(async (row) => ({ id: row.id, ...judge(row, await answer(row)) })));
+  // ONE trace read per run, IN PARALLEL with the probes (same timeout), judged after both: the run's length and
+  // DETECT are unchanged, and an unread trace is UNKNOWN and never fails a probe.
+  const traceUrl = traceUrlOf(doc);
+  const [traceAnswer, answers] = await Promise.all([
+    traceUrl ? answer({ id: 'cdn-cgi-trace', method: 'GET', url: traceUrl }) : Promise.resolve(null),
+    Promise.all(doc.rows.map((row) => answer(row))),
+  ]);
+  const trace = parseTrace(traceAnswer);
+  console.log(vantageLine(trace, vantage));
+  const results = doc.rows.map((row, i) => ({ id: row.id, ...judge(row, answers[i], trace), ...(row.alert === 'once-per-state' ? { oncePerState: true } : {}) }));
   for (const r of results) console.log(`  ${r.ok ? 'ok  ' : 'FAIL'} ${r.id} — ${r.why}`);
 
   const { state, alerts } = decide(prev, results, nowMs, doc.alerting);
   const msg = compose(alerts, nowMs);
-  const runLine = JSON.stringify({ v: 1, at: state.lastRunAt, allGreen: results.every((r) => r.ok), results });
+  const runLine = JSON.stringify({ v: 1, at: state.lastRunAt, vantage: vantage ?? 'undeclared', colo: trace.colo, loc: trace.loc, allGreen: results.every((r) => r.ok), results });
 
   if (dry) {
     console.log('live-probe: DRY RUN — nothing sent, no state written.');
@@ -423,13 +529,9 @@ export async function main(argv = process.argv.slice(2), env = process.env) {
 
   let delivered = true;
   if (msg) {
-    const legs = pageLegs(conf);
-    const sentLegs = await Promise.all(legs.map(async (l) => {
-      const token = readSecretFile(l.tokenFile);
-      const headers = { title: msg.title, priority: msg.priority, tags: msg.tags, ...(token ? { authorization: `Bearer ${token}` } : {}) };
-      return { leg: l.leg, ...(await post(l.url, msg.text, headers, doc.alerting.timeoutMs)) };
-    }));
-    const sent = sentLegs.some((l) => l.ok) ? { ok: true } : { ok: false, why: sentLegs.map((l) => `${l.leg}: ${l.why}`).join('; ') };
+    const paged = await pageAllLegs(conf, msg.text, { headers: { title: msg.title, priority: msg.priority, tags: msg.tags }, timeoutMs: doc.alerting.timeoutMs });
+    const sentLegs = paged.legs;
+    const sent = paged.ok ? { ok: true } : { ok: false, why: paged.why };
     delivered = sent.ok;
     for (const l of sentLegs) if (!l.ok && sent.ok) console.error(`live-probe: page leg ${l.leg} did not take the alert (${l.why}); another leg did`);
     const line = JSON.stringify({ ...msg.json, delivered: sent.ok, legs: sentLegs.map((l) => ({ leg: l.leg, ok: l.ok, ...(l.ok ? {} : { why: l.why }) })), ...(sent.ok ? {} : { deliveryError: sent.why }) });

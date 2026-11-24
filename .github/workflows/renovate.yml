@@ -111,6 +111,7 @@ jobs:
           RENOVATE_REQUIRE_CONFIG: 'required'
           RENOVATE_GIT_AUTHOR: 'nikatru-renovate <renovate@nikatru.com>'
           RENOVATE_PLATFORM_COMMIT: 'disabled'
+          RENOVATE_ALLOWED_COMMANDS: '["^node tooling/ops/repin-claude-cli\\.mjs --write$"]'
           RENOVATE_LOG_LEVEL: ${{ env.NIKATRU_PRIVATE_REPO && 'fatal' || 'info' }}
           LOG_LEVEL: ${{ env.NIKATRU_PRIVATE_REPO && 'fatal' || 'info' }}
           RENOVATE_LOG_FILE: ${{ env.NIKATRU_PRIVATE_REPO && '/tmp/nikatru-renovate.log' || '' }}

@@ -6,7 +6,7 @@ env:
 
 name: New-user journey
 
-run-name: "${{ !(github.event.client_payload.pr) && ((github.event.schedule || github.event.inputs.worker_slot) && '[slot] ' || !(github.event.client_payload.sha) && '[hand] ' || startsWith(github.event.client_payload.ref, 'refs/tags/') && '[tag] ' || '[main] ') || !(github.event.client_payload.ref) && '[pr] ' || startsWith(github.event.client_payload.ref, 'refs/heads/rehearsal/') && '[rehearsal] ' || startsWith(github.event.client_payload.ref, 'refs/heads/club/') && '[club] ' || startsWith(github.event.client_payload.ref, 'refs/heads/train/') && '[club] ' || startsWith(github.event.client_payload.ref, 'refs/heads/integ/') && '[club] ' || startsWith(github.event.client_payload.ref, 'refs/heads/renovate/') && '[bot] ' || startsWith(github.event.client_payload.ref, 'refs/heads/dependabot/') && '[bot] ' || '[single] ' }}New-user journey · ${{ github.event.client_payload.sha }}${{ github.event.client_payload.pr && format(' (PR #{0})', github.event.client_payload.pr) || '' }}${{ inputs.worker_slot && format(' [worker slot {0}]', inputs.worker_slot) || '' }}"
+run-name: "${{ !(github.event.client_payload.pr) && ((github.event.schedule || github.event.inputs.worker_slot) && '[slot] ' || !(github.event.client_payload.sha) && '[hand] ' || startsWith(github.event.client_payload.ref, 'refs/tags/') && '[tag] ' || '[main] ') || !(github.event.client_payload.ref) && '[pr] ' || startsWith(github.event.client_payload.ref, 'refs/heads/rehearsal/') && '[rehearsal] ' || startsWith(github.event.client_payload.ref, 'refs/heads/club/') && '[club] ' || startsWith(github.event.client_payload.ref, 'refs/heads/train/') && '[club] ' || startsWith(github.event.client_payload.ref, 'refs/heads/integ/') && '[club] ' || startsWith(github.event.client_payload.ref, 'refs/heads/land/club-') && '[club] ' || startsWith(github.event.client_payload.ref, 'refs/heads/renovate/') && '[bot] ' || startsWith(github.event.client_payload.ref, 'refs/heads/dependabot/') && '[bot] ' || '[single] ' }}New-user journey · ${{ github.event.client_payload.sha }}${{ github.event.client_payload.pr && format(' (PR #{0})', github.event.client_payload.pr) || '' }}${{ inputs.worker_slot && format(' [worker slot {0}]', inputs.worker_slot) || '' }}"
 
 on:
   repository_dispatch:
@@ -24,8 +24,7 @@ on:
         default: ''
         type: string
 
-permissions:
-  contents: read
+permissions: {}
 
 concurrency:
   group: live-e2e-stack

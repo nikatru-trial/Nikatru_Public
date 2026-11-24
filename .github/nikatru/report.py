@@ -393,16 +393,50 @@ def run_member_of(key, cfg, env):
     return member_of(key, m.group(0))
 
 
+# ⏱ 2026-11-20 · lane ci-guards-ops-a-3b-1120 (row O-RED-DETAIL-COMPLETE, vc-10): a tail cut lost a failing line in the
+# MIDDLE of a long status output (1,400 `ok` lines and one `✗` between them kept only the `ok` lines). A line the cut
+# would drop that reads as a failure (FAILING_LINE) is RESCUED: kept, in order, above the tail, within RESCUE_SHARE of
+# the cap; the rescued lines that do not fit are counted, never dropped silently.
+FAILING_LINE = re.compile(r'^\s*(?:[✗✖✘×❌]|not ok\b|FAIL(?:ED|URE)?\b|ERROR\b|Error:|error(?:\[|:)|::error\b|(?:[A-Za-z]+)?Error: )')
+RESCUE_SHARE = 0.25
+RESCUE_NOTE = 'failing line(s) kept from the cut part'
+
+
+def rescue_failing(dropped, room):
+    """(text, kept): the FAILING_LINE lines of `dropped`, in order, within `room` bytes; the rest counted on a last
+    line. ('', 0) when none read as a failure or nothing fits."""
+    hits = [line for line in dropped.split('\n') if FAILING_LINE.match(line)]
+    if not hits or room <= 0:
+        return '', 0
+    out, kept = b'', 0
+    for line in hits:
+        b = (line[:400] + '\n').encode('utf-8')
+        if len(out) + len(b) + 96 > room:
+            break
+        out += b
+        kept += 1
+    if not kept:
+        return '', 0
+    more = len(hits) - kept
+    out += (f'({kept} {RESCUE_NOTE}' + (f'; {more} more in the full log' if more else '') + ')\n').encode('utf-8')
+    return out.decode('utf-8', errors='ignore'), kept
+
+
 def tail_bytes(text, cap):
     raw = text.encode('utf-8')
     if len(raw) <= cap:
         return text
     note = '(earlier detail cut to fit the report)\n'
-    cut = raw[len(raw) - (cap - len(note.encode('utf-8'))):].decode('utf-8', errors='ignore')
+    room = cap - len(note.encode('utf-8'))
+    start = len(raw) - room
+    rescued, _ = rescue_failing(raw[:start].decode('utf-8', errors='ignore'), int(cap * RESCUE_SHARE))
+    if rescued:
+        start = len(raw) - (room - len(rescued.encode('utf-8')))
+    cut = raw[start:].decode('utf-8', errors='ignore')
     nl = cut.find('\n')
     if 0 <= nl < len(cut) - 1:
         cut = cut[nl + 1:]
-    return note + cut
+    return note + rescued + cut
 
 
 # ⏱ 2026-10-12 · red-detail-failures-first: a red test step's detail lost every failing test's name. The
@@ -975,6 +1009,23 @@ RED_LOG_SEALED_MAX = 100 * 1024
 # Today a red run hands over 1-3 logs; at the cap, each log no output has room for is named and reads NOT stored
 # (over the report's carry budget), which is red, never silently dropped.
 RED_LOG_OUTPUTS = 4
+# ⏱ 2026-11-20 · lane ci-guards-ops-a-3b-1120 (row O-RED-LOG-CARRY-SIZE, ruling bl-intake #61: the per-log cap follows
+# the red count). RED_LOG_SEALED_MAX x RED_LOG_OUTPUTS held about 4 large logs, so a 17-25-red-job run (why REPORT_SLOTS
+# went to 32) read LOG NOT STORED for most of them. Each hand-off now ALSO seals its log at RED_LOG_SMALL_MAX (head and
+# tail kept whole, the middle cut and named), beside the full one, under its binding + RED_LOG_SMALL_BINDING. collect
+# places every log's small form FIRST, then upgrades logs to their full form while the outputs have room (the
+# detail/core pattern): few reds carry whole 100 KiB logs, REPORT_SLOTS reds each carry a small one, none NOT stored.
+# @ceiling — derived, never typed: REPORT_SLOTS small logs (with their binding names) fit RED_LOG_OUTPUTS bundles;
+# shell-report.test.mjs pins RED_LOG_OUTPUTS x (SEALED_MAX_CHARS - 1024) >= REPORT_SLOTS x (RED_LOG_SMALL_MAX + 512).
+RED_LOG_SMALL_MAX = 12 * 1024
+RED_LOG_SMALL_BINDING = '#small'
+RED_LOG_SMALL_SUFFIX = '.small.sealed'
+# @ceiling — ONE budget for EVERY output the collect job writes (GitHub refuses a job whose outputs exceed 1,048,576
+# bytes: "Job outputs exceed 1,048,576 bytes", the collect job of the 2026-11-18T19:44Z run, row O-RED-DETAIL-COMPLETE).
+# collect() counts each `name=value` line it writes against it; a red-log bundle the budget has no room for is not
+# written, and its logs read NOT stored (over the carry budget), red and named, never a refused job.
+JOB_OUTPUTS_MAX_BYTES = 1_048_576
+COLLECT_OUTPUTS_BUDGET = JOB_OUTPUTS_MAX_BYTES - 64 * 1024
 RED_LOG_BUNDLE_VERSION = 1
 # What the report-signed upload signs (services/gh-bridge/src/artifact.ts REPORT_ARTIFACT_PREFIX): never `artifact\n`,
 # and never a /report body, so neither signature opens the other door.
@@ -1047,6 +1098,9 @@ def hand_red_logs(text, env, key, name):
         os.makedirs(out, exist_ok=True)
         with open(os.path.join(out, file + RED_LOG_SEALED_SUFFIX), 'w', encoding='ascii') as f:
             f.write(seal(key, red_log_binding(name, file), tgz))
+        small, _ = pack_red_log(file, data, RED_LOG_SMALL_MAX)
+        with open(os.path.join(out, file + RED_LOG_SMALL_SUFFIX), 'w', encoding='ascii') as f:
+            f.write(seal(key, red_log_binding(name, file) + RED_LOG_SMALL_BINDING, small))
         seen.add(file)
         print(f'ok handoff: a full red log sealed for the report job ({len(tgz)} byte(s) of gzip'
               + (f', {cut} byte(s) of its middle cut' if cut else '') + ')')
@@ -1064,8 +1118,17 @@ def red_log_env(i):
     return 'NIKATRU_RED_LOGS' if i == 0 else f'NIKATRU_RED_LOGS_{i + 1}'
 
 
-def collected_red_logs(prefix):
-    """{`<hand-off key>/<file>`: sealed text} of this run+attempt's red logs place() filed, in key order. Carried unread."""
+def red_log_sealed_file(name):
+    """(file, small) of a sealed red-log file name (`<file>.sealed` or `<file>.small.sealed`), or None."""
+    for suffix, small in ((RED_LOG_SMALL_SUFFIX, True), (RED_LOG_SEALED_SUFFIX, False)):
+        if name.endswith(suffix) and RED_LOG_FILE.match(name[:-len(suffix)]):
+            return name[:-len(suffix)], small
+    return None
+
+
+def collected_red_logs(prefix, small=False):
+    """{`<hand-off key>/<file>`: sealed text} of this run+attempt's red logs place() filed, in key order. Carried unread.
+    `small`: their RED_LOG_SMALL_MAX forms instead."""
     out = {}
     if not os.path.isdir(COLLECTED_DIR):
         return out
@@ -1074,34 +1137,57 @@ def collected_red_logs(prefix):
         if key is None or member_of(key, prefix) is None or not os.path.isdir(os.path.join(COLLECTED_DIR, d)):
             continue
         for name in sorted(os.listdir(os.path.join(COLLECTED_DIR, d))):
-            file = name[:-len(RED_LOG_SEALED_SUFFIX)] if name.endswith(RED_LOG_SEALED_SUFFIX) else ''
-            if not RED_LOG_FILE.match(file):
+            got = red_log_sealed_file(name)
+            if got is None or got[1] != small:
                 continue
+            file = got[0]
             with open(os.path.join(COLLECTED_DIR, d, name), encoding='ascii', errors='replace') as f:
                 out[red_log_binding(key, file)] = f.read().strip()
     return out
 
 
-def bundle_red_logs(logs):
-    """Up to RED_LOG_OUTPUTS bundles {v, logs: {binding: sealed}, over: [binding]}, each within SEALED_MAX_CHARS; a log
-    no bundle has room for is named in `over` of the first (the report reads it NOT stored, over the carry budget)."""
+def bundle_red_logs(logs, smalls=None, room=None):
+    """Up to RED_LOG_OUTPUTS bundles {v, logs: {binding: sealed}, small: {binding: sealed}, over: [binding]}, each within
+    SEALED_MAX_CHARS and all of them within `room` characters (None: no limit past the bundles'). Every log's SMALL form
+    (`smalls`) is placed first, then each is upgraded to its full form while a bundle has room (O-RED-LOG-CARRY-SIZE); a
+    log with neither form placed is named in `over` of the first (the report reads it NOT stored, over the carry budget)."""
+    smalls = smalls or {}
     bundles = [{'v': RED_LOG_BUNDLE_VERSION, 'logs': {}, 'over': []}]
-    fits = lambda b: len(json.dumps(b, separators=(',', ':'))) <= SEALED_MAX_CHARS - 1024
-    for binding, sealed in logs.items():
-        placed = False
+    size = lambda b: len(json.dumps(b, separators=(',', ':')))
+    total_ok = lambda: room is None or sum(size(b) + 32 for b in bundles) <= room
+    fits = lambda b: size(b) <= SEALED_MAX_CHARS - 1024 and total_ok()
+
+    def put(field, binding, sealed):
         for b in bundles:
-            b['logs'][binding] = sealed
+            b.setdefault(field, {})[binding] = sealed
             if fits(b):
-                placed = True
-                break
-            del b['logs'][binding]
-        if not placed and len(bundles) < RED_LOG_OUTPUTS:
-            b = {'v': RED_LOG_BUNDLE_VERSION, 'logs': {binding: sealed}, 'over': []}
+                return True
+            del b[field][binding]
+        if len(bundles) < RED_LOG_OUTPUTS:
+            b = {'v': RED_LOG_BUNDLE_VERSION, 'logs': {}, 'over': [], field: {binding: sealed}}
+            bundles.append(b)
             if fits(b):
-                bundles.append(b)
-                placed = True
-        if not placed:
-            bundles[0]['over'].append(binding)
+                return True
+            bundles.pop()
+        return False
+
+    for binding, sealed in smalls.items():
+        if binding in logs:
+            put('small', binding, sealed)
+    for binding, sealed in logs.items():
+        had = [b for b in bundles if binding in b.get('small', {})]
+        for b in had:
+            del b['small'][binding]
+        if put('logs', binding, sealed):
+            continue
+        if had:
+            # No room for the whole log: its small form goes back where it was (it fit there before).
+            had[0]['small'][binding] = smalls[binding]
+            continue
+        bundles[0]['over'].append(binding)
+    for b in bundles:
+        if not b.get('small'):
+            b.pop('small', None)
     return bundles
 
 
@@ -1157,7 +1243,7 @@ def store_red_logs(env, cfg, details, opener=urllib.request.urlopen, deadline=No
         return details, []
     answers = {}  # file -> detail line
     failed = []
-    logs, over = {}, []
+    logs, over, small = {}, [], set()
     try:
         for i, raw in enumerate(r for r in raws if r):
             if len(raw) > SEALED_MAX_CHARS:
@@ -1167,13 +1253,18 @@ def store_red_logs(env, cfg, details, opener=urllib.request.urlopen, deadline=No
                 raise Refused(f'not a version-{RED_LOG_BUNDLE_VERSION} red-log bundle')
             if i and b['over']:
                 raise Refused('a spilled red-log bundle names logs over the budget (only the first does)')
-            for binding, sealed in b['logs'].items():
-                if binding in logs or not isinstance(sealed, str):
-                    raise Refused(f'{str(binding)[:100]!r} is carried twice, or not as text')
-                logs[binding] = sealed
+            if not isinstance(b.get('small', {}), dict):
+                raise Refused('a red-log bundle\'s small logs are not a map')
+            for field in ('logs', 'small'):
+                for binding, sealed in b.get(field, {}).items():
+                    if binding in logs or not isinstance(sealed, str):
+                        raise Refused(f'{str(binding)[:100]!r} is carried twice, or not as text')
+                    logs[binding] = sealed
+                    if field == 'small':
+                        small.add(binding)
             over += [o for o in b['over'] if isinstance(o, str)]
     except (Refused, ValueError, RecursionError) as e:
-        logs, over = {}, []
+        logs, over, small = {}, [], set()
         # runner review of #1421 minor 3 (O-1421-RUNNER-REVIEW-MINORS): its reason can name a binding (a step-log file):
         # the PUBLIC log gets its kind only.
         print(f'x red logs: the carried bundle could not be read ({type(e).__name__}); no red log is stored')
@@ -1192,7 +1283,7 @@ def store_red_logs(env, cfg, details, opener=urllib.request.urlopen, deadline=No
         try:
             if not master:
                 raise Refused('NIKATRU_DETAIL_KEY is not set')
-            body = unseal(run_key(master, f"{env['GITHUB_RUN_ID']}-{attempt}"), binding, sealed)
+            body = unseal(run_key(master, f"{env['GITHUB_RUN_ID']}-{attempt}"), binding + (RED_LOG_SMALL_BINDING if binding in small else ''), sealed)
         except Refused as e:
             answers[file] = f'{RED_LOG_NOT_STORED}{file}: its seal did not open: {str(e)[:120]})'
             failed.append(f'{file}: its seal did not open')
@@ -1302,7 +1393,7 @@ def place(key):
         dest = os.path.join(COLLECTED_DIR, f'{key}.{RED_LOGS_SUBDIR}')
         for name in sorted(os.listdir(logs)):
             src_log = os.path.join(logs, name)
-            if name.endswith(RED_LOG_SEALED_SUFFIX) and RED_LOG_FILE.match(name[:-len(RED_LOG_SEALED_SUFFIX)]) and os.path.isfile(src_log) and not os.path.islink(src_log):
+            if red_log_sealed_file(name) is not None and os.path.isfile(src_log) and not os.path.islink(src_log):
                 os.makedirs(dest, exist_ok=True)
                 shutil.move(src_log, os.path.join(dest, name))
     shutil.rmtree(DETAIL_DIR, ignore_errors=True)
@@ -1527,10 +1618,13 @@ def collect(env, cfg):
                     last = list(bundles[0][field])[-1]
                     del bundles[0][field][last]
                     bundles[0]['unrestored'].append(last)
+    written = 0
     with open(env['GITHUB_OUTPUT'], 'a', encoding='utf-8') as f:
-        f.write(detail_output(0) + '=' + (json.dumps(bundles[0], separators=(',', ':')) if handed or unrestored else '') + '\n')
-        for i, b in enumerate(bundles[1:], start=1):
-            f.write(detail_output(i) + '=' + json.dumps(b, separators=(',', ':')) + '\n')
+        lines = [detail_output(0) + '=' + (json.dumps(bundles[0], separators=(',', ':')) if handed or unrestored else '') + '\n']
+        lines += [detail_output(i) + '=' + json.dumps(b, separators=(',', ':')) + '\n' for i, b in enumerate(bundles[1:], start=1)]
+        for line in lines:
+            f.write(line)
+            written += len(line.encode('utf-8'))
     for b in bundles:
         if not b.get('cores'):
             b.pop('cores', None)
@@ -1541,11 +1635,17 @@ def collect(env, cfg):
           + f', {len(bundles[0]["unrestored"])} named only')
     logs = collected_red_logs(prefix)
     if logs:
-        rb = bundle_red_logs(logs)
+        # O-RED-DETAIL-COMPLETE (vc-10): the red logs get what the detail left of COLLECT_OUTPUTS_BUDGET, never more.
+        rb = bundle_red_logs(logs, collected_red_logs(prefix, small=True), COLLECT_OUTPUTS_BUDGET - written - 1024)
         with open(env['GITHUB_OUTPUT'], 'a', encoding='utf-8') as f:
             for i, b in enumerate(rb):
-                f.write(red_log_output(i) + '=' + json.dumps(b, separators=(',', ':')) + '\n')
-        print(f"ok collect: {sum(len(b['logs']) for b in rb)} sealed red log(s) carried in {len(rb)} output(s), {len(rb[0]['over'])} over the budget")
+                line = red_log_output(i) + '=' + json.dumps(b, separators=(',', ':')) + '\n'
+                f.write(line)
+                written += len(line.encode('utf-8'))
+        print(f"ok collect: {sum(len(b['logs']) for b in rb)} whole and {sum(len(b.get('small', {})) for b in rb)} small sealed red log(s)"
+              f" carried in {len(rb)} output(s), {len(rb[0]['over'])} over the budget")
+    print(f'ok collect: {written} byte(s) of job outputs, under the {COLLECT_OUTPUTS_BUDGET}-byte budget'
+          if written <= COLLECT_OUTPUTS_BUDGET else f'x collect: {written} byte(s) of job outputs, OVER the {COLLECT_OUTPUTS_BUDGET}-byte budget')
     return 0
 
 
@@ -2096,12 +2196,15 @@ JWT = re.compile(r'^[A-Za-z0-9_-]+\.[A-Za-z0-9_-]+\.[A-Za-z0-9_-]+$')
 # actions-oidc.mjs and bounded-retry.mjs are already above (GENERATOR_IMPORTS), so they are not repeated.
 RUNNER_SOURCES = RUNNER_SOURCES + ('tooling/ops/ops-issue.mjs', 'tooling/ops/bridge-ops.mjs', 'tooling/ops/fit-ops-body.mjs',
                                    'tooling/ops/bridge-read.mjs', 'tooling/ops/owner-page-watch.mjs',
-                                   'tooling/ops/live-probe.mjs', 'shell/.github/nikatru/ops/ops-issue.mjs',
+                                   'tooling/ops/live-probe.mjs', 'tooling/ops/box-page.mjs',
+                                   'shell/.github/nikatru/ops/ops-issue.mjs',
                                    'shell/.github/nikatru/ops/bridge-ops.mjs', 'shell/.github/nikatru/ops/fit-ops-body.mjs',
                                    'shell/.github/nikatru/ops/bridge-read.mjs', 'shell/.github/nikatru/ops/actions-oidc.mjs',
                                    'shell/.github/nikatru/ops/bounded-retry.mjs',
                                    'shell/.github/nikatru/ops/owner-page-watch.mjs',
-                                   'shell/.github/nikatru/ops/live-probe.mjs', 'tooling/edge/zone.json',
+                                   'shell/.github/nikatru/ops/live-probe.mjs',
+                                   # integ-n1120 fix round 1: live-probe.mjs imports box-page.mjs (ops-guard-tooling-1120).
+                                   'shell/.github/nikatru/ops/box-page.mjs', 'tooling/edge/zone.json',
                                    'shell/.github/nikatru/edge/zone.json')
 
 

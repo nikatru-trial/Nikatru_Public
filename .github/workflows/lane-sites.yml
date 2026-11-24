@@ -1624,6 +1624,7 @@ jobs:
         with:
           install: npx playwright install --with-deps chromium
           working-directory: _playwright
+          cache: ${{ (github.event.client_payload.event || github.event_name) == 'pull_request' && 'true' || 'false' }}
         env:
           NIKATRU_REF: ${{ github.event.client_payload.ref || 'refs/heads/main' }}
           NIKATRU_EVENT_NAME: ${{ github.event.client_payload.event || github.event_name }}

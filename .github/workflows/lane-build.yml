@@ -39,6 +39,7 @@ jobs:
     outputs:
       affected: ${{ steps.detect.outputs.affected }}
       reason: ${{ steps.detect.outputs.reason }}
+      skip_jobs: ${{ steps.detect.outputs.skip_jobs }}
     steps:
       - name: Check out the private tree (generated)
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
@@ -1616,7 +1617,7 @@ jobs:
 
   windows-artifacts:
     name: Windows arm64 artifacts (built, inspected, discarded)
-    if: needs.detect.outputs.affected == 'true'
+    if: needs.detect.outputs.affected == 'true' && !contains(needs.detect.outputs.skip_jobs, '"windows-artifacts"')
     runs-on: windows-11-arm
     timeout-minutes: 30
     permissions:
@@ -1835,7 +1836,7 @@ jobs:
         env:
           RELEASE_LINE: ${{ steps.ver.outputs.release_line }}
         shell: node ../.nikatru-shell/quiet-step.mjs --name lane-build.windows-artifacts.9 --default-shell {0}
-        run: node tooling/ci/flutter-release-build.mjs ${{ matrix.app }} windows windows-store --lane pr
+        run: node tooling/ops/access-violation-retry.mjs -- node tooling/ci/flutter-release-build.mjs ${{ matrix.app }} windows windows-store --lane pr
       - name: Save the Windows build tree (a run of main only, on a key miss)
         if: ((env.NIKATRU_REF || (github.event.client_payload.ref || 'refs/heads/main')) == 'refs/heads/main' && contains(fromJSON('["push","schedule","workflow_dispatch"]'), env.NIKATRU_EVENT_NAME || (github.event.client_payload.event || github.event_name)) && !env.NIKATRU_PR) && steps.toolchain.outputs.known == 'true' && steps.winbuild-cache.outputs.cache-hit != 'true'
         uses: actions/cache/save@55cc8345863c7cc4c66a329aec7e433d2d1c52a9
@@ -1877,7 +1878,7 @@ jobs:
           node tooling/ci/assert-app-size-budget.mjs --channel windows-store --artifact apps/${{ matrix.app }}/build/windows/msix/${{ matrix.app }}-arm64.msix
           NIKATRU_QUIET_EOF
           NIKATRU_SHELL="${BASH:-bash}"; if command -v cygpath >/dev/null 2>&1; then NIKATRU_SHELL="$(cygpath -w "$NIKATRU_SHELL")"; fi
-          node "$GITHUB_WORKSPACE/../.nikatru-shell/quiet-step.mjs" --name lane-build.windows-artifacts.13 -- "$NIKATRU_SHELL" --noprofile --norc -eo pipefail "$NIKATRU_QUIET"
+          node "$GITHUB_WORKSPACE/../.nikatru-shell/quiet-step.mjs" --name lane-build.windows-artifacts.13 --public -- "$NIKATRU_SHELL" --noprofile --norc -eo pipefail "$NIKATRU_QUIET"
       - name: Hand this job's red detail to the report job, sealed (generated)
         id: nikatru-handoff
         if: always()
@@ -1901,7 +1902,7 @@ jobs:
 
   windows-x64-artifacts:
     name: Windows x64 artifacts (built, inspected, discarded)
-    if: needs.detect.outputs.affected == 'true'
+    if: needs.detect.outputs.affected == 'true' && !contains(needs.detect.outputs.skip_jobs, '"windows-x64-artifacts"')
     runs-on: windows-2025
     timeout-minutes: 30
     permissions:
@@ -2083,7 +2084,7 @@ jobs:
           node tooling/ci/assert-app-size-budget.mjs --channel windows-store --artifact apps/${{ matrix.app }}/build/windows/msix/${{ matrix.app }}.msix
           NIKATRU_QUIET_EOF
           NIKATRU_SHELL="${BASH:-bash}"; if command -v cygpath >/dev/null 2>&1; then NIKATRU_SHELL="$(cygpath -w "$NIKATRU_SHELL")"; fi
-          node "$GITHUB_WORKSPACE/../.nikatru-shell/quiet-step.mjs" --name lane-build.windows-x64-artifacts.9 -- "$NIKATRU_SHELL" --noprofile --norc -eo pipefail "$NIKATRU_QUIET"
+          node "$GITHUB_WORKSPACE/../.nikatru-shell/quiet-step.mjs" --name lane-build.windows-x64-artifacts.9 --public -- "$NIKATRU_SHELL" --noprofile --norc -eo pipefail "$NIKATRU_QUIET"
       - name: Hand this job's red detail to the report job, sealed (generated)
         id: nikatru-handoff
         if: always()
@@ -2119,6 +2120,8 @@ jobs:
         with:
           repository: ${{ env.NIKATRU_PRIVATE_REPO }}
           ref: ${{ inputs.nikatru_sha || (github.event.client_payload.event == 'pull_request' && format('refs/pull/{0}/merge', github.event.client_payload.pr) || github.event.client_payload.sha || 'main') }}
+          fetch-depth: 0
+          filter: blob:none
           ssh-key: ${{ secrets.PRIVATE_DEPLOY_KEY }}
           persist-credentials: false
       - name: Name the private commit (generated)

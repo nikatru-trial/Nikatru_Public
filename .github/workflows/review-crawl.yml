@@ -5,7 +5,7 @@ env:
 
 name: Review crawl
 
-run-name: "${{ !(inputs.private_pr) && ((github.event.schedule || github.event.inputs.worker_slot) && '[slot] ' || '[hand] ') || !(inputs.private_ref) && '[pr] ' || startsWith(inputs.private_ref, 'refs/heads/rehearsal/') && '[rehearsal] ' || startsWith(inputs.private_ref, 'refs/heads/club/') && '[club] ' || startsWith(inputs.private_ref, 'refs/heads/train/') && '[club] ' || startsWith(inputs.private_ref, 'refs/heads/integ/') && '[club] ' || startsWith(inputs.private_ref, 'refs/heads/renovate/') && '[bot] ' || startsWith(inputs.private_ref, 'refs/heads/dependabot/') && '[bot] ' || '[single] ' }}Review crawl${{ inputs.target && format(' · {0}', inputs.target) || '' }}${{ inputs.phase && format(' · phase {0}', inputs.phase) || '' }}${{ inputs.matrix && format(' · matrix {0}', inputs.matrix) || '' }}${{ inputs.cells && ' · named cells' || '' }}${{ inputs.worker_slot && format(' [worker slot {0}]', inputs.worker_slot) || '' }}${{ inputs.private_pr && format(' — branch proof {0} (PR #{1})', inputs.private_ref, inputs.private_pr) || '' }}"
+run-name: "${{ !(inputs.private_pr) && ((github.event.schedule || github.event.inputs.worker_slot) && '[slot] ' || '[hand] ') || !(inputs.private_ref) && '[pr] ' || startsWith(inputs.private_ref, 'refs/heads/rehearsal/') && '[rehearsal] ' || startsWith(inputs.private_ref, 'refs/heads/club/') && '[club] ' || startsWith(inputs.private_ref, 'refs/heads/train/') && '[club] ' || startsWith(inputs.private_ref, 'refs/heads/integ/') && '[club] ' || startsWith(inputs.private_ref, 'refs/heads/land/club-') && '[club] ' || startsWith(inputs.private_ref, 'refs/heads/renovate/') && '[bot] ' || startsWith(inputs.private_ref, 'refs/heads/dependabot/') && '[bot] ' || '[single] ' }}Review crawl${{ inputs.target && format(' · {0}', inputs.target) || '' }}${{ inputs.phase && format(' · phase {0}', inputs.phase) || '' }}${{ inputs.matrix && format(' · matrix {0}', inputs.matrix) || '' }}${{ inputs.cells && ' · named cells' || '' }}${{ inputs.worker_slot && format(' [worker slot {0}]', inputs.worker_slot) || '' }}${{ inputs.private_pr && format(' — branch proof {0} (PR #{1})', inputs.private_ref, inputs.private_pr) || '' }}"
 
 on:
   workflow_dispatch:
@@ -164,14 +164,27 @@ jobs:
           echo "pinned $NIKATRU_PINNED"
           echo "sha=$NIKATRU_PINNED" >> "$GITHUB_OUTPUT"
 
+  nikatru-pin-name:
+    name: Name the private commit this run built (generated) · private commit ${{ needs.nikatru-pin.outputs.sha }}
+    needs: [nikatru-pin]
+    runs-on: ubuntu-24.04
+    timeout-minutes: 5
+    permissions: {}
+    steps:
+      - name: Name the pinned private commit (generated)
+        shell: bash
+        working-directory: ${{ github.workspace }}
+        env:
+          NIKATRU_PINNED: ${{ needs.nikatru-pin.outputs.sha }}
+        run: echo "this run built the pinned private commit $NIKATRU_PINNED"
+
   plan:
     name: The cells come from the registers, never from this file
-    needs: [nikatru-pin, gate]
+    needs: [nikatru-pin, gate, nikatru-detail-keys]
     runs-on: ubuntu-24.04
     timeout-minutes: 5
     permissions:
       contents: read
-      id-token: write
     outputs:
       demo: ${{ steps.plan.outputs.demo }}
       public: ${{ steps.plan.outputs.public }}
@@ -285,21 +298,32 @@ jobs:
           NIKATRU_QUIET_EOF
           NIKATRU_SHELL="${BASH:-bash}"; if command -v cygpath >/dev/null 2>&1; then NIKATRU_SHELL="$(cygpath -w "$NIKATRU_SHELL")"; fi
           node "$GITHUB_WORKSPACE/../.nikatru-shell/quiet-step.mjs" --name review-crawl.plan.3 -- "$NIKATRU_SHELL" -e "$NIKATRU_QUIET"
-      - name: Store this job's red detail in the bridge's private home (generated)
+      - name: Seal this job's red detail to this run's one-time key (generated)
+        id: nikatru-seal-detail
         if: always()
         continue-on-error: true
         shell: bash
         working-directory: ${{ github.workspace }}
         env:
-          NIKATRU_PATHS: ${{ runner.temp }}/report-detail.md
-          NIKATRU_ARTIFACT_NAME: report-detail-review-crawl.plan.${{ strategy.job-index }}
-          NIKATRU_IF_NO_FILES: ignore
-          BRIDGE_ARTIFACT_SECRET: ${{ secrets.BRIDGE_ARTIFACT_SECRET }}
-          NIKATRU_BRIDGE_ARTIFACT_URL: https://gh-bridge.nikatru.workers.dev/artifact
-        run: node tooling/ops/bridge-artifact.mjs upload
+          NIKATRU_DETAIL_FILE: ${{ runner.temp }}/report-detail.md
+          NIKATRU_SEALED_OUT: ${{ runner.temp }}/nikatru-sealed-detail/sealed.bin
+          NIKATRU_HANDOFF_RECIPIENT: ${{ needs.nikatru-detail-keys.outputs.recipient }}
+          NIKATRU_HANDOFF_KEY: nikatru-sealed-detail-review-crawl-plan-${{ strategy.job-index }}/${{ github.run_id }}
+        run: mkdir -p "$RUNNER_TEMP/nikatru-sealed-detail" && node tooling/ci/shell-handoff.mjs seal-detail
+      - name: Hand this job's sealed red detail to the store job (generated)
+        if: always() && steps.nikatru-seal-detail.outputs.sealed == 'true'
+        continue-on-error: true
+        timeout-minutes: 5
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9
+        with:
+          name: nikatru-sealed-detail-review-crawl-plan-${{ strategy.job-index }}
+          path: ${{ runner.temp }}/nikatru-sealed-detail/sealed.bin
+          if-no-files-found: error
+          retention-days: 1
+          overwrite: true
 
   gate:
-    needs: [nikatru-pin]
+    needs: [nikatru-pin, nikatru-detail-keys]
     name: Require ci-gate to have passed
     runs-on: ubuntu-24.04
     timeout-minutes: 25
@@ -307,7 +331,6 @@ jobs:
       contents: read
       checks: read
       actions: read
-      id-token: write
     outputs:
       sha: ${{ steps.verdict.outputs.sha }}
     steps:
@@ -381,7 +404,7 @@ jobs:
         working-directory: .gate-main
         env:
           NIKATRU_JUDGED_TREE: ${{ github.workspace }}
-          GITHUB_TOKEN: ${{ github.token }}
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
           GITHUB_REPOSITORY: ${{ github.repository }}
           EVENT_NAME: ${{ (github.event.client_payload.event || github.event_name) }}
           PRIVATE_PR: ${{ inputs.private_pr }}
@@ -395,27 +418,37 @@ jobs:
           NIKATRU_QUIET_EOF
           NIKATRU_SHELL="${BASH:-bash}"; if command -v cygpath >/dev/null 2>&1; then NIKATRU_SHELL="$(cygpath -w "$NIKATRU_SHELL")"; fi
           node "$GITHUB_WORKSPACE/../.nikatru-shell/quiet-step.mjs" --name review-crawl.gate.3 -- "$NIKATRU_SHELL" -e "$NIKATRU_QUIET"
-      - name: Store this job's red detail in the bridge's private home (generated)
+      - name: Seal this job's red detail to this run's one-time key (generated)
+        id: nikatru-seal-detail
         if: always()
         continue-on-error: true
         shell: bash
         working-directory: ${{ github.workspace }}
         env:
-          NIKATRU_PATHS: ${{ runner.temp }}/report-detail.md
-          NIKATRU_ARTIFACT_NAME: report-detail-review-crawl.gate.${{ strategy.job-index }}
-          NIKATRU_IF_NO_FILES: ignore
-          BRIDGE_ARTIFACT_SECRET: ${{ secrets.BRIDGE_ARTIFACT_SECRET }}
-          NIKATRU_BRIDGE_ARTIFACT_URL: https://gh-bridge.nikatru.workers.dev/artifact
-        run: node tooling/ops/bridge-artifact.mjs upload
+          NIKATRU_DETAIL_FILE: ${{ runner.temp }}/report-detail.md
+          NIKATRU_SEALED_OUT: ${{ runner.temp }}/nikatru-sealed-detail/sealed.bin
+          NIKATRU_HANDOFF_RECIPIENT: ${{ needs.nikatru-detail-keys.outputs.recipient }}
+          NIKATRU_HANDOFF_KEY: nikatru-sealed-detail-review-crawl-gate-${{ strategy.job-index }}/${{ github.run_id }}
+        run: mkdir -p "$RUNNER_TEMP/nikatru-sealed-detail" && node tooling/ci/shell-handoff.mjs seal-detail
+      - name: Hand this job's sealed red detail to the store job (generated)
+        if: always() && steps.nikatru-seal-detail.outputs.sealed == 'true'
+        continue-on-error: true
+        timeout-minutes: 5
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9
+        with:
+          name: nikatru-sealed-detail-review-crawl-gate-${{ strategy.job-index }}
+          path: ${{ runner.temp }}/nikatru-sealed-detail/sealed.bin
+          if-no-files-found: error
+          retention-days: 1
+          overwrite: true
 
   self-test:
     name: The crawler reaches every fixture route and control
-    needs: [nikatru-pin, gate]
+    needs: [nikatru-pin, gate, nikatru-detail-keys]
     runs-on: ubuntu-24.04
     timeout-minutes: 30
     permissions:
       contents: read
-      id-token: write
     steps:
       - name: Check out the private tree (generated)
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
@@ -543,18 +576,29 @@ jobs:
           NIKATRU_QUIET_EOF
           NIKATRU_SHELL="${BASH:-bash}"; if command -v cygpath >/dev/null 2>&1; then NIKATRU_SHELL="$(cygpath -w "$NIKATRU_SHELL")"; fi
           node "$GITHUB_WORKSPACE/../.nikatru-shell/quiet-step.mjs" --name review-crawl.self-test.4 -- "$NIKATRU_SHELL" -e "$NIKATRU_QUIET"
-      - name: Store this job's red detail in the bridge's private home (generated)
+      - name: Seal this job's red detail to this run's one-time key (generated)
+        id: nikatru-seal-detail
         if: always()
         continue-on-error: true
         shell: bash
         working-directory: ${{ github.workspace }}
         env:
-          NIKATRU_PATHS: ${{ runner.temp }}/report-detail.md
-          NIKATRU_ARTIFACT_NAME: report-detail-review-crawl.self-test.${{ strategy.job-index }}
-          NIKATRU_IF_NO_FILES: ignore
-          BRIDGE_ARTIFACT_SECRET: ${{ secrets.BRIDGE_ARTIFACT_SECRET }}
-          NIKATRU_BRIDGE_ARTIFACT_URL: https://gh-bridge.nikatru.workers.dev/artifact
-        run: node tooling/ops/bridge-artifact.mjs upload
+          NIKATRU_DETAIL_FILE: ${{ runner.temp }}/report-detail.md
+          NIKATRU_SEALED_OUT: ${{ runner.temp }}/nikatru-sealed-detail/sealed.bin
+          NIKATRU_HANDOFF_RECIPIENT: ${{ needs.nikatru-detail-keys.outputs.recipient }}
+          NIKATRU_HANDOFF_KEY: nikatru-sealed-detail-review-crawl-self-test-${{ strategy.job-index }}/${{ github.run_id }}
+        run: mkdir -p "$RUNNER_TEMP/nikatru-sealed-detail" && node tooling/ci/shell-handoff.mjs seal-detail
+      - name: Hand this job's sealed red detail to the store job (generated)
+        if: always() && steps.nikatru-seal-detail.outputs.sealed == 'true'
+        continue-on-error: true
+        timeout-minutes: 5
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9
+        with:
+          name: nikatru-sealed-detail-review-crawl-self-test-${{ strategy.job-index }}
+          path: ${{ runner.temp }}/nikatru-sealed-detail/sealed.bin
+          if-no-files-found: error
+          retention-days: 1
+          overwrite: true
 
   build-demo:
     name: Demo build · ${{ matrix.app }}
@@ -1014,7 +1058,7 @@ jobs:
   demo:
     name: Demo · ${{ matrix.cell.id }}
     needs: [nikatru-pin, plan, gate, self-test, build-demo]
-    if: always() && needs.plan.result == 'success' && needs.self-test.result == 'success' && needs.build-demo.result != 'failure' && needs.plan.outputs.demo != '[]'
+    if: (always() && needs.plan.result == 'success' && needs.self-test.result == 'success' && needs.build-demo.result != 'failure' && needs.plan.outputs.demo != '[]') && (github.event.client_payload.ref || inputs.private_ref || 'refs/heads/main') == 'refs/heads/main'
     runs-on: ubuntu-24.04
     timeout-minutes: 90
     permissions:
@@ -1125,7 +1169,7 @@ jobs:
         working-directory: .gate-main
         env:
           NIKATRU_JUDGED_TREE: ${{ github.workspace }}
-          GITHUB_TOKEN: ${{ github.token }}
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
           GITHUB_REPOSITORY: ${{ github.repository }}
           PRIVATE_PR: ${{ inputs.private_pr }}
         run: |
@@ -1451,6 +1495,352 @@ jobs:
           NIKATRU_BRIDGE_ARTIFACT_URL: https://gh-bridge.nikatru.workers.dev/artifact
         run: node tooling/ops/bridge-artifact.mjs upload
 
+  demo-branch:
+    name: Branch run · Demo · ${{ matrix.cell.id }}
+    needs: [nikatru-pin, plan, gate, self-test, build-demo, nikatru-detail-keys]
+    if: (always() && needs.plan.result == 'success' && needs.self-test.result == 'success' && needs.build-demo.result != 'failure' && needs.plan.outputs.demo != '[]') && (github.event.client_payload.ref || inputs.private_ref || 'refs/heads/main') != 'refs/heads/main'
+    runs-on: ubuntu-24.04
+    timeout-minutes: 90
+    permissions:
+      contents: read
+      checks: read
+      actions: read
+    strategy:
+      fail-fast: false
+      max-parallel: 35
+      matrix:
+        cell: ${{ fromJSON(needs.plan.outputs.demo) }}
+    steps:
+      - name: Check out the private tree (generated)
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
+        with:
+          repository: ${{ env.NIKATRU_PRIVATE_REPO }}
+          ref: ${{ needs.nikatru-pin.outputs.sha || 'nikatru-pin-did-not-succeed..' }}
+          ssh-key: ${{ secrets.PRIVATE_DEPLOY_KEY }}
+          persist-credentials: false
+      - name: Name the private commit (generated)
+        shell: bash
+        working-directory: ${{ github.workspace }}
+        env:
+          NIKATRU_P_EVENT: ${{ github.event.client_payload.event || github.event_name }}
+          NIKATRU_P_REF: ${{ github.event.client_payload.ref || inputs.private_ref || 'refs/heads/main' }}
+          NIKATRU_P_BASE_SHA: ${{ github.event.client_payload.base_sha }}
+          NIKATRU_P_BASE_REF: ${{ github.event.client_payload.base_ref }}
+          NIKATRU_P_PR: ${{ github.event.client_payload.pr }}
+          NIKATRU_P_PR_CREATED_AT: ${{ github.event.client_payload.pr_created_at }}
+          NIKATRU_P_DRAFT: ${{ github.event.client_payload.draft }}
+          NIKATRU_P_SHA: ${{ github.event.client_payload.sha }}
+        run: |
+          if [ "$NIKATRU_P_EVENT" = pull_request ]; then
+            set -- $(git cat-file -p HEAD | sed -n '1,/^$/s/^parent //p')
+            if [ "${2:-}" != "$NIKATRU_P_SHA" ]; then
+              echo "::error::the checked-out merge of PR #$NIKATRU_P_PR is not the merge of the dispatched head $NIKATRU_P_SHA (its second parent is ${2:-none}); the nikatru-pin job pins it — re-run the whole workflow, not this job"
+              exit 1
+            fi
+          fi
+          {
+            echo "NIKATRU_SHA=$(git rev-parse HEAD)"
+            echo "NIKATRU_HEAD_SHA=${NIKATRU_P_SHA:-$(git rev-parse HEAD)}"
+            echo "NIKATRU_EVENT_NAME=$NIKATRU_P_EVENT"
+            echo "NIKATRU_REF=$NIKATRU_P_REF"
+            echo "NIKATRU_REF_NAME=${NIKATRU_P_REF#refs/*/}"
+            echo "NIKATRU_BASE_SHA=$NIKATRU_P_BASE_SHA"
+            echo "NIKATRU_BASE_REF=$NIKATRU_P_BASE_REF"
+            echo "NIKATRU_PR=$NIKATRU_P_PR"
+            echo "NIKATRU_PR_CREATED_AT=$NIKATRU_P_PR_CREATED_AT"
+            echo "NIKATRU_DRAFT=$NIKATRU_P_DRAFT"
+          } >> "$GITHUB_ENV"
+      - name: Check out this shell repository's own step wrapper and reporter (generated)
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
+        with:
+          path: .nikatru-shell
+          sparse-checkout: .github/nikatru
+          persist-credentials: false
+      - name: Stage the shell's own copies outside the private checkout (generated)
+        shell: bash
+        working-directory: ${{ github.workspace }}
+        run: |
+          rm -rf ../.nikatru-shell
+          mv .nikatru-shell/.github/nikatru ../.nikatru-shell
+          rm -rf .nikatru-shell
+      - name: Check out private main's composite actions (generated)
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
+        with:
+          repository: ${{ env.NIKATRU_PRIVATE_REPO }}
+          ref: refs/heads/main
+          path: .nikatru-trusted
+          sparse-checkout: .github/actions
+          ssh-key: ${{ secrets.PRIVATE_DEPLOY_KEY }}
+          persist-credentials: false
+      - name: Keep private main's composite actions out of the branch's tree (generated)
+        id: nikatru-trusted-tree
+        shell: bash
+        working-directory: ${{ github.workspace }}
+        run: |
+          if x="$(git rev-parse --git-path info/exclude 2>/dev/null)"; then mkdir -p "${x%/*}"; grep -qxF '/.nikatru-trusted/' "$x" 2>/dev/null || printf '/.nikatru-trusted/\n' >> "$x"; fi
+          NIKATRU_TRUSTED_GIT="$(command -v git)"; case "$NIKATRU_TRUSTED_GIT" in /*) ;; *) echo "::error::git does not resolve to an absolute path ($NIKATRU_TRUSTED_GIT)"; exit 1 ;; esac
+          tree="$(for v in $(compgen -e); do case "$v" in (GIT_*) unset "$v" ;; esac; done && d="$RUNNER_TEMP/nikatru-trusted.$$.$RANDOM" && [ ! -e "$d.git" ] && [ ! -e "$d.index" ] && export GIT_DIR="$d.git" GIT_INDEX_FILE="$d.index" GIT_CONFIG_GLOBAL=/dev/null GIT_CONFIG_NOSYSTEM=1 && "$NIKATRU_TRUSTED_GIT" init -q --bare --template= "$GIT_DIR" && "$NIKATRU_TRUSTED_GIT" -C .nikatru-trusted --work-tree=. add -A -f .github/actions && "$NIKATRU_TRUSTED_GIT" write-tree --prefix=.github/actions/)"
+          main="$(git -C .nikatru-trusted rev-parse HEAD:.github/actions)"
+          if [ -z "$tree" ] || [ "$tree" != "$main" ]; then echo "::error::.nikatru-trusted: the working tree ($tree) is not private main's .github/actions ($main)"; exit 1; fi
+          rm -rf "$RUNNER_TEMP/nikatru-trusted-actions" && mkdir -p "$RUNNER_TEMP/nikatru-trusted-actions" && cp -R .nikatru-trusted/.github "$RUNNER_TEMP/nikatru-trusted-actions/"
+          echo "tree=$tree" >> "$GITHUB_OUTPUT"
+          echo "git=$NIKATRU_TRUSTED_GIT" >> "$GITHUB_OUTPUT"
+      - name: "Check out private main's gate script beside the judged tree (branch run) (generated: the private tree)"
+        if: (github.event.client_payload.ref || inputs.private_ref || 'refs/heads/main') != 'refs/heads/main' && needs.gate.result == 'success'
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
+        with:
+          repository: ${{ env.NIKATRU_PRIVATE_REPO }}
+          ref: main
+          path: .gate-main
+          sparse-checkout: |
+            tooling/ci
+            tooling/ops
+            tooling/generated
+          ssh-key: ${{ secrets.PRIVATE_DEPLOY_KEY }}
+          persist-credentials: false
+      - name: ci-gate passed for this commit (branch run)
+        if: (github.event.client_payload.ref || inputs.private_ref || 'refs/heads/main') != 'refs/heads/main' && needs.gate.result == 'success'
+        working-directory: .gate-main
+        env:
+          NIKATRU_JUDGED_TREE: ${{ github.workspace }}
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          GITHUB_REPOSITORY: ${{ github.repository }}
+          PRIVATE_PR: ${{ inputs.private_pr }}
+        run: |
+          NIKATRU_QUIET="$(mktemp "${RUNNER_TEMP:-/tmp}/nikatru-step.XXXXXX")"
+          cat > "$NIKATRU_QUIET" <<'NIKATRU_QUIET_EOF'
+          node tooling/ci/assert-gate-passed.mjs ${{ env.NIKATRU_SHA }} --pr "$PRIVATE_PR"
+          NIKATRU_QUIET_EOF
+          NIKATRU_SHELL="${BASH:-bash}"; if command -v cygpath >/dev/null 2>&1; then NIKATRU_SHELL="$(cygpath -w "$NIKATRU_SHELL")"; fi
+          node "$GITHUB_WORKSPACE/../.nikatru-shell/quiet-step.mjs" --name review-crawl.demo-branch.3 -- "$NIKATRU_SHELL" -e "$NIKATRU_QUIET"
+      - name: Verify private main's composite actions are the checked-out tree (generated)
+        shell: bash
+        working-directory: ${{ github.workspace }}
+        env:
+          NIKATRU_TRUSTED_TREE: ${{ steps.nikatru-trusted-tree.outputs.tree }}
+          NIKATRU_TRUSTED_GIT: ${{ steps.nikatru-trusted-tree.outputs.git }}
+        run: |
+          case "$NIKATRU_TRUSTED_GIT" in /*) ;; *) echo "::error::.nikatru-trusted: no git path was recorded before the job's own steps ($NIKATRU_TRUSTED_GIT)"; exit 1 ;; esac
+          rm -rf .nikatru-trusted/.github && mkdir -p .nikatru-trusted && cp -R "$RUNNER_TEMP/nikatru-trusted-actions/.github" .nikatru-trusted/
+          if x="$(git rev-parse --git-path info/exclude 2>/dev/null)"; then mkdir -p "${x%/*}"; grep -qxF '/.nikatru-trusted/' "$x" 2>/dev/null || printf '/.nikatru-trusted/\n' >> "$x"; fi
+          tree="$(for v in $(compgen -e); do case "$v" in (GIT_*) unset "$v" ;; esac; done && d="$RUNNER_TEMP/nikatru-trusted.$$.$RANDOM" && [ ! -e "$d.git" ] && [ ! -e "$d.index" ] && export GIT_DIR="$d.git" GIT_INDEX_FILE="$d.index" GIT_CONFIG_GLOBAL=/dev/null GIT_CONFIG_NOSYSTEM=1 && "$NIKATRU_TRUSTED_GIT" init -q --bare --template= "$GIT_DIR" && "$NIKATRU_TRUSTED_GIT" -C .nikatru-trusted --work-tree=. add -A -f .github/actions && "$NIKATRU_TRUSTED_GIT" write-tree --prefix=.github/actions/)"
+          if [ -z "$NIKATRU_TRUSTED_TREE" ] || [ "$tree" != "$NIKATRU_TRUSTED_TREE" ]; then echo "::error::.nikatru-trusted is not the tree checked out from private main ($NIKATRU_TRUSTED_TREE, now $tree): a step of this job edited its copy"; exit 1; fi
+      - uses: ./.nikatru-trusted/.github/actions/setup-node
+        env:
+          NIKATRU_REF: ${{ github.event.client_payload.ref || inputs.private_ref || 'refs/heads/main' }}
+          NIKATRU_EVENT_NAME: ${{ github.event.client_payload.event || github.event_name }}
+          NIKATRU_PR: ${{ github.event.client_payload.pr }}
+      - name: Install the fleet Playwright and its Chromium
+        working-directory: _playwright
+        timeout-minutes: 12
+        run: |
+          NIKATRU_QUIET="$(mktemp "${RUNNER_TEMP:-/tmp}/nikatru-step.XXXXXX")"
+          cat > "$NIKATRU_QUIET" <<'NIKATRU_QUIET_EOF'
+          set -euo pipefail
+          node "$GITHUB_WORKSPACE/tooling/ops/npm-ci-retry.mjs" -- npm ci --no-audit --no-fund
+          # why the helper: tooling/ops/ci-install-cache.mjs (since #981) bounds each attempt, retries once on a slow mirror and
+          # reuses the cached .debs. ⏱ 2026-10-31 · O-REVIEW-CRAWL-INSTALL-DUP, then lead ruling 22:15Z (7): through the ONE
+          # cached_install function every caller shares (tooling/ci/test/ci-install-cache.test.mjs), so a checkout that
+          # predates #981 installs plain and bounded instead of failing on a missing module.
+          cached_install() {
+            if [ -f "$GITHUB_WORKSPACE/tooling/ops/ci-install-cache.mjs" ]; then
+              node "$GITHUB_WORKSPACE/tooling/ops/ci-install-cache.mjs" run --cache-dir "${DEBS_DIR:-$RUNNER_TEMP/ci-install-debs}" --attempt-minutes "${ATTEMPT_MINUTES:-4}" -- "$@"
+              return
+            fi
+            bound="$(awk -v m="${ATTEMPT_MINUTES:-4}" 'BEGIN { print int(m * 120) + 1 }')"
+            echo "::warning title=Install uncached::this checkout has no tooling/ops/ci-install-cache.mjs (it predates #981): $* runs uncached, bounded at ${bound} s"
+            if [ "$1" = sudo ]; then timeout -k 15 "$bound" sudo apt-get update; fi
+            timeout -k 15 "$bound" "$@"
+          }
+          cached_install \
+            npx playwright install --with-deps chromium
+          NIKATRU_QUIET_EOF
+          NIKATRU_SHELL="${BASH:-bash}"; if command -v cygpath >/dev/null 2>&1; then NIKATRU_SHELL="$(cygpath -w "$NIKATRU_SHELL")"; fi
+          node "$GITHUB_WORKSPACE/../.nikatru-shell/quiet-step.mjs" --name review-crawl.demo-branch.5 -- "$NIKATRU_SHELL" -e "$NIKATRU_QUIET"
+      - name: The demo build, when this cell is an app
+        id: bundle
+        env:
+          TARGET: ${{ matrix.cell.target }}
+        run: |
+          NIKATRU_QUIET="$(mktemp "${RUNNER_TEMP:-/tmp}/nikatru-step.XXXXXX")"
+          cat > "$NIKATRU_QUIET" <<'NIKATRU_QUIET_EOF'
+          set -euo pipefail
+          kind="$(node tooling/e2e/review-crawl/manifest.mjs --target "$TARGET" | node -e 'let s="";process.stdin.on("data",d=>s+=d).on("end",()=>console.log(JSON.parse(s).kind))')"
+          echo "kind=$kind" >> "$GITHUB_OUTPUT"
+          NIKATRU_QUIET_EOF
+          NIKATRU_SHELL="${BASH:-bash}"; if command -v cygpath >/dev/null 2>&1; then NIKATRU_SHELL="$(cygpath -w "$NIKATRU_SHELL")"; fi
+          node "$GITHUB_WORKSPACE/../.nikatru-shell/quiet-step.mjs" --name review-crawl.demo-branch.6 -- "$NIKATRU_SHELL" -e "$NIKATRU_QUIET"
+      - name: Verify private main's composite actions are the checked-out tree (generated)
+        if: steps.bundle.outputs.kind == 'flutter-web' && (github.event.client_payload.ref || inputs.private_ref || 'refs/heads/main') != 'refs/heads/main' && needs.gate.result == 'success'
+        shell: bash
+        working-directory: ${{ github.workspace }}
+        env:
+          NIKATRU_TRUSTED_TREE: ${{ steps.nikatru-trusted-tree.outputs.tree }}
+          NIKATRU_TRUSTED_GIT: ${{ steps.nikatru-trusted-tree.outputs.git }}
+        run: |
+          case "$NIKATRU_TRUSTED_GIT" in /*) ;; *) echo "::error::.nikatru-trusted: no git path was recorded before the job's own steps ($NIKATRU_TRUSTED_GIT)"; exit 1 ;; esac
+          rm -rf .nikatru-trusted/.github && mkdir -p .nikatru-trusted && cp -R "$RUNNER_TEMP/nikatru-trusted-actions/.github" .nikatru-trusted/
+          if x="$(git rev-parse --git-path info/exclude 2>/dev/null)"; then mkdir -p "${x%/*}"; grep -qxF '/.nikatru-trusted/' "$x" 2>/dev/null || printf '/.nikatru-trusted/\n' >> "$x"; fi
+          tree="$(for v in $(compgen -e); do case "$v" in (GIT_*) unset "$v" ;; esac; done && d="$RUNNER_TEMP/nikatru-trusted.$$.$RANDOM" && [ ! -e "$d.git" ] && [ ! -e "$d.index" ] && export GIT_DIR="$d.git" GIT_INDEX_FILE="$d.index" GIT_CONFIG_GLOBAL=/dev/null GIT_CONFIG_NOSYSTEM=1 && "$NIKATRU_TRUSTED_GIT" init -q --bare --template= "$GIT_DIR" && "$NIKATRU_TRUSTED_GIT" -C .nikatru-trusted --work-tree=. add -A -f .github/actions && "$NIKATRU_TRUSTED_GIT" write-tree --prefix=.github/actions/)"
+          if [ -z "$NIKATRU_TRUSTED_TREE" ] || [ "$tree" != "$NIKATRU_TRUSTED_TREE" ]; then echo "::error::.nikatru-trusted is not the tree checked out from private main ($NIKATRU_TRUSTED_TREE, now $tree): a step of this job edited its copy"; exit 1; fi
+      - if: steps.bundle.outputs.kind == 'flutter-web' && (github.event.client_payload.ref || inputs.private_ref || 'refs/heads/main') != 'refs/heads/main' && needs.gate.result == 'success'
+        uses: ./.nikatru-trusted/.github/actions/setup-flutter
+        with:
+          cache: 'false'
+        env:
+          NIKATRU_REF: ${{ github.event.client_payload.ref || inputs.private_ref || 'refs/heads/main' }}
+          NIKATRU_EVENT_NAME: ${{ github.event.client_payload.event || github.event_name }}
+          NIKATRU_PR: ${{ github.event.client_payload.pr }}
+      - name: Give the demo build the pseudo right-to-left locale (branch run)
+        if: steps.bundle.outputs.kind == 'flutter-web' && (github.event.client_payload.ref || inputs.private_ref || 'refs/heads/main') != 'refs/heads/main' && needs.gate.result == 'success'
+        run: |
+          NIKATRU_QUIET="$(mktemp "${RUNNER_TEMP:-/tmp}/nikatru-step.XXXXXX")"
+          cat > "$NIKATRU_QUIET" <<'NIKATRU_QUIET_EOF'
+          node tooling/i18n/pseudo-arb.mjs --demo-build ${{ matrix.cell.target }}
+          NIKATRU_QUIET_EOF
+          NIKATRU_SHELL="${BASH:-bash}"; if command -v cygpath >/dev/null 2>&1; then NIKATRU_SHELL="$(cygpath -w "$NIKATRU_SHELL")"; fi
+          node "$GITHUB_WORKSPACE/../.nikatru-shell/quiet-step.mjs" --name review-crawl.demo-branch.8 -- "$NIKATRU_SHELL" -e "$NIKATRU_QUIET"
+      - name: Resolve the workspace (branch run)
+        if: steps.bundle.outputs.kind == 'flutter-web' && (github.event.client_payload.ref || inputs.private_ref || 'refs/heads/main') != 'refs/heads/main' && needs.gate.result == 'success'
+        run: |
+          NIKATRU_QUIET="$(mktemp "${RUNNER_TEMP:-/tmp}/nikatru-step.XXXXXX")"
+          cat > "$NIKATRU_QUIET" <<'NIKATRU_QUIET_EOF'
+          flutter pub get --enforce-lockfile
+          NIKATRU_QUIET_EOF
+          NIKATRU_SHELL="${BASH:-bash}"; if command -v cygpath >/dev/null 2>&1; then NIKATRU_SHELL="$(cygpath -w "$NIKATRU_SHELL")"; fi
+          node "$GITHUB_WORKSPACE/../.nikatru-shell/quiet-step.mjs" --name review-crawl.demo-branch.9 -- "$NIKATRU_SHELL" -e "$NIKATRU_QUIET"
+      - name: Derive the release line from pubspec (branch run)
+        id: ver
+        if: steps.bundle.outputs.kind == 'flutter-web' && (github.event.client_payload.ref || inputs.private_ref || 'refs/heads/main') != 'refs/heads/main' && needs.gate.result == 'success'
+        run: |
+          NIKATRU_QUIET="$(mktemp "${RUNNER_TEMP:-/tmp}/nikatru-step.XXXXXX")"
+          cat > "$NIKATRU_QUIET" <<'NIKATRU_QUIET_EOF'
+          node tooling/ci/assert-app-versioning.mjs --emit apps/${{ matrix.cell.target }} >> "$GITHUB_OUTPUT"
+          NIKATRU_QUIET_EOF
+          NIKATRU_SHELL="${BASH:-bash}"; if command -v cygpath >/dev/null 2>&1; then NIKATRU_SHELL="$(cygpath -w "$NIKATRU_SHELL")"; fi
+          node "$GITHUB_WORKSPACE/../.nikatru-shell/quiet-step.mjs" --name review-crawl.demo-branch.10 -- "$NIKATRU_SHELL" -e "$NIKATRU_QUIET"
+      - name: Resolve this app's base href from the catalogue (branch run)
+        id: base
+        if: steps.bundle.outputs.kind == 'flutter-web' && (github.event.client_payload.ref || inputs.private_ref || 'refs/heads/main') != 'refs/heads/main' && needs.gate.result == 'success'
+        run: |
+          NIKATRU_QUIET="$(mktemp "${RUNNER_TEMP:-/tmp}/nikatru-step.XXXXXX")"
+          cat > "$NIKATRU_QUIET" <<'NIKATRU_QUIET_EOF'
+          node tooling/ci/assert-catalog-reachable.mjs --emit-base-href ${{ matrix.cell.target }} >> "$GITHUB_OUTPUT"
+          NIKATRU_QUIET_EOF
+          NIKATRU_SHELL="${BASH:-bash}"; if command -v cygpath >/dev/null 2>&1; then NIKATRU_SHELL="$(cygpath -w "$NIKATRU_SHELL")"; fi
+          node "$GITHUB_WORKSPACE/../.nikatru-shell/quiet-step.mjs" --name review-crawl.demo-branch.11 -- "$NIKATRU_SHELL" -e "$NIKATRU_QUIET"
+      - name: The demo build, on a branch run (backend blanked)
+        if: steps.bundle.outputs.kind == 'flutter-web' && (github.event.client_payload.ref || inputs.private_ref || 'refs/heads/main') != 'refs/heads/main' && needs.gate.result == 'success'
+        env:
+          BASE_HREF: ${{ steps.base.outputs.base_href }}
+          RELEASE_LINE: ${{ steps.ver.outputs.release_line }}
+          TURNSTILE_SITE_KEY: ''
+        run: |
+          NIKATRU_QUIET="$(mktemp "${RUNNER_TEMP:-/tmp}/nikatru-step.XXXXXX")"
+          cat > "$NIKATRU_QUIET" <<'NIKATRU_QUIET_EOF'
+          node tooling/ci/flutter-release-build.mjs ${{ matrix.cell.target }} web web --lane pr
+          NIKATRU_QUIET_EOF
+          NIKATRU_SHELL="${BASH:-bash}"; if command -v cygpath >/dev/null 2>&1; then NIKATRU_SHELL="$(cygpath -w "$NIKATRU_SHELL")"; fi
+          node "$GITHUB_WORKSPACE/../.nikatru-shell/quiet-step.mjs" --name review-crawl.demo-branch.12 -- "$NIKATRU_SHELL" -e "$NIKATRU_QUIET"
+      - name: Self-host the engine's fallback fonts, pinned by sha256 (branch run)
+        if: steps.bundle.outputs.kind == 'flutter-web' && (github.event.client_payload.ref || inputs.private_ref || 'refs/heads/main') != 'refs/heads/main' && needs.gate.result == 'success'
+        run: |
+          NIKATRU_QUIET="$(mktemp "${RUNNER_TEMP:-/tmp}/nikatru-step.XXXXXX")"
+          cat > "$NIKATRU_QUIET" <<'NIKATRU_QUIET_EOF'
+          node tooling/web/self-host-fallback-fonts.mjs apps/${{ matrix.cell.target }}/build/web
+          NIKATRU_QUIET_EOF
+          NIKATRU_SHELL="${BASH:-bash}"; if command -v cygpath >/dev/null 2>&1; then NIKATRU_SHELL="$(cygpath -w "$NIKATRU_SHELL")"; fi
+          node "$GITHUB_WORKSPACE/../.nikatru-shell/quiet-step.mjs" --name review-crawl.demo-branch.13 -- "$NIKATRU_SHELL" -e "$NIKATRU_QUIET"
+      - name: Fingerprint the heavy assets (branch run)
+        if: steps.bundle.outputs.kind == 'flutter-web' && (github.event.client_payload.ref || inputs.private_ref || 'refs/heads/main') != 'refs/heads/main' && needs.gate.result == 'success'
+        run: |
+          NIKATRU_QUIET="$(mktemp "${RUNNER_TEMP:-/tmp}/nikatru-step.XXXXXX")"
+          cat > "$NIKATRU_QUIET" <<'NIKATRU_QUIET_EOF'
+          node tooling/web/fingerprint-web-build.mjs apps/${{ matrix.cell.target }}/build/web
+          NIKATRU_QUIET_EOF
+          NIKATRU_SHELL="${BASH:-bash}"; if command -v cygpath >/dev/null 2>&1; then NIKATRU_SHELL="$(cygpath -w "$NIKATRU_SHELL")"; fi
+          node "$GITHUB_WORKSPACE/../.nikatru-shell/quiet-step.mjs" --name review-crawl.demo-branch.14 -- "$NIKATRU_SHELL" -e "$NIKATRU_QUIET"
+      - name: Crawl (low priority, no GPU)
+        env:
+          CELL: ${{ matrix.cell.id }}
+          TARGET: ${{ matrix.cell.target }}
+          PHASE: ${{ matrix.cell.phase }}
+          MATRIX: ${{ matrix.cell.matrix }}
+          SHARD: ${{ matrix.cell.shard }}
+        run: |
+          NIKATRU_QUIET="$(mktemp "${RUNNER_TEMP:-/tmp}/nikatru-step.XXXXXX")"
+          cat > "$NIKATRU_QUIET" <<'NIKATRU_QUIET_EOF'
+          set +e
+          prev=()
+          if [ -f "$RUNNER_TEMP/previous/index.json" ]; then prev=(--previous "$RUNNER_TEMP/previous/index.json"); else echo "::notice title=Review crawl baseline::no previous index for this cell, so every error, blank screen and a11y failure is reported as new"; fi
+          # why: --deadline-s 80 min under the 90-min job cap, so the crawl writes its report and
+          # INCOMPLETE rows itself; a crawl that is killed anyway (exit > 2) resumes ONCE from the
+          # checkpoint it rewrites after every route (lead e19de7, item 14).
+          # why (review52-pipeline-073): the resume leg gets what is LEFT of the 80 minutes, not a fresh 80, or it believes
+          # it may run past the 90-min cap and is cancelled before it writes its report; under 5 minutes left is exit 2.
+          crawl=(nice -n 19 node tooling/e2e/review-crawl/crawl.mjs --target "$TARGET" --mode demo --phase "$PHASE" --matrix "$MATRIX" ${SHARD:+--shard "$SHARD"} "${prev[@]}" --out "$RUNNER_TEMP/review-crawl")
+          "${crawl[@]}" --deadline-s 4800
+          code=$?
+          if [ "$code" -gt 2 ]; then
+            left=$(( 4800 - SECONDS ))
+            if [ "$left" -lt 300 ]; then echo "::warning title=Review crawl not resumed::the crawl exited $code with ${left}s of its budget left, too little to resume (COVERAGE LOST)"; code=2
+            else echo "::warning title=Review crawl resumed::the crawl exited $code (killed or crashed); resuming once from its checkpoint with ${left}s left"; "${crawl[@]}" --deadline-s "$left" --resume; code=$?; fi
+          fi
+          set -e
+          # why: no report in the step summary: in the public CI shell a summary is public. The
+          # report is in the cell's private upload.
+          exit "$code"
+          NIKATRU_QUIET_EOF
+          NIKATRU_SHELL="${BASH:-bash}"; if command -v cygpath >/dev/null 2>&1; then NIKATRU_SHELL="$(cygpath -w "$NIKATRU_SHELL")"; fi
+          node "$GITHUB_WORKSPACE/../.nikatru-shell/quiet-step.mjs" --name review-crawl.demo-branch.15 -- "$NIKATRU_SHELL" -e "$NIKATRU_QUIET"
+      - name: Split the cell's review into bundles under the bridge cap
+        if: always()
+        run: |
+          NIKATRU_QUIET="$(mktemp "${RUNNER_TEMP:-/tmp}/nikatru-step.XXXXXX")"
+          cat > "$NIKATRU_QUIET" <<'NIKATRU_QUIET_EOF'
+          node tooling/ops/review-crawl-bundles.mjs --in "$RUNNER_TEMP/review-crawl" --out "$RUNNER_TEMP/review-crawl-bundles"
+          NIKATRU_QUIET_EOF
+          NIKATRU_SHELL="${BASH:-bash}"; if command -v cygpath >/dev/null 2>&1; then NIKATRU_SHELL="$(cygpath -w "$NIKATRU_SHELL")"; fi
+          node "$GITHUB_WORKSPACE/../.nikatru-shell/quiet-step.mjs" --name review-crawl.demo-branch.16 -- "$NIKATRU_SHELL" -e "$NIKATRU_QUIET"
+      - name: Keep this run's index as the next run's baseline
+        id: keep
+        if: always()
+        run: |
+          NIKATRU_QUIET="$(mktemp "${RUNNER_TEMP:-/tmp}/nikatru-step.XXXXXX")"
+          cat > "$NIKATRU_QUIET" <<'NIKATRU_QUIET_EOF'
+          mkdir -p "$RUNNER_TEMP/baseline"
+          # why: the baseline is baseline.json (report.mjs mergeBaseline): this run's index with the
+          # previous facts carried over for every INCOMPLETE route, so a slow route keeps its last
+          # complete facts and the rest refresh. A run stopped by live safety is no baseline at all.
+          b="$RUNNER_TEMP/review-crawl/baseline.json"
+          if [ -f "$b" ] && node -e 'const i=JSON.parse(require("fs").readFileSync(process.argv[1],"utf8")); process.exit(i.stoppedBy ? 1 : 0)' "$b"; then cp "$b" "$RUNNER_TEMP/baseline/index.json"; echo "saved=true" >> "$GITHUB_OUTPUT"; else echo "::notice title=Review crawl baseline::no baseline from this run (stopped by live safety, or no index), so the previous baseline is kept"; fi
+          NIKATRU_QUIET_EOF
+          NIKATRU_SHELL="${BASH:-bash}"; if command -v cygpath >/dev/null 2>&1; then NIKATRU_SHELL="$(cygpath -w "$NIKATRU_SHELL")"; fi
+          node "$GITHUB_WORKSPACE/../.nikatru-shell/quiet-step.mjs" --name review-crawl.demo-branch.21 -- "$NIKATRU_SHELL" -e "$NIKATRU_QUIET"
+      - name: Seal this job's red detail to this run's one-time key (generated)
+        id: nikatru-seal-detail
+        if: always()
+        continue-on-error: true
+        shell: bash
+        working-directory: ${{ github.workspace }}
+        env:
+          NIKATRU_DETAIL_FILE: ${{ runner.temp }}/report-detail.md
+          NIKATRU_SEALED_OUT: ${{ runner.temp }}/nikatru-sealed-detail/sealed.bin
+          NIKATRU_HANDOFF_RECIPIENT: ${{ needs.nikatru-detail-keys.outputs.recipient }}
+          NIKATRU_HANDOFF_KEY: nikatru-sealed-detail-review-crawl-demo-branch-${{ strategy.job-index }}/${{ github.run_id }}
+        run: mkdir -p "$RUNNER_TEMP/nikatru-sealed-detail" && node tooling/ci/shell-handoff.mjs seal-detail
+      - name: Hand this job's sealed red detail to the store job (generated)
+        if: always() && steps.nikatru-seal-detail.outputs.sealed == 'true'
+        continue-on-error: true
+        timeout-minutes: 5
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9
+        with:
+          name: nikatru-sealed-detail-review-crawl-demo-branch-${{ strategy.job-index }}
+          path: ${{ runner.temp }}/nikatru-sealed-detail/sealed.bin
+          if-no-files-found: error
+          retention-days: 1
+          overwrite: true
+
   public:
     name: Public live · ${{ matrix.cell.id }}
     needs: [nikatru-pin, plan, self-test]
@@ -1723,9 +2113,99 @@ jobs:
           NIKATRU_BRIDGE_ARTIFACT_URL: https://gh-bridge.nikatru.workers.dev/artifact
         run: node tooling/ops/bridge-artifact.mjs upload
 
+  nikatru-detail-keys:
+    name: Make this run's one-time key for the branch jobs' sealed red detail (generated)
+    needs: [nikatru-pin]
+    runs-on: ubuntu-24.04
+    defaults:
+      run:
+        working-directory: ${{ github.workspace }}
+    timeout-minutes: 10
+    permissions:
+      contents: read
+    outputs:
+      recipient: ${{ steps.nikatru-detail-pair.outputs.recipient }}
+    steps:
+      - name: Check out private main's hand-off script (generated)
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
+        with:
+          repository: ${{ env.NIKATRU_PRIVATE_REPO }}
+          ref: main
+          sparse-checkout: |
+            tooling/ci
+          ssh-key: ${{ secrets.PRIVATE_DEPLOY_KEY }}
+          persist-credentials: false
+      - name: This run's public key for the sealed red detail (generated)
+        id: nikatru-detail-pair
+        shell: bash
+        env:
+          NIKATRU_DETAIL_KEY: ${{ secrets.NIKATRU_DETAIL_KEY }}
+        run: node tooling/ci/shell-handoff.mjs detail-recipient
+
+  nikatru-detail-store:
+    name: Store the branch jobs' sealed red detail privately, with private main's uploader (generated)
+    needs: [nikatru-pin, nikatru-detail-keys, plan, gate, self-test, demo-branch]
+    if: "!cancelled() && needs.nikatru-detail-keys.result == 'success'"
+    runs-on: ubuntu-24.04
+    defaults:
+      run:
+        working-directory: ${{ github.workspace }}
+    timeout-minutes: 15
+    permissions:
+      contents: read
+      actions: read
+      id-token: write
+    steps:
+      - name: Check out private main's hand-off script and uploader (generated)
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
+        with:
+          repository: ${{ env.NIKATRU_PRIVATE_REPO }}
+          ref: main
+          sparse-checkout: |
+            tooling/ci
+            tooling/generated
+            tooling/ops
+            tooling/app-yaml
+            tooling/catalog
+            tooling/entity
+            tooling/legal
+            tooling/ports
+            services/gh-bridge
+          ssh-key: ${{ secrets.PRIVATE_DEPLOY_KEY }}
+          persist-credentials: false
+      - name: Download this run's sealed red detail (generated)
+        continue-on-error: true
+        timeout-minutes: 6
+        uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333
+        with:
+          pattern: nikatru-sealed-detail-review-crawl-*
+          path: ${{ runner.temp }}/nikatru-sealed-cells
+      - name: List this run's artifacts, to name a single flattened cell (generated)
+        shell: bash
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: node tooling/ops/run-artifact-names.mjs --out "$RUNNER_TEMP/nikatru-run-artifacts.json"
+      - name: Open each branch job's sealed red detail (generated)
+        shell: bash
+        env:
+          NIKATRU_DETAIL_KEY: ${{ secrets.NIKATRU_DETAIL_KEY }}
+        run: node tooling/ci/shell-handoff.mjs open-detail-cells --dir "$RUNNER_TEMP/nikatru-sealed-cells" --prefix nikatru-sealed-detail-review-crawl- --out "$RUNNER_TEMP/report-detail.md" --run-names "$RUNNER_TEMP/nikatru-run-artifacts.json"
+      - name: Store this job's red detail in the bridge's private home (generated)
+        if: always()
+        continue-on-error: true
+        shell: bash
+        working-directory: ${{ github.workspace }}
+        env:
+          NIKATRU_PATHS: ${{ runner.temp }}/report-detail.md
+          NIKATRU_ARTIFACT_NAME: report-detail-review-crawl.nikatru-detail-store.${{ strategy.job-index }}
+          NIKATRU_IF_NO_FILES: ignore
+          BRIDGE_ARTIFACT_SECRET: ${{ secrets.BRIDGE_ARTIFACT_SECRET }}
+          NIKATRU_BRIDGE_ARTIFACT_URL: https://gh-bridge.nikatru.workers.dev/artifact
+        run: node tooling/ops/bridge-artifact.mjs upload
+
   nikatru-ran:
     name: Fail this run if it ran nothing (generated)
-    needs: [plan, gate, self-test, build-demo, web-engines, demo, public]
+    needs: [plan, gate, self-test, build-demo, web-engines, demo, demo-branch, public]
     if: "!cancelled()"
     runs-on: ubuntu-24.04
     defaults:
@@ -1745,7 +2225,7 @@ jobs:
       - name: Fail when every job of this run was skipped (generated)
         shell: bash
         env:
-          NIKATRU_RESULTS: plan=${{ needs.plan.result }} gate=${{ needs.gate.result }} self-test=${{ needs.self-test.result }} build-demo=${{ needs.build-demo.result }} web-engines=${{ needs.web-engines.result }} demo=${{ needs.demo.result }} public=${{ needs.public.result }}
+          NIKATRU_RESULTS: plan=${{ needs.plan.result }} gate=${{ needs.gate.result }} self-test=${{ needs.self-test.result }} build-demo=${{ needs.build-demo.result }} web-engines=${{ needs.web-engines.result }} demo=${{ needs.demo.result }} demo-branch=${{ needs.demo-branch.result }} public=${{ needs.public.result }}
         run: |
           for r in $NIKATRU_RESULTS; do
             if [ "${r#*=}" != skipped ]; then echo "ran: $NIKATRU_RESULTS"; exit 0; fi

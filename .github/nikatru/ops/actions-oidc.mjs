@@ -64,6 +64,7 @@ export async function mintOidc(env = process.env, { fetchImpl = globalThis.fetch
     if (typeof value !== 'string' || !JWT.test(value)) return { lost: 'the runner answered with no OIDC token' };
     return { token: value };
   } catch (e) {
+    // retry-error-detail: name-only — a JSON parse message quotes the body, and this body IS the token.
     return { lost: `the OIDC token request failed: ${e?.name ?? 'error'}` };
   }
 }

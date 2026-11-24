@@ -147,6 +147,20 @@ jobs:
           echo "pinned $NIKATRU_PINNED"
           echo "sha=$NIKATRU_PINNED" >> "$GITHUB_OUTPUT"
 
+  nikatru-pin-name:
+    name: Name the private commit this run built (generated) · private commit ${{ needs.nikatru-pin.outputs.sha }}
+    needs: [nikatru-pin]
+    runs-on: ubuntu-24.04
+    timeout-minutes: 5
+    permissions: {}
+    steps:
+      - name: Name the pinned private commit (generated)
+        shell: bash
+        working-directory: ${{ github.workspace }}
+        env:
+          NIKATRU_PINNED: ${{ needs.nikatru-pin.outputs.sha }}
+        run: echo "this run built the pinned private commit $NIKATRU_PINNED"
+
   plan:
     needs: [nikatru-pin, nikatru-detail-keys]
     name: The instants and the Worker set
@@ -810,7 +824,7 @@ jobs:
       max-parallel: 8
       matrix:
         instant: ${{ fromJSON(needs.plan.outputs.instants) }}
-        shard: [1, 2, 3, 4, 5, 6]
+        shard: [1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12]
     steps:
       - name: Check out the private tree (generated)
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
@@ -920,7 +934,7 @@ jobs:
           cat > "$NIKATRU_QUIET" <<'NIKATRU_QUIET_EOF'
           set -euo pipefail
           mkdir -p "$RUNNER_TEMP/time-travel"
-          node tooling/ci/guard-test-shards.mjs --plan --shards 6 --shard ${{ matrix.shard }} --out "$RUNNER_TEMP/time-travel/files.txt" > /dev/null
+          node tooling/ci/guard-test-shards.mjs --plan --shards 12 --shard ${{ matrix.shard }} --out "$RUNNER_TEMP/time-travel/files.txt" > /dev/null
           NIKATRU_QUIET_EOF
           NIKATRU_SHELL="${BASH:-bash}"; if command -v cygpath >/dev/null 2>&1; then NIKATRU_SHELL="$(cygpath -w "$NIKATRU_SHELL")"; fi
           node "$GITHUB_WORKSPACE/../.nikatru-shell/quiet-step.mjs" --name time-travel.tooling.4 -- "$NIKATRU_SHELL" -e "$NIKATRU_QUIET"
@@ -1152,7 +1166,6 @@ jobs:
     permissions:
       contents: read
       issues: read
-      security-events: read
       actions: read
     strategy:
       fail-fast: false
@@ -1252,6 +1265,14 @@ jobs:
           NIKATRU_REF: ${{ github.event.client_payload.ref || inputs.private_ref || 'refs/heads/main' }}
           NIKATRU_EVENT_NAME: ${{ github.event.client_payload.event || github.event_name }}
           NIKATRU_PR: ${{ github.event.client_payload.pr }}
+      - name: Generate the discovery surface (the sitemap is never committed)
+        run: |
+          NIKATRU_QUIET="$(mktemp "${RUNNER_TEMP:-/tmp}/nikatru-step.XXXXXX")"
+          cat > "$NIKATRU_QUIET" <<'NIKATRU_QUIET_EOF'
+          node tooling/sites/generate-discovery.mjs
+          NIKATRU_QUIET_EOF
+          NIKATRU_SHELL="${BASH:-bash}"; if command -v cygpath >/dev/null 2>&1; then NIKATRU_SHELL="$(cygpath -w "$NIKATRU_SHELL")"; fi
+          node "$GITHUB_WORKSPACE/../.nikatru-shell/quiet-step.mjs" --name time-travel.near-future.3 -- "$NIKATRU_SHELL" -e "$NIKATRU_QUIET"
       - name: Every clock-reading guard, today and at now+${{ matrix.days }}d
         env:
           DAYS: ${{ matrix.days }}
@@ -1262,7 +1283,7 @@ jobs:
           node tooling/ci/clock-flip.mjs --days "$DAYS" --keep-token --json "$RUNNER_TEMP/clock-flip.json"
           NIKATRU_QUIET_EOF
           NIKATRU_SHELL="${BASH:-bash}"; if command -v cygpath >/dev/null 2>&1; then NIKATRU_SHELL="$(cygpath -w "$NIKATRU_SHELL")"; fi
-          node "$GITHUB_WORKSPACE/../.nikatru-shell/quiet-step.mjs" --name time-travel.near-future.3 -- "$NIKATRU_SHELL" -e "$NIKATRU_QUIET"
+          node "$GITHUB_WORKSPACE/../.nikatru-shell/quiet-step.mjs" --name time-travel.near-future.4 -- "$NIKATRU_SHELL" -e "$NIKATRU_QUIET"
       - name: Seal this job's red detail to this run's one-time key (generated)
         id: nikatru-seal-detail
         if: always()

@@ -196,6 +196,9 @@
 // create-glitchtip-release and upload-web-sourcemaps (`secondLook: true`) —
 // every GitHub-runner call to a tunnel host whose stall reds main or fails a
 // deploy (row O-OPS-PROBE-US-EDGE-STALL).
+// ⏱ APPENDED 2026-11-20 (money walk 44728574044, paddle leg): tooling/e2e/provision_user.mjs takes it too, on its
+// user-creating POST and its admin list GET (`secondLook: true`), and its mint through tooling/e2e/magic_link.mjs
+// postGenerateLink's opt-in (`secondLook()` directly, only after the mint's own plan got no answer).
 // Failing cases: tooling/ci/test/ops-bounded-retry.test.mjs (this module and the
 // adoption, both directions) and tooling/ci/test/pages-deployments.test.mjs (the
 // green control for the move).

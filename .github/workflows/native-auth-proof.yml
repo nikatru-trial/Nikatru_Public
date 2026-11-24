@@ -5,7 +5,7 @@ env:
 
 name: Native auth proof
 
-run-name: "${{ !(inputs.private_pr) && ((github.event.schedule || github.event.inputs.worker_slot) && '[slot] ' || '[hand] ') || !(inputs.private_ref) && '[pr] ' || startsWith(inputs.private_ref, 'refs/heads/rehearsal/') && '[rehearsal] ' || startsWith(inputs.private_ref, 'refs/heads/club/') && '[club] ' || startsWith(inputs.private_ref, 'refs/heads/train/') && '[club] ' || startsWith(inputs.private_ref, 'refs/heads/integ/') && '[club] ' || startsWith(inputs.private_ref, 'refs/heads/renovate/') && '[bot] ' || startsWith(inputs.private_ref, 'refs/heads/dependabot/') && '[bot] ' || '[single] ' }}Native auth proof · ${{ inputs.app }}${{ inputs.worker_slot && format(' [worker slot {0}]', inputs.worker_slot) || '' }}${{ inputs.private_pr && format(' — branch proof {0} (PR #{1})', inputs.private_ref, inputs.private_pr) || '' }}"
+run-name: "${{ !(inputs.private_pr) && ((github.event.schedule || github.event.inputs.worker_slot) && '[slot] ' || '[hand] ') || !(inputs.private_ref) && '[pr] ' || startsWith(inputs.private_ref, 'refs/heads/rehearsal/') && '[rehearsal] ' || startsWith(inputs.private_ref, 'refs/heads/club/') && '[club] ' || startsWith(inputs.private_ref, 'refs/heads/train/') && '[club] ' || startsWith(inputs.private_ref, 'refs/heads/integ/') && '[club] ' || startsWith(inputs.private_ref, 'refs/heads/land/club-') && '[club] ' || startsWith(inputs.private_ref, 'refs/heads/renovate/') && '[bot] ' || startsWith(inputs.private_ref, 'refs/heads/dependabot/') && '[bot] ' || '[single] ' }}Native auth proof · ${{ inputs.app }}${{ inputs.worker_slot && format(' [worker slot {0}]', inputs.worker_slot) || '' }}${{ inputs.private_pr && format(' — branch proof {0} (PR #{1})', inputs.private_ref, inputs.private_pr) || '' }}"
 
 on:
   workflow_dispatch:
@@ -588,6 +588,9 @@ jobs:
       fail-fast: false
       matrix:
         app: ${{ fromJSON(needs.gate.outputs.apps) }}
+        level:
+          - targetSdk
+          - minSdk
     runs-on: ubuntu-24.04
     timeout-minutes: 60
     permissions:
@@ -598,6 +601,7 @@ jobs:
       PROOF_NEEDS_DEVICE: 'true'
       PENDING_FLOWS: ${{ inputs.pending_flows || 'run' }}
       E2E_PROOF_LOG: native-auth-proof.log
+      LEVEL: ${{ matrix.level }}
     steps:
       - name: Check out the private tree (generated)
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
@@ -761,11 +765,15 @@ jobs:
       - name: Boot an emulator
         if: env.PROOF_NEEDS_DEVICE == 'true'
         env:
-          API_LEVEL: '34'
+          API_LEVEL_KEY: ${{ matrix.level }}
         run: |
           NIKATRU_QUIET="$(mktemp "${RUNNER_TEMP:-/tmp}/nikatru-step.XXXXXX")"
           cat > "$NIKATRU_QUIET" <<'NIKATRU_QUIET_EOF'
           set -euo pipefail
+          # why: API_LEVEL_KEY is the gradle key this cell boots (targetSdk | minSdk); the API level itself is read from
+          # the app's build.gradle.kts by that key (exit 2 = it cannot say), never typed here.
+          API_LEVEL="$(node tooling/ci/native-device-levels.mjs android --app "$APP" --level "$API_LEVEL_KEY")"
+          echo "::notice title=Native auth proof device::android ${API_LEVEL_KEY} = API ${API_LEVEL}"
           # why: ⏱ 2026-10-31 · O-EMULATOR-BOOT-THREE-COPIES — the ONE boot (symbolication-proof.yml and the other
           # emulator jobs call it too): pinned emulator and platform-tools (tooling/versions.json, sha256-checked),
           # ANDROID_AVD_HOME and the pinned adb exported to the steps after it, and a wait that names a dead emulator.
@@ -798,7 +806,9 @@ jobs:
           NIKATRU_QUIET="$(mktemp "${RUNNER_TEMP:-/tmp}/nikatru-step.XXXXXX")"
           cat > "$NIKATRU_QUIET" <<'NIKATRU_QUIET_EOF'
           set -euo pipefail
-          node tooling/e2e/native_auth_proof.mjs --app "$APP" --target android --log "$E2E_PROOF_LOG" --expect-refusal
+          if [ "$LEVEL" != minSdk ]; then
+            node tooling/e2e/native_auth_proof.mjs --app "$APP" --target android --log "$E2E_PROOF_LOG" --expect-refusal
+          fi
           node tooling/e2e/native_auth_proof.mjs --app "$APP" --target android --device emulator-5554 --log "$E2E_PROOF_LOG" --callback --sign-in token --pending-flows "$PENDING_FLOWS" --notification-tap
           NIKATRU_QUIET_EOF
           NIKATRU_SHELL="${BASH:-bash}"; if command -v cygpath >/dev/null 2>&1; then NIKATRU_SHELL="$(cygpath -w "$NIKATRU_SHELL")"; fi
@@ -1001,6 +1011,9 @@ jobs:
       fail-fast: false
       matrix:
         app: ${{ fromJSON(needs.gate.outputs.apps) }}
+        level:
+          - targetSdk
+          - minSdk
     if: needs.nikatru-pin.result == 'success' && (needs.nikatru-approve.result == 'success' || (needs.nikatru-approve.result == 'skipped' && !((inputs.private_ref || '') != ''))) && !cancelled() && !failure() && needs.gate.result == 'success' && (needs.gate.outputs.darwin == 'true' && (needs.gate.outputs.targets == 'all' || contains(format(',{0},', needs.gate.outputs.targets), ',ios,')))
     runs-on: macos-26
     timeout-minutes: 60
@@ -1012,6 +1025,7 @@ jobs:
       PROOF_NEEDS_DEVICE: 'true'
       PENDING_FLOWS: ${{ inputs.pending_flows || 'run' }}
       E2E_PROOF_LOG: native-auth-proof.log
+      LEVEL: ${{ matrix.level }}
     steps:
       - name: Check out the private tree (generated)
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
@@ -1159,7 +1173,10 @@ jobs:
           NIKATRU_QUIET="$(mktemp "${RUNNER_TEMP:-/tmp}/nikatru-step.XXXXXX")"
           cat > "$NIKATRU_QUIET" <<'NIKATRU_QUIET_EOF'
           set -euo pipefail
-          udid="$(xcrun simctl list devices available -j | node -e 'const d = JSON.parse(require("fs").readFileSync(0, "utf8")).devices; for (const [rt, list] of Object.entries(d)) { if (!/iOS/.test(rt)) continue; const p = list.find((x) => /^iPhone/.test(x.name)); if (p) { console.log(p.udid); process.exit(0); } } process.exit(1);')"
+          # why: the cell's runtime — targetSdk the newest the image carries, minSdk the oldest at or above the app's
+          # deployment target (tooling/ci/native-device-levels.mjs prints which, and from what, on stderr).
+          sims="$(xcrun simctl list devices available -j)"
+          udid="$(printf '%s' "$sims" | node tooling/ci/native-device-levels.mjs ios --app "$APP" --level "$LEVEL")"
           xcrun simctl boot "$udid"
           xcrun simctl bootstatus "$udid" -b
           echo "udid=${udid}" >> "$GITHUB_OUTPUT"
@@ -1192,7 +1209,10 @@ jobs:
           NIKATRU_QUIET="$(mktemp "${RUNNER_TEMP:-/tmp}/nikatru-step.XXXXXX")"
           cat > "$NIKATRU_QUIET" <<'NIKATRU_QUIET_EOF'
           set -euo pipefail
-          node tooling/e2e/native_auth_proof.mjs --app "$APP" --target ios --log "$E2E_PROOF_LOG" --expect-refusal
+          # why the level: the refusal probe is HTTP only and the same at every runtime: the targetSdk cell runs it.
+          if [ "$LEVEL" != minSdk ]; then
+            node tooling/e2e/native_auth_proof.mjs --app "$APP" --target ios --log "$E2E_PROOF_LOG" --expect-refusal
+          fi
           node tooling/e2e/native_auth_proof.mjs --app "$APP" --target ios --device "$SIM" --log "$E2E_PROOF_LOG" --callback --sign-in token --pending-flows "$PENDING_FLOWS"
           NIKATRU_QUIET_EOF
           NIKATRU_SHELL="${BASH:-bash}"; if command -v cygpath >/dev/null 2>&1; then NIKATRU_SHELL="$(cygpath -w "$NIKATRU_SHELL")"; fi
@@ -1214,7 +1234,7 @@ jobs:
           NIKATRU_QUIET_EOF
           NIKATRU_SHELL="${BASH:-bash}"; if command -v cygpath >/dev/null 2>&1; then NIKATRU_SHELL="$(cygpath -w "$NIKATRU_SHELL")"; fi
           node "$GITHUB_WORKSPACE/../.nikatru-shell/quiet-step.mjs" --name native-auth-proof.ios.10 -- "$NIKATRU_SHELL" -e "$NIKATRU_QUIET"
-      - name: Store native-auth-proof-ios-after-open-${{ matrix.app }} in the bridge's private home (generated)
+      - name: Store native-auth-proof-ios-after-open-${{ matrix.app }}-${{ matrix.level }} in the bridge's private home (generated)
         if: always() && (steps.proof.outcome != 'skipped' || steps.proof_form.outcome != 'skipped')
         shell: bash
         working-directory: ${{ github.workspace }}
@@ -1222,7 +1242,7 @@ jobs:
           NIKATRU_PATHS: |
             ${{ runner.temp }}/nk-proof-ios-after-open.png
             ${{ runner.temp }}/nk-proof-ios-launch-attempt-*.png
-          NIKATRU_ARTIFACT_NAME: native-auth-proof-ios-after-open-${{ matrix.app }}
+          NIKATRU_ARTIFACT_NAME: native-auth-proof-ios-after-open-${{ matrix.app }}-${{ matrix.level }}
           NIKATRU_IF_NO_FILES: ignore
           NIKATRU_RETENTION_CLASS: diag
           BRIDGE_ARTIFACT_SECRET: ${{ secrets.BRIDGE_ARTIFACT_SECRET }}

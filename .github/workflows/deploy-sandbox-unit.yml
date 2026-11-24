@@ -379,6 +379,7 @@ jobs:
             contracts/entitlement
             tooling/sites
             tooling/kit
+            tooling/scripts
           ssh-key: ${{ secrets.PRIVATE_DEPLOY_KEY }}
           persist-credentials: false
         id: sandbox-main

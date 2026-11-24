@@ -142,6 +142,20 @@ jobs:
           echo "pinned $NIKATRU_PINNED"
           echo "sha=$NIKATRU_PINNED" >> "$GITHUB_OUTPUT"
 
+  nikatru-pin-name:
+    name: Name the private commit this run built (generated) · private commit ${{ needs.nikatru-pin.outputs.sha }}
+    needs: [nikatru-pin]
+    runs-on: ubuntu-24.04
+    timeout-minutes: 5
+    permissions: {}
+    steps:
+      - name: Name the pinned private commit (generated)
+        shell: bash
+        working-directory: ${{ github.workspace }}
+        env:
+          NIKATRU_PINNED: ${{ needs.nikatru-pin.outputs.sha }}
+        run: echo "this run built the pinned private commit $NIKATRU_PINNED"
+
   gate:
     needs: [nikatru-pin]
     name: Refuse main, and an app that is not one of the workspace
@@ -433,7 +447,7 @@ jobs:
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
         with:
           repository: ${{ env.NIKATRU_PRIVATE_REPO }}
-          ref: ${{ (github.event.client_payload.ref || inputs.private_ref || 'refs/heads/main') }}
+          ref: ${{ needs.nikatru-pin.outputs.sha || 'nikatru-pin-did-not-succeed..' }}
           ssh-key: ${{ secrets.PRIVATE_DEPLOY_KEY }}
           persist-credentials: false
         timeout-minutes: 5
@@ -695,6 +709,16 @@ jobs:
           NIKATRU_QUIET_EOF
           NIKATRU_SHELL="${BASH:-bash}"; if command -v cygpath >/dev/null 2>&1; then NIKATRU_SHELL="$(cygpath -w "$NIKATRU_SHELL")"; fi
           node "$GITHUB_WORKSPACE/../.nikatru-shell/quiet-step.mjs" --name regen-gradle-verify.regenerate.12 -- "$NIKATRU_SHELL" -e "$NIKATRU_QUIET"
+      - name: Every pub and Gradle dependency licence is within the policy
+        timeout-minutes: 5
+        run: |
+          NIKATRU_QUIET="$(mktemp "${RUNNER_TEMP:-/tmp}/nikatru-step.XXXXXX")"
+          cat > "$NIKATRU_QUIET" <<'NIKATRU_QUIET_EOF'
+          set -euo pipefail
+          node tooling/ci/resolved-licences.mjs --pub pubspec.lock --pub-cache "${PUB_CACHE:-$HOME/.pub-cache}" --gradle "apps/$APP/android/gradle/verification-metadata.xml" --gradle-home "$RUNNER_TEMP/gradle-home-generate-debug" --gradle-home "$RUNNER_TEMP/gradle-home-generate-release"
+          NIKATRU_QUIET_EOF
+          NIKATRU_SHELL="${BASH:-bash}"; if command -v cygpath >/dev/null 2>&1; then NIKATRU_SHELL="$(cygpath -w "$NIKATRU_SHELL")"; fi
+          node "$GITHUB_WORKSPACE/../.nikatru-shell/quiet-step.mjs" --name regen-gradle-verify.regenerate.13 -- "$NIKATRU_SHELL" -e "$NIKATRU_QUIET"
       - name: STRICT re-run of the debug path from an empty Gradle home
         timeout-minutes: 25
         working-directory: apps/${{ needs.gate.outputs.app }}/android
@@ -707,7 +731,7 @@ jobs:
           ./gradlew --no-daemon --dependency-verification strict bundleDebug assembleDebug
           NIKATRU_QUIET_EOF
           NIKATRU_SHELL="${BASH:-bash}"; if command -v cygpath >/dev/null 2>&1; then NIKATRU_SHELL="$(cygpath -w "$NIKATRU_SHELL")"; fi
-          node "$GITHUB_WORKSPACE/../.nikatru-shell/quiet-step.mjs" --name regen-gradle-verify.regenerate.13 -- "$NIKATRU_SHELL" -e "$NIKATRU_QUIET"
+          node "$GITHUB_WORKSPACE/../.nikatru-shell/quiet-step.mjs" --name regen-gradle-verify.regenerate.14 -- "$NIKATRU_SHELL" -e "$NIKATRU_QUIET"
       - name: STRICT re-run of the release path from an empty Gradle home
         timeout-minutes: 25
         working-directory: apps/${{ needs.gate.outputs.app }}/android
@@ -720,7 +744,7 @@ jobs:
           ./gradlew --no-daemon --dependency-verification strict bundleRelease assembleRelease
           NIKATRU_QUIET_EOF
           NIKATRU_SHELL="${BASH:-bash}"; if command -v cygpath >/dev/null 2>&1; then NIKATRU_SHELL="$(cygpath -w "$NIKATRU_SHELL")"; fi
-          node "$GITHUB_WORKSPACE/../.nikatru-shell/quiet-step.mjs" --name regen-gradle-verify.regenerate.14 -- "$NIKATRU_SHELL" -e "$NIKATRU_QUIET"
+          node "$GITHUB_WORKSPACE/../.nikatru-shell/quiet-step.mjs" --name regen-gradle-verify.regenerate.15 -- "$NIKATRU_SHELL" -e "$NIKATRU_QUIET"
       - name: The signing inputs are pinned, the new file included
         timeout-minutes: 2
         run: |
@@ -729,7 +753,7 @@ jobs:
           node tooling/ci/assert-signing-inputs-pinned.mjs
           NIKATRU_QUIET_EOF
           NIKATRU_SHELL="${BASH:-bash}"; if command -v cygpath >/dev/null 2>&1; then NIKATRU_SHELL="$(cygpath -w "$NIKATRU_SHELL")"; fi
-          node "$GITHUB_WORKSPACE/../.nikatru-shell/quiet-step.mjs" --name regen-gradle-verify.regenerate.15 -- "$NIKATRU_SHELL" -e "$NIKATRU_QUIET"
+          node "$GITHUB_WORKSPACE/../.nikatru-shell/quiet-step.mjs" --name regen-gradle-verify.regenerate.16 -- "$NIKATRU_SHELL" -e "$NIKATRU_QUIET"
       - name: The file the strict builds read is the one uploaded
         timeout-minutes: 1
         run: |
@@ -738,7 +762,7 @@ jobs:
           sha256sum "apps/$APP/android/gradle/verification-metadata.xml"
           NIKATRU_QUIET_EOF
           NIKATRU_SHELL="${BASH:-bash}"; if command -v cygpath >/dev/null 2>&1; then NIKATRU_SHELL="$(cygpath -w "$NIKATRU_SHELL")"; fi
-          node "$GITHUB_WORKSPACE/../.nikatru-shell/quiet-step.mjs" --name regen-gradle-verify.regenerate.16 -- "$NIKATRU_SHELL" -e "$NIKATRU_QUIET"
+          node "$GITHUB_WORKSPACE/../.nikatru-shell/quiet-step.mjs" --name regen-gradle-verify.regenerate.17 -- "$NIKATRU_SHELL" -e "$NIKATRU_QUIET"
       - name: Seal the regenerated metadata and this job's red detail to this run's key
         id: seal
         if: always()
@@ -777,7 +801,7 @@ jobs:
           if [ "$withheld" -ne 0 ]; then exit 1; fi
           NIKATRU_QUIET_EOF
           NIKATRU_SHELL="${BASH:-bash}"; if command -v cygpath >/dev/null 2>&1; then NIKATRU_SHELL="$(cygpath -w "$NIKATRU_SHELL")"; fi
-          node "$GITHUB_WORKSPACE/../.nikatru-shell/quiet-step.mjs" --name regen-gradle-verify.regenerate.17 -- "$NIKATRU_SHELL" -e "$NIKATRU_QUIET"
+          node "$GITHUB_WORKSPACE/../.nikatru-shell/quiet-step.mjs" --name regen-gradle-verify.regenerate.18 -- "$NIKATRU_SHELL" -e "$NIKATRU_QUIET"
 
   upload:
     name: Store the regenerated metadata privately, with private main's uploader
