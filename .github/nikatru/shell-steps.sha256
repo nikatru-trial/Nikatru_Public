@@ -66,7 +66,7 @@ ca42cdc14f65ee875e25dc4b6372042d1d74a380978e2942b1d765a26590b434
 shell/.github/workflows/catalog-sync.yml
 72a5da260bfe4527796071d1371611a131ee0bfeaefc339155e100cec3883ca6
 shell/.github/workflows/ci.yml
-7bf2a517daf8b5e1aa2e875a9cca48a721967d5c797f28517bf4cbd3f4b61ac3
+41008be43ccb151fe653bc043032367fadb4a15a99b982aed35782f8ab38dbc3
 shell/.github/workflows/claude-review.yml
 a6df343d671b8bff2c8cba2547d61275cbc629d5bfcc439b5fcd52e27993b9fe
 shell/.github/workflows/claude-triage.yml
