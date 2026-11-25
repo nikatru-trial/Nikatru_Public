@@ -23,6 +23,16 @@ on:
         required: false
         default: ''
         type: string
+      rails:
+        description: 'Optional, space-separated rails to diff or apply: google, apple, paddle, razorpay. Empty (default): every rail.'
+        required: false
+        default: ''
+        type: string
+      apps:
+        description: 'Optional, space-separated app ids to diff or apply (an apps/<app>/app.yaml with a price). Empty (default): every priced app.'
+        required: false
+        default: ''
+        type: string
       red_drill:
         description: 'A drill: the quiet step of this exact name (e.g. build-platforms.gate.2) goes red after it runs green, so its red detail must reach the private home. Empty: no drill.'
         required: false
@@ -284,6 +294,8 @@ jobs:
         env:
           NIKATRU_EVENT: ${{ (github.event.client_payload.event || github.event_name) }}
           NIKATRU_PUSH_BEFORE: ${{ (github.event.client_payload.event == 'push' && github.event.client_payload.base_sha || '') }}
+          NIKATRU_RAILS: ${{ inputs.rails }}
+          NIKATRU_APPS: ${{ inputs.apps }}
           NIKATRU_LIVE_BUILD_CHECKOUT: .live-build
           NIKATRU_LIVE_BUILD: ${{ steps.live-build.outputs.build }}
           PLAY_SERVICE_ACCOUNT_JSON: ${{ secrets.PLAY_READ_SERVICE_ACCOUNT_JSON }}
@@ -302,7 +314,12 @@ jobs:
             case "$base" in ''|0000000000000000000000000000000000000000) base="$(git rev-parse HEAD^1)" ;; esac
             since=(--changed-since "$base")
           fi
-          node tooling/catalog/sync-products.mjs --dry-run --apply-time-only razorpay --report "$RUNNER_TEMP/catalog-sync/diff.md" "${since[@]}"
+          scope=()
+          read -ra rails_in <<< "${NIKATRU_RAILS:-}"
+          for r in "${rails_in[@]}"; do scope+=(--rail "$r"); done
+          read -ra apps_in <<< "${NIKATRU_APPS:-}"
+          for a in "${apps_in[@]}"; do scope+=(--app "$a"); done
+          node tooling/catalog/sync-products.mjs --dry-run --apply-time-only razorpay --report "$RUNNER_TEMP/catalog-sync/diff.md" "${since[@]}" "${scope[@]}"
           NIKATRU_QUIET_EOF
           NIKATRU_SHELL="${BASH:-bash}"; if command -v cygpath >/dev/null 2>&1; then NIKATRU_SHELL="$(cygpath -w "$NIKATRU_SHELL")"; fi
           node "$GITHUB_WORKSPACE/../.nikatru-shell/quiet-step.mjs" --name catalog-sync.dry-run.5 -- "$NIKATRU_SHELL" -e "$NIKATRU_QUIET"
@@ -463,6 +480,8 @@ jobs:
         env:
           GITHUB_TOKEN: ${{ github.token }}
           NIKATRU_ARCHIVE: ${{ inputs.archive }}
+          NIKATRU_RAILS: ${{ inputs.rails }}
+          NIKATRU_APPS: ${{ inputs.apps }}
           NIKATRU_LIVE_BUILD_CHECKOUT: .live-build
           NIKATRU_LIVE_BUILD: ${{ steps.live-build.outputs.build }}
           PLAY_SERVICE_ACCOUNT_JSON: ${{ secrets.PLAY_SERVICE_ACCOUNT_JSON }}
@@ -477,16 +496,30 @@ jobs:
           mkdir -p "$RUNNER_TEMP/catalog-sync"
           archive=()
           for target in $NIKATRU_ARCHIVE; do archive+=(--archive "$target"); done
+          scope=()
+          read -ra rails_in <<< "${NIKATRU_RAILS:-}"
+          for r in "${rails_in[@]}"; do scope+=(--rail "$r"); done
+          read -ra apps_in <<< "${NIKATRU_APPS:-}"
+          for a in "${apps_in[@]}"; do scope+=(--app "$a"); done
           # why (assert-exit-capture-under-e EC-1): bash -e ends the step on a bare failing command, so the status is read as `|| code=$?`.
           code=0
-          node tooling/catalog/sync-products.mjs --apply --report "$RUNNER_TEMP/catalog-sync/apply.md" "${archive[@]}" > "$RUNNER_TEMP/catalog-sync/apply.log" 2>&1 || code=$?
+          node tooling/catalog/sync-products.mjs --apply --report "$RUNNER_TEMP/catalog-sync/apply.md" "${archive[@]}" "${scope[@]}" > "$RUNNER_TEMP/catalog-sync/apply.log" 2>&1 || code=$?
           echo "catalog-sync --apply exited $code; its report is the private artifact catalog-sync-apply (never this log)."
           exit "$code"
       - name: Record what the catalogue write shipped
         if: always() && steps.apply.outcome == 'success'
         env:
           GH_TOKEN: ${{ github.token }}
-        run: node tooling/ci/record-deployment.mjs catalog
+          NIKATRU_RAILS: ${{ inputs.rails }}
+          NIKATRU_APPS: ${{ inputs.apps }}
+        run: |
+          set -uo pipefail
+          scope=()
+          read -ra rails_in <<< "${NIKATRU_RAILS:-}"
+          for r in "${rails_in[@]}"; do scope+=(--catalog-rail "$r"); done
+          read -ra apps_in <<< "${NIKATRU_APPS:-}"
+          for a in "${apps_in[@]}"; do scope+=(--catalog-app "$a"); done
+          node tooling/ci/record-deployment.mjs catalog "${scope[@]}"
       - name: Store catalog-sync-apply in the bridge's private home (generated)
         if: always()
         shell: bash

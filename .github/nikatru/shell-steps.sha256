@@ -64,7 +64,7 @@ a29362f5e953016fabdbbaa8b224e2f1dbd48ba7c99b3342cdf47d7ed294c98c
 shell/.github/workflows/build-platforms.yml
 ca42cdc14f65ee875e25dc4b6372042d1d74a380978e2942b1d765a26590b434
 shell/.github/workflows/catalog-sync.yml
-72a5da260bfe4527796071d1371611a131ee0bfeaefc339155e100cec3883ca6
+f3e27d72dc2a25d59d3c186529c0da757a870002474e9bea2a24dd1f34b4bfea
 shell/.github/workflows/ci.yml
 41008be43ccb151fe653bc043032367fadb4a15a99b982aed35782f8ab38dbc3
 shell/.github/workflows/claude-review.yml
