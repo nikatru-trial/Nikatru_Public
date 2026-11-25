@@ -174,7 +174,7 @@ shell/.github/workflows/template-verifier-windows.yml
 shell/.github/workflows/time-travel.yml
 fafc7062b6feab6d7870b51ff63b9f1ac7c1585e8163341344520ec0fa2209bd
 shell/.github/workflows/translations-wave.yml
-3c5619d3107741226b17b5f367c9c35cd2f6232e25fed7b1c388e5edc06ce954
+294965f0ba7c3a81f1763bbdc6fdcb05893c5ce3a506ccd32a7aa56f56bbb1cd
 shell/.github/workflows/trufflehog.yml
 af5b34a22c41680cea87f804b0164340abb9fd7b5d23ed40dde2b93bc4b95f42
 shell/.github/workflows/update-goldens.yml

@@ -5,13 +5,17 @@ env:
 
 name: Translations wave
 
-run-name: "${{ (github.event.schedule || github.event.inputs.worker_slot) && '[slot] ' || '[hand] ' }}Translations wave${{ inputs.families && format(' · families {0}', inputs.families) || '' }}${{ inputs.max_units && inputs.max_units != '0' && format(' · max {0} units', inputs.max_units) || '' }}${{ inputs.accounts && format(' · accounts {0}', inputs.accounts) || '' }}${{ inputs.force && ' · forced' || '' }}${{ inputs.dry_run && ' · dry run' || '' }}"
+run-name: "${{ (github.event.schedule || github.event.inputs.worker_slot) && '[slot] ' || '[hand] ' }}Translations wave${{ inputs.families && format(' · families {0}', inputs.families) || '' }}${{ inputs.keys && format(' · keys {0}', inputs.keys) || '' }}${{ inputs.max_units && inputs.max_units != '0' && format(' · max {0} units', inputs.max_units) || '' }}${{ inputs.accounts && format(' · accounts {0}', inputs.accounts) || '' }}${{ inputs.force && ' · forced' || '' }}${{ inputs.dry_run && ' · dry run' || '' }}"
 
 on:
   workflow_dispatch:
     inputs:
       families:
         description: 'Families to plan (subscription.mjs groupOf: the script in lower case, e.g. "taml deva"). Empty = every family.'
+        required: false
+        default: ''
+      keys:
+        description: 'Plan ONLY these keys (comma/space list; a help article is its path id, e.g. platform/free-trial). Empty = every owed key.'
         required: false
         default: ''
       max_units:
@@ -151,6 +155,7 @@ jobs:
       fire: ${{ steps.plan.outputs.fire }}
       matrix: ${{ steps.plan.outputs.matrix }}
       dry_run: ${{ steps.plan.outputs.dry_run }}
+      keys: ${{ steps.plan.outputs.keys }}
     steps:
       - name: Check out the private tree (generated)
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
@@ -249,6 +254,7 @@ jobs:
         timeout-minutes: 3
         env:
           WAVE_FAMILIES: ${{ inputs.families }}
+          WAVE_KEYS: ${{ inputs.keys }}
           WAVE_MAX_UNITS: ${{ inputs.max_units }}
           WAVE_ACCOUNTS: ${{ inputs.accounts }}
           WAVE_FORCE: ${{ inputs.force }}
@@ -511,6 +517,7 @@ jobs:
       - name: Export this job's packets (no secret)
         timeout-minutes: 15
         env:
+          WAVE_KEYS: ${{ needs.plan.outputs.keys }}
           WAVE_LOCALES: ${{ matrix.locales }}
           WAVE_PART: ${{ matrix.part }}
           WAVE_PARTS: ${{ matrix.parts }}
@@ -518,7 +525,7 @@ jobs:
         run: |
           NIKATRU_QUIET="$(mktemp "${RUNNER_TEMP:-/tmp}/nikatru-step.XXXXXX")"
           cat > "$NIKATRU_QUIET" <<'NIKATRU_QUIET_EOF'
-          node tooling/i18n/translate.mjs --export "$RUNNER_TEMP/export" $(printf -- '--locale %s ' $WAVE_LOCALES)
+          node tooling/i18n/translate.mjs --export "$RUNNER_TEMP/export" $(printf -- '--locale %s ' $WAVE_LOCALES) --keys "$WAVE_KEYS"
           node tooling/i18n/wave/packets.mjs select --export "$RUNNER_TEMP/export" --out "$RUNNER_TEMP/wave" --locales "$WAVE_LOCALES" --part "$WAVE_PART" --parts "$WAVE_PARTS" --limit "$WAVE_LIMIT"
           NIKATRU_QUIET_EOF
           NIKATRU_SHELL="${BASH:-bash}"; if command -v cygpath >/dev/null 2>&1; then NIKATRU_SHELL="$(cygpath -w "$NIKATRU_SHELL")"; fi
