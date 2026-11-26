@@ -801,3 +801,24 @@ export async function fetchWithBoundedRetry(doFetch, { describe = (s) => s, ...o
     return res;
   }, opts);
 }
+
+// ─────────────────────────────────────────────────────────────────────────────
+// ⏱ 2026-11-26 · lane fixfirst-ops-watch-1126 (ops-watch run 45725571985, runner-budget step 4 exit 2:
+// "FAIL COVERAGE LOST — terminated"; review of #1725 finding 1). A reader that let `fetch()` or `res.json()`
+// throw raw inside `readWithBoundedRetry` was never re-asked: only a `transientLook` is, and a raw
+// `TypeError: fetch failed` (no answer) or `TypeError: terminated` (a body cut mid-answer) is not one. The same
+// hand-typed GitHub `get` sat in five readers. readResponseJson is the ONE place a body read classifies its wire, and
+// tooling/ops/github-get-json.mjs (githubGetJson) the one GitHub REST read built on it. B8 BODY in ops-bounded-retry.test.mjs
+// refuses a `.json()` inside a bounded read that does not come through it (or a try whose catch calls classifyThrown).
+// NOT `readJson`: tooling/kit/fs.mjs readJson reads a FILE (std-tooling-fs-helpers); this reads an HTTP Response body.
+// ─────────────────────────────────────────────────────────────────────────────
+
+/** The body of `res` as JSON. A body cut mid-answer (`TypeError: terminated`) is transient and re-asked. A clean
+ *  close mid-JSON is a SyntaxError, not a wire failure, so it stays FINAL (COULD NOT LOOK, never a pass): fail-safe by design. */
+export async function readResponseJson(res, message) {
+  try {
+    return await res.json();
+  } catch (e) {
+    throw classifyThrown(e, `${message} (${e?.name ?? 'error'}: ${e?.message ?? e})`);
+  }
+}
