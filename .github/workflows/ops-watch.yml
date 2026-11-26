@@ -6,7 +6,7 @@ env:
 
 name: Ops watch
 
-run-name: "[watch] Ops watch${{ inputs.failure_ledger && ' · failure ledger' || '' }}${{ inputs.renovate_backlog && ' · Renovate backlog' || '' }}${{ inputs.code_scanning_age && ' · code-scanning age' || '' }}${{ inputs.tech_currency && ' · tech currency' || '' }}${{ inputs.dependency_advisories && ' · dependency advisories' || '' }}${{ inputs.self_review && ' · self-review' || '' }}${{ inputs.unattended && ' · unattended' || '' }}${{ inputs.digest && ' · digest' || '' }}${{ inputs.prune_trains && ' · prune trains' || '' }}${{ inputs.drill_private_checkout_unreachable && ' · private-checkout drill' || '' }}${{ inputs.worker_slot && format(' [worker slot {0}]', inputs.worker_slot) || '' }}"
+run-name: "[watch] Ops watch${{ inputs.failure_ledger && ' · failure ledger' || '' }}${{ inputs.renovate_backlog && ' · Renovate backlog' || '' }}${{ inputs.code_scanning_age && ' · code-scanning age' || '' }}${{ inputs.tech_currency && ' · tech currency' || '' }}${{ inputs.dependency_advisories && ' · dependency advisories' || '' }}${{ inputs.self_review && ' · self-review' || '' }}${{ inputs.unattended && ' · unattended' || '' }}${{ inputs.digest && ' · digest' || '' }}${{ inputs.prune_trains && ' · prune trains' || '' }}${{ inputs.drill_private_checkout_unreachable && ' · private-checkout drill' || '' }}${{ inputs.drill_bridge_hiccup && ' · bridge hiccup drill' || '' }}${{ inputs.worker_slot && format(' [worker slot {0}]', inputs.worker_slot) || '' }}"
 
 on:
   workflow_dispatch:
@@ -54,6 +54,10 @@ on:
         default: false
       drill_private_checkout_unreachable:
         description: 'A drill (the lead only): the private checkout fails on purpose, every pinned job fails behind it, and the alert must still file and page green without it. Off on every other run.'
+        type: boolean
+        default: false
+      drill_bridge_hiccup:
+        description: 'A drill (the lead only): the bridge fails its issuer-key and billing reads on purpose; runner-budget must read AMBER and stay green, and the last-good page must file. Off on every other run.'
         type: boolean
         default: false
       red_drill:
@@ -1898,6 +1902,7 @@ jobs:
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
           GITHUB_REPOSITORY: ${{ github.repository }}
+          RUNNER_BUDGET_DRILL_HICCUP: ${{ inputs.drill_bridge_hiccup && 'true' || '' }}
           BRIDGE_READ_SECRET: ${{ (github.event.client_payload.event || github.event_name) != 'pull_request' && secrets.BRIDGE_READ_SECRET || '' }}
           BRIDGE_OPS_SECRET: ${{ (github.event.client_payload.event || github.event_name) != 'pull_request' && secrets.BRIDGE_OPS_SECRET || '' }}
           NIKATRU_BRIDGE_OPS_URL: ${{ (github.event.client_payload.event || github.event_name) != 'pull_request' && 'https://gh-bridge.nikatru.workers.dev/ops' || '' }}
@@ -2991,15 +2996,16 @@ jobs:
         timeout-minutes: 3
         env:
           PADDLE_API_KEY_READ: ${{ secrets.PADDLE_API_KEY_READ }}
+          MONEY_OPS_SECRET: ${{ secrets.MONEY_OPS_SECRET }}
         run: |
           NIKATRU_QUIET="$(mktemp "${RUNNER_TEMP:-/tmp}/nikatru-step.XXXXXX")"
           cat > "$NIKATRU_QUIET" <<'NIKATRU_QUIET_EOF'
           set +e
-          node tooling/ops/live-rail-config.mjs --rails paddle --while-paywall-off
+          node tooling/ops/live-rail-config.mjs --rails paddle,razorpay-worker --while-paywall-off
           code=$?
           set -e
           if [ "$code" -eq 2 ]; then
-            echo "::error title=Live rail config is UNKNOWN - it was not read back::A served paywall is ON and a live rail check could not run (PADDLE_API_KEY_READ unset or refused, or the register names no price id). NOTHING is known about what that rail charges or where it sends events, and that is never a pass. The log names each one."
+            echo "::error title=Live rail config is UNKNOWN - it was not read back::A served paywall is ON and a live rail check could not run (PADDLE_API_KEY_READ or MONEY_OPS_SECRET unset or refused, the production Worker could not read a Razorpay plan, or the register names no price id). NOTHING is known about what that rail charges or where it sends events, and that is never a pass. The log names each one."
           elif [ "$code" -eq 1 ]; then
             echo "::error title=A live rail differs from what the repo says::A live key was refused, a served price differs from services/platform/src/app-config-data.json or is missing at the rail, or the Paddle webhook destination is not the production Worker, inactive or missing an event. The log names the rail and the field: fix the register or the rail the same hour."
           fi
@@ -4347,7 +4353,7 @@ jobs:
   alert:
     name: Open or refresh the ops-watch issue
     needs: [heartbeats, status, supabase-drift, prod-provenance, pages-deployments, worker-source-drift, runner-budget, shell-barriers, store-vitals-state, store-vitals, glitchtip, money-reconcile-marker, config-drift, edge-shield, failure-ledger, renovate-backlog, code-scanning-age, tech-currency, self-review]
-    if: failure() && (((github.event.client_payload.event || github.event_name) == 'schedule' || inputs.worker_slot != '') || ((github.event.client_payload.event || github.event_name) == 'workflow_dispatch' && inputs.unattended) || ((github.event.client_payload.event || github.event_name) == 'workflow_dispatch' && inputs.drill_private_checkout_unreachable)) || contains(needs.*.result, 'cancelled') && (((github.event.client_payload.event || github.event_name) == 'schedule' || inputs.worker_slot != '') || ((github.event.client_payload.event || github.event_name) == 'workflow_dispatch' && inputs.unattended) || ((github.event.client_payload.event || github.event_name) == 'workflow_dispatch' && inputs.drill_private_checkout_unreachable))
+    if: failure() && (((github.event.client_payload.event || github.event_name) == 'schedule' || inputs.worker_slot != '') || ((github.event.client_payload.event || github.event_name) == 'workflow_dispatch' && inputs.unattended) || ((github.event.client_payload.event || github.event_name) == 'workflow_dispatch' && inputs.drill_private_checkout_unreachable) || ((github.event.client_payload.event || github.event_name) == 'workflow_dispatch' && inputs.drill_bridge_hiccup)) || contains(needs.*.result, 'cancelled') && (((github.event.client_payload.event || github.event_name) == 'schedule' || inputs.worker_slot != '') || ((github.event.client_payload.event || github.event_name) == 'workflow_dispatch' && inputs.unattended) || ((github.event.client_payload.event || github.event_name) == 'workflow_dispatch' && inputs.drill_private_checkout_unreachable) || ((github.event.client_payload.event || github.event_name) == 'workflow_dispatch' && inputs.drill_bridge_hiccup))
     runs-on: ubuntu-24.04
     timeout-minutes: 5
     permissions:

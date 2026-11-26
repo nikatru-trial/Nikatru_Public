@@ -5,7 +5,7 @@ env:
 
 name: Money sandbox E2E
 
-run-name: "${{ !(inputs.private_pr) && ((github.event.schedule || github.event.inputs.worker_slot) && '[slot] ' || '[hand] ') || !(inputs.private_ref) && '[pr] ' || startsWith(inputs.private_ref, 'refs/heads/rehearsal/') && '[rehearsal] ' || startsWith(inputs.private_ref, 'refs/heads/club/') && '[club] ' || startsWith(inputs.private_ref, 'refs/heads/train/') && '[club] ' || startsWith(inputs.private_ref, 'refs/heads/integ/') && '[club] ' || startsWith(inputs.private_ref, 'refs/heads/land/club-') && '[club] ' || startsWith(inputs.private_ref, 'refs/heads/renovate/') && '[bot] ' || startsWith(inputs.private_ref, 'refs/heads/dependabot/') && '[bot] ' || '[single] ' }}Money sandbox E2E${{ inputs.rail && format(' · rail {0}', inputs.rail) || '' }}${{ inputs.gate_mode && format(' · gate {0}', inputs.gate_mode) || '' }}${{ inputs.resume_of && format(' · resume of {0}', inputs.resume_of) || '' }}${{ inputs.fault_inject && format(' · planted fault {0}', inputs.fault_inject) || '' }}${{ inputs.worker_slot && format(' [worker slot {0}]', inputs.worker_slot) || '' }}${{ inputs.private_pr && format(' — branch proof {0} (PR #{1})', inputs.private_ref, inputs.private_pr) || '' }}"
+run-name: "${{ !(inputs.private_pr) && ((github.event.schedule || github.event.inputs.worker_slot) && '[slot] ' || '[hand] ') || !(inputs.private_ref) && '[pr] ' || startsWith(inputs.private_ref, 'refs/heads/rehearsal/') && '[rehearsal] ' || startsWith(inputs.private_ref, 'refs/heads/club/') && '[club] ' || startsWith(inputs.private_ref, 'refs/heads/train/') && '[club] ' || startsWith(inputs.private_ref, 'refs/heads/integ/') && '[club] ' || startsWith(inputs.private_ref, 'refs/heads/land/club-') && '[club] ' || startsWith(inputs.private_ref, 'refs/heads/renovate/') && '[bot] ' || startsWith(inputs.private_ref, 'refs/heads/dependabot/') && '[bot] ' || '[single] ' }}Money sandbox E2E${{ inputs.rail && format(' · rail {0}', inputs.rail) || '' }}${{ inputs.gate_mode && format(' · gate {0}', inputs.gate_mode) || '' }}${{ inputs.resume_of && format(' · resume of {0}', inputs.resume_of) || '' }}${{ inputs.fault_inject && format(' · planted fault {0}', inputs.fault_inject) || '' }}${{ inputs.units && format(' · units {0}', inputs.units) || '' }}${{ inputs.worker_slot && format(' [worker slot {0}]', inputs.worker_slot) || '' }}${{ inputs.private_pr && format(' — branch proof {0} (PR #{1})', inputs.private_ref, inputs.private_pr) || '' }}"
 
 on:
   workflow_dispatch:
@@ -44,6 +44,11 @@ on:
         type: string
       fault_inject:
         description: "A branch proof only: '<leg id>:external|assert' plants a fault on that leg's first attempt (the leg retry's live proof); '<leg id>:cancel-provider-error' plants ONE provider error on its sandbox cancel (the executor-retry proof). Empty on main."
+        required: false
+        default: ''
+        type: string
+      units:
+        description: "A branch proof only: a comma list of proof units to walk (the names: tooling/ci/money-walk-plan.mjs unitTokens, from the leg register; an unknown one is refused and the list printed); the rest are skipped, each with a notice. Empty walks every unit."
         required: false
         default: ''
         type: string
@@ -586,6 +591,8 @@ jobs:
         env:
           PRIVATE_PR: ${{ inputs.private_pr }}
           GATE: ${{ vars.MONEY_WALK_SLOTS }}
+          WORKER_SLOT: ${{ inputs.worker_slot }}
+          GATE_MODE: ${{ inputs.gate_mode }}
         run: |
           NIKATRU_QUIET="$(mktemp "${RUNNER_TEMP:-/tmp}/nikatru-step.XXXXXX")"
           cat > "$NIKATRU_QUIET" <<'NIKATRU_QUIET_EOF'
@@ -594,7 +601,7 @@ jobs:
             echo "::warning::BOOTSTRAP: main's checkout has no tooling/ci/sandbox-walk-version.mjs yet, so this run walks serially (platform-sandbox, the deploy-sandbox group): today's path until main carries the planner"
             printf 'mode=serial\nwalk slots: bootstrap, serial\n' > "$RUNNER_TEMP/walk-slot.out"
           else
-            node tooling/ci/sandbox-walk-version.mjs --slot-plan --pr "$PRIVATE_PR" --run-id "$GITHUB_RUN_ID" --attempt "$GITHUB_RUN_ATTEMPT" --gate "$GATE" --main . > "$RUNNER_TEMP/walk-slot.out"
+            node tooling/ci/sandbox-walk-version.mjs --slot-plan --pr "$PRIVATE_PR" --run-id "$GITHUB_RUN_ID" --attempt "$GITHUB_RUN_ATTEMPT" --gate "$GATE" --worker-slot "$WORKER_SLOT" --gate-mode "$GATE_MODE" --main . > "$RUNNER_TEMP/walk-slot.out"
           fi
           cat "$RUNNER_TEMP/walk-slot.out"
           grep -E '^(mode|slot|stamp|platform_origin)=' "$RUNNER_TEMP/walk-slot.out" >> "$GITHUB_OUTPUT"
@@ -960,6 +967,7 @@ jobs:
       ref: ${{ needs.gate.outputs.sha }}
       resume: ${{ needs.resume.outputs.resume }}
       fault_inject: ${{ inputs.fault_inject }}
+      units: ${{ inputs.units }}
       gate_attempt: ${{ needs.gate.outputs.attempt }}
       walk_origin: ${{ needs.deploy.outputs.walk_origin }}
       evidence: ${{ (github.event.client_payload.ref || inputs.private_ref || 'refs/heads/main') == 'refs/heads/main' && 'true' || 'false' }}
@@ -972,6 +980,7 @@ jobs:
       SUPABASE_ANON_KEY: ${{ secrets.SUPABASE_ANON_KEY }}
       SUPABASE_SERVICE_ROLE_KEY: ${{ secrets.SUPABASE_SERVICE_ROLE_KEY }}
       SANDBOX_ADMIN_ROUTE_SECRET: ${{ secrets.SANDBOX_ADMIN_ROUTE_SECRET }}
+      MONEY_OPS_SECRET_SANDBOX: ${{ secrets.MONEY_OPS_SECRET_SANDBOX }}
       TEST_ACCOUNT_EMAIL: ${{ secrets.TEST_ACCOUNT_EMAIL }}
       TEST_ACCOUNT_EMAIL_RAZORPAY: ${{ secrets.TEST_ACCOUNT_EMAIL_RAZORPAY }}
       PADDLE_SANDBOX_API_KEY: ${{ secrets.PADDLE_SANDBOX_API_KEY }}

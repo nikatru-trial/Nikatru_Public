@@ -2228,6 +2228,7 @@ jobs:
           py=python3; python3 -c '' >/dev/null 2>&1 || py=python
           "$py" -I "$GITHUB_WORKSPACE/../.nikatru-shell/report.py" derive
       - name: Check out private main's composite actions (generated)
+        if: needs.journey-plan.outputs.walk == 'true'
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
         with:
           repository: ${{ env.NIKATRU_PRIVATE_REPO }}
@@ -2238,6 +2239,7 @@ jobs:
           persist-credentials: false
       - name: Keep private main's composite actions out of the branch's tree (generated)
         id: nikatru-trusted-tree
+        if: needs.journey-plan.outputs.walk == 'true'
         shell: bash
         working-directory: ${{ github.workspace }}
         run: |

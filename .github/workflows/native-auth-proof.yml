@@ -290,6 +290,7 @@ jobs:
           mv .nikatru-shell/.github/nikatru ../.nikatru-shell
           rm -rf .nikatru-shell
       - name: Check out private main's composite actions (generated)
+        if: ${{ (github.event.client_payload.ref || inputs.private_ref || 'refs/heads/main') != 'refs/heads/main' || inputs.private_pr != '' }}
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
         with:
           repository: ${{ env.NIKATRU_PRIVATE_REPO }}
@@ -300,6 +301,7 @@ jobs:
           persist-credentials: false
       - name: Keep private main's composite actions out of the branch's tree (generated)
         id: nikatru-trusted-tree
+        if: ${{ (github.event.client_payload.ref || inputs.private_ref || 'refs/heads/main') != 'refs/heads/main' || inputs.private_pr != '' }}
         shell: bash
         working-directory: ${{ github.workspace }}
         run: |

@@ -1293,6 +1293,7 @@ jobs:
           py=python3; python3 -c '' >/dev/null 2>&1 || py=python
           "$py" -I "$GITHUB_WORKSPACE/../.nikatru-shell/report.py" derive
       - name: Check out private main's composite actions (generated)
+        if: needs.money-plan.outputs.money == 'true'
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
         with:
           repository: ${{ env.NIKATRU_PRIVATE_REPO }}
@@ -1303,6 +1304,7 @@ jobs:
           persist-credentials: false
       - name: Keep private main's composite actions out of the branch's tree (generated)
         id: nikatru-trusted-tree
+        if: needs.money-plan.outputs.money == 'true'
         shell: bash
         working-directory: ${{ github.workspace }}
         run: |
@@ -1494,6 +1496,7 @@ jobs:
           py=python3; python3 -c '' >/dev/null 2>&1 || py=python
           "$py" -I "$GITHUB_WORKSPACE/../.nikatru-shell/report.py" derive
       - name: Check out private main's composite actions (generated)
+        if: needs.money-plan.outputs.money == 'true'
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
         with:
           repository: ${{ env.NIKATRU_PRIVATE_REPO }}
@@ -1504,6 +1507,7 @@ jobs:
           persist-credentials: false
       - name: Keep private main's composite actions out of the branch's tree (generated)
         id: nikatru-trusted-tree
+        if: needs.money-plan.outputs.money == 'true'
         shell: bash
         working-directory: ${{ github.workspace }}
         run: |
@@ -1618,6 +1622,7 @@ jobs:
       SUPABASE_ANON_KEY: ${{ secrets.SUPABASE_ANON_KEY }}
       SUPABASE_SERVICE_ROLE_KEY: ${{ secrets.SUPABASE_SERVICE_ROLE_KEY }}
       SANDBOX_ADMIN_ROUTE_SECRET: ${{ secrets.SANDBOX_ADMIN_ROUTE_SECRET }}
+      MONEY_OPS_SECRET_SANDBOX: ${{ secrets.MONEY_OPS_SECRET_SANDBOX }}
       TEST_ACCOUNT_EMAIL: ${{ secrets.TEST_ACCOUNT_EMAIL }}
       TEST_ACCOUNT_EMAIL_RAZORPAY: ${{ secrets.TEST_ACCOUNT_EMAIL_RAZORPAY }}
       PADDLE_SANDBOX_API_KEY: ${{ secrets.PADDLE_SANDBOX_API_KEY }}
