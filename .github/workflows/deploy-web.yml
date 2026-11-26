@@ -2,7 +2,7 @@
 # Do not edit: `node tooling/ci/gen-public-shell.mjs --check` re-generates it and fails on any difference.
 env:
   NIKATRU_PRIVATE_REPO: com-nikatru/Nikatru_Private
-  NIKATRU_SHELL_FINGERPRINT: 070e4c372098eb15b055b79840d8253d232b45443aa6bb62b7b6efb506423148
+  NIKATRU_SHELL_FINGERPRINT: 8c3a17929409fede259b9a1095d848f7b063e2f211134c6cc16fa2d121435020
 
 name: Part of CI · Deploy web
 
@@ -719,6 +719,14 @@ jobs:
           PAGES_DEPLOYMENT_ID: ${{ steps.deploy.outputs.pages-deployment-id }}
           SITE_ORIGIN: ${{ steps.target.outputs.origin }}
         run: node tooling/ci/record-deployment.mjs nikatru-site "$SITE_ORIGIN" --pages-deployment-id "$PAGES_DEPLOYMENT_ID" --recipe deploy-web.yml --smoke-outcome "${{ steps.smoke.outcome }}"
+      - name: Read back the bindings the project now carries
+        if: always() && steps.deploy.outcome == 'success'
+        timeout-minutes: 3
+        env:
+          CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
+          CLOUDFLARE_ACCOUNT_ID: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
+          PROJECT: ${{ steps.target.outputs.project }}
+        run: node tooling/ci/assert-site-bindings.mjs --live-readback --config build/nikatru-apex/wrangler.jsonc --project "$PROJECT"
       - name: Announce the changed pages to IndexNow
         if: steps.smoke.outcome == 'success'
         timeout-minutes: 5

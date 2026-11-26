@@ -339,6 +339,66 @@ function parsePlaywright(lines) {
   return count.length || failures.length ? { failures, failed: Math.max(failed, failures.length), counts: count.length ? `playwright: ${count.join(', ')}` : null } : null;
 }
 
+// ⏱ 02d45c59 · bl-cix3-1-aw202611250125 (row O-E2E-REPORT-JOB-FAILS-ON-RED-LEG-1120). `flutter drive` with the
+// integration_test driver prints ONE line, `result {"result":"false","failureDetails":["{\"methodName\":…,
+// \"details\":…}"]}`: each failure is a JSON string inside the JSON, its assertion escaped. No reader read it and no
+// FINDING pattern matches it, so e2e.yml run 44693886744's red leg reached the private home as `(last line)
+// Application finished.` while `Expected: not <200>` and `flow_steps.dart 1363:3` sat unread in the cut tail.
+/** The driver's line, after an optional `<package>: ` prefix: only its fixed head is matched, the JSON is parsed. */
+const DRIVE_RESULT_HEAD = /^(?:[\w.-]+: )?result \{/;
+/** A stack frame `<file>.dart <line>:<col>` (the web and VM formats), the first of the test's own code. */
+const DRIVE_FRAME = /^(\S+\.dart) (\d+):\d+(?:\s|$)/;
+const DRIVE_FRAMEWORK = /^(?:dart-sdk\/|dart:|package:(?:matcher|flutter_test|test_api|test|flutter|integration_test|stack_trace|async)\/)/;
+
+/** One `failureDetails` entry: its test's name, the first frame of the test's own code, the thrown text. */
+function driveFailure(entry) {
+  let d = entry;
+  if (typeof entry === 'string') {
+    try {
+      d = JSON.parse(entry);
+    } catch {
+      return { name: '(an integration test whose failure is not JSON)', file: '', lines: firstLines(entry.split('\n'), 0, () => false) };
+    }
+  }
+  const name = typeof d?.methodName === 'string' && d.methodName ? d.methodName : '(an integration test with no name)';
+  const text = String(d?.details ?? '').split('\n');
+  const thrown = text.findIndex((l) => /^The following .* was thrown\b/.test(l));
+  const lines = firstLines(text, thrown + 1, (x) => /^When the exception was thrown|^═/.test(x));
+  let file = '';
+  for (const l of text) {
+    const m = DRIVE_FRAME.exec(l.trim());
+    if (m && !DRIVE_FRAMEWORK.test(m[1])) {
+      file = `${m[1]}:${m[2]}`;
+      break;
+    }
+  }
+  return { name, file, lines };
+}
+
+/** `flutter drive` + integration_test: the driver's `result {…}` line(s), each failure from its failureDetails. */
+function parseFlutterDrive(lines) {
+  const failures = [];
+  let runs = 0;
+  let red = 0;
+  for (const l of lines) {
+    const head = DRIVE_RESULT_HEAD.exec(l);
+    if (!head) continue;
+    let r;
+    try {
+      r = JSON.parse(l.slice(head[0].length - 1));
+    } catch {
+      continue;
+    }
+    if (!r || typeof r !== 'object' || !('result' in r)) continue;
+    runs += 1;
+    if (r.result === true || r.result === 'true') continue;
+    red += 1;
+    for (const f of Array.isArray(r.failureDetails) ? r.failureDetails : []) failures.push(driveFailure(f));
+  }
+  if (runs === 0) return null;
+  return { failures, failed: Math.max(red, failures.length), counts: `flutter drive (integration_test): ${runs - red} passed, ${red} failed run(s)${failures.length ? `, ${failures.length} failing test(s)` : ''}` };
+}
+
 /**
  * The failing tests and counts in a red step's output and its machine-readable result files: a JSON result
  * wins over its text, and a test named by two readers is named once. Null when the output holds no test results.
@@ -351,7 +411,7 @@ export function testFailures(captured, resultFiles = []) {
     if (got) found.push({ ...got, counts: `flutter test (${r.name}): ${got.counts}` });
   }
   // The text is read too: a step can run more than one runner, and a result file is written only by the legs that ask.
-  const fromText = [parseDartText, parseDartGithub, parseNodeTap, parseNodeSpec, parseVitest, parsePlaywright].map((p) => p(lines)).filter(Boolean);
+  const fromText = [parseDartText, parseDartGithub, parseNodeTap, parseNodeSpec, parseVitest, parsePlaywright, parseFlutterDrive].map((p) => p(lines)).filter(Boolean);
   if (found.length === 0) found.push(...fromText);
   else {
     // ⏱ 2026-10-12 · review of #447, finding 4: a package that died before its reporter wrote JSON (a compile

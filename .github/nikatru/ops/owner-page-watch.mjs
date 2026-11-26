@@ -39,7 +39,7 @@ import { dirname, join, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { parseArgs } from 'node:util';
 import { judge, liveAnswer, validateProbes } from './live-probe.mjs';
-import { nap } from './bounded-retry.mjs';
+import { isTransportFailure, nap, neverSent, sendWithBoundedRetry } from './bounded-retry.mjs';
 
 const HERE = dirname(fileURLToPath(import.meta.url));
 export const PROBES_FILE = join(HERE, 'live-probes.json');
@@ -99,22 +99,72 @@ export function composePage(down, at) {
 /** PURE. Whether an answer came through Cloudflare. */
 export const viaCloudflare = (headers) => Boolean(headers && (headers['cf-ray'] || /cloudflare/i.test(headers.server ?? '')));
 
-/** The default sender: POST the page, `{ ok, status, headers }` (headers lower-cased; never throws). */
-export async function sendPush(url, token, title, text, fetchImpl = globalThis.fetch) {
+/**
+ * ⏱ 4d92e5b6 · O-STD-OWNER-PUSH-ONE-SENDER(-CODEMOD): THE ONE SENDER of a CI-side owner page over OWNER_PAGE_PUSH_URL.
+ * The hourly watch, kill-switch-dispatch.mjs, org-move.mjs --duty --page and ops-issue.mjs --page-alert all page through
+ * it (it was ops-issue.mjs sendPushBounded, moved here; the one-shot sendPush it replaces is gone). The POST runs under
+ * the shared send plan (bounded-retry.mjs sendWithBoundedRetry): re-sent only when it provably never left the runner,
+ * so one dropped connection does not lose the page and no page is sent twice. `{ ok, status, headers, id? }` (headers
+ * lower-cased; `id` the delivery id of a delivered page), never throws. tooling/ci/test/ops-bounded-retry.test.mjs
+ * refuses a new one-shot or a per-file copy (B8c, ONE PAGE SENDER).
+ * ⏱ 90bac3b0 · review minor 10: a failed send carries the error's MESSAGE (the URL and the token cut out, never
+ * printed), and `mayHaveBeenDelivered: true` when an attempt may have reached the push service: one that hung to the
+ * ceiling or failed on the wire after the connect (the send plan re-sends only a never-sent connect error). Such a
+ * page is NOT "refused / NOT paged" — the owner may well have it — and the error text says so.
+ */
+export async function sendPage(url, token, title, text, fetchImpl = globalThis.fetch, opts = {}) {
+  const headers = { 'content-type': 'text/plain; charset=utf-8', title, priority: 'urgent', tags: 'rotating_light' };
+  if (token) headers.authorization = `Bearer ${token}`;
+  // Did any attempt get past the connect? An attempt still pending (the ceiling ended it) or one that failed on the
+  // wire without being provably unsent may have delivered the page.
+  let reachable = false;
+  let pending = 0;
+  const attempt = async (signal) => {
+    pending += 1;
+    try {
+      return await fetchImpl(url, { method: 'POST', body: text, headers, signal });
+    } catch (e) {
+      if (!neverSent(e) && isTransportFailure(e)) reachable = true;
+      throw e;
+    } finally {
+      pending -= 1;
+    }
+  };
   try {
-    const headers = { 'content-type': 'text/plain; charset=utf-8', title, priority: 'urgent', tags: 'rotating_light' };
-    if (token) headers.authorization = `Bearer ${token}`;
-    const res = await fetchImpl(url, { method: 'POST', body: text, headers, signal: AbortSignal.timeout(SEND_TIMEOUT_MS) });
-    return { ok: res.ok, status: res.status, headers: Object.fromEntries([...res.headers].map(([k, v]) => [k.toLowerCase(), v])) };
+    const res = await sendWithBoundedRetry(({ signal }) => attempt(signal), { timeoutMs: SEND_TIMEOUT_MS, slowPath: () => {}, ...opts });
+    const out = { ok: res.ok, status: res.status, headers: Object.fromEntries([...res.headers].map(([k, v]) => [k.toLowerCase(), v])) };
+    if (res.ok) out.id = await deliveryId(res);
+    return out;
   } catch (e) {
-    return { ok: false, status: 0, headers: {}, error: e?.name ?? 'fetch failed' };
+    const may = reachable || pending > 0;
+    const redact = (v) => [url, token].filter(Boolean).reduce((acc, secret) => acc.split(secret).join('<redacted>'), String(v));
+    const why = redact(e?.message ? `${e.name ?? 'Error'}: ${e.message}` : e?.name ?? 'send failed');
+    return { ok: false, status: 0, headers: {}, error: may ? `the page MAY HAVE BEEN DELIVERED (not sent again): ${why}` : why, mayHaveBeenDelivered: may };
   }
 }
 
-/** The default heartbeat: GET the monitor's URL, `{ ok, status }`. */
-export async function beat(url, fetchImpl = globalThis.fetch) {
+/**
+ * ⏱ 4d92e5b6 · O-R52-OPS-001 (lead ruling 10:06:28Z, limb B): the delivery id ntfy gives a published message (its
+ * JSON answer's `id`), so an unattended page leaves a record the lead can quote (alarm-chains.json chainsObserved).
+ * Only a plain token ([A-Za-z0-9_-], at most 64) is taken: anything else — no body, not JSON, no id, a value that
+ * could carry a `::` workflow command or a newline — is null, and the page is still delivered. Never throws.
+ * (Moved with sendPage from ops-issue.mjs at ef32360b.)
+ */
+export async function deliveryId(res) {
   try {
-    const res = await fetchImpl(url, { method: 'GET', signal: AbortSignal.timeout(SEND_TIMEOUT_MS) });
+    const id = JSON.parse(await res.text())?.id;
+    const v = typeof id === 'number' ? String(id) : id;
+    return typeof v === 'string' && /^[A-Za-z0-9_-]{1,64}$/.test(v) ? v : null;
+  } catch {
+    return null;
+  }
+}
+
+/** The default heartbeat: GET the monitor's URL, `{ ok, status }`, never throws. Under the same send plan as the page
+ *  (one ceiling, SEND_TIMEOUT_MS: B8 refuses a second timer in an importer of the plan). */
+export async function beat(url, fetchImpl = globalThis.fetch, opts = {}) {
+  try {
+    const res = await sendWithBoundedRetry(({ signal }) => fetchImpl(url, { method: 'GET', signal }), { timeoutMs: SEND_TIMEOUT_MS, slowPath: () => {}, ...opts });
     return { ok: res.ok, status: res.status };
   } catch (e) {
     return { ok: false, status: 0, error: e?.name ?? 'fetch failed' };
@@ -131,7 +181,7 @@ export async function main(argv = process.argv.slice(2), deps = {}) {
   const {
     env = process.env,
     answer = liveAnswer,
-    send = sendPush,
+    send = sendPage,
     beat: beatImpl = beat,
     now = () => new Date(),
     log = (line) => process.stdout.write(`${line}\n`),
@@ -211,9 +261,12 @@ export async function main(argv = process.argv.slice(2), deps = {}) {
   const sent = await send(ch.push, ch.pushToken, `NIKATRU DOWN: ${down.map((d) => d.id).join(', ')}`.slice(0, 120), text);
   if (!sent.ok) {
     if (ch.heartbeat !== null) {
-      log(`WARNING: the push was refused (HTTP ${sent.status}${sent.error ? `, ${sent.error}` : ''}); the withheld heartbeat still pages.`);
+      log(sent.mayHaveBeenDelivered
+        ? `WARNING: the push may have been delivered, its answer was lost (${sent.error}); the withheld heartbeat still pages.`
+        : `WARNING: the push was refused (HTTP ${sent.status}${sent.error ? `, ${sent.error}` : ''}); the withheld heartbeat still pages.`);
       return { code: 2, down, paged: true, beaten: false };
     }
+    if (sent.mayHaveBeenDelivered) return lost(`the page may have been delivered but its answer was lost (${sent.error}), so delivery is unconfirmed, and no heartbeat is configured`, { down });
     return lost(`the page could not be delivered (HTTP ${sent.status}${sent.error ? `, ${sent.error}` : ''}) and no heartbeat is configured`, { down });
   }
   if (viaCloudflare(sent.headers)) {

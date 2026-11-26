@@ -1791,7 +1791,7 @@ jobs:
     runs-on: ubuntu-24.04
     outputs:
       last_good: ${{ steps.budget.outputs.last_good }}
-    timeout-minutes: 10
+    timeout-minutes: 38
     permissions:
       contents: read
       actions: write
@@ -1916,9 +1916,10 @@ jobs:
           exit "$code"
           NIKATRU_QUIET_EOF
           NIKATRU_SHELL="${BASH:-bash}"; if command -v cygpath >/dev/null 2>&1; then NIKATRU_SHELL="$(cygpath -w "$NIKATRU_SHELL")"; fi
-          node "$GITHUB_WORKSPACE/../.nikatru-shell/quiet-step.mjs" --name ops-watch.runner-budget.3 -- "$NIKATRU_SHELL" -e "$NIKATRU_QUIET"
+          node "$GITHUB_WORKSPACE/../.nikatru-shell/quiet-step.mjs" --name ops-watch.runner-budget.3 --public -- "$NIKATRU_SHELL" -e "$NIKATRU_QUIET"
       - name: Every pull-request lane's recent p95 wall time stays inside its measured budget
         if: ${{ !cancelled() }}
+        timeout-minutes: 12
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: |
@@ -1949,7 +1950,7 @@ jobs:
           NIKATRU_SHELL="${BASH:-bash}"; if command -v cygpath >/dev/null 2>&1; then NIKATRU_SHELL="$(cygpath -w "$NIKATRU_SHELL")"; fi
           node "$GITHUB_WORKSPACE/../.nikatru-shell/quiet-step.mjs" --name ops-watch.runner-budget.5 -- "$NIKATRU_SHELL" -e "$NIKATRU_QUIET"
       - name: Sweep the superseded Actions cache generations before the line is read
-        if: ${{ !cancelled() && ((env.NIKATRU_REF || (github.event.client_payload.ref || 'refs/heads/main')) == 'refs/heads/main' && contains(fromJSON('["push","schedule","workflow_dispatch"]'), env.NIKATRU_EVENT_NAME || (github.event.client_payload.event || github.event_name)) && !env.NIKATRU_PR) }}
+        if: ${{ !cancelled() && (((github.event.client_payload.ref || 'refs/heads/main')) == 'refs/heads/main' && contains(fromJSON('["push","schedule","workflow_dispatch"]'), (github.event.client_payload.event || github.event_name)) && !github.event.client_payload.pr) }}
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: |
@@ -1969,7 +1970,7 @@ jobs:
           NIKATRU_SHELL="${BASH:-bash}"; if command -v cygpath >/dev/null 2>&1; then NIKATRU_SHELL="$(cygpath -w "$NIKATRU_SHELL")"; fi
           node "$GITHUB_WORKSPACE/../.nikatru-shell/quiet-step.mjs" --name ops-watch.runner-budget.6 -- "$NIKATRU_SHELL" -e "$NIKATRU_QUIET"
       - name: Sweep the merged wip/* safety branches of the code repository
-        if: ${{ !cancelled() && inputs.worker_slot != '' && ((env.NIKATRU_REF || (github.event.client_payload.ref || 'refs/heads/main')) == 'refs/heads/main' && contains(fromJSON('["push","schedule","workflow_dispatch"]'), env.NIKATRU_EVENT_NAME || (github.event.client_payload.event || github.event_name)) && !env.NIKATRU_PR) }}
+        if: ${{ !cancelled() && inputs.worker_slot != '' && (((github.event.client_payload.ref || 'refs/heads/main')) == 'refs/heads/main' && contains(fromJSON('["push","schedule","workflow_dispatch"]'), (github.event.client_payload.event || github.event_name)) && !github.event.client_payload.pr) }}
         timeout-minutes: 4
         env:
           BRIDGE_READ_SECRET: ${{ (github.event.client_payload.event || github.event_name) != 'pull_request' && secrets.BRIDGE_READ_SECRET || '' }}
@@ -1990,7 +1991,7 @@ jobs:
           NIKATRU_SHELL="${BASH:-bash}"; if command -v cygpath >/dev/null 2>&1; then NIKATRU_SHELL="$(cygpath -w "$NIKATRU_SHELL")"; fi
           node "$GITHUB_WORKSPACE/../.nikatru-shell/quiet-step.mjs" --name ops-watch.runner-budget.7 -- "$NIKATRU_SHELL" -e "$NIKATRU_QUIET"
       - name: List the merged train/* branches of the code repository (a Worker slot prunes those merged over 2 days)
-        if: ${{ !cancelled() && (inputs.worker_slot != '' || inputs.prune_trains) && ((env.NIKATRU_REF || (github.event.client_payload.ref || 'refs/heads/main')) == 'refs/heads/main' && contains(fromJSON('["push","schedule","workflow_dispatch"]'), env.NIKATRU_EVENT_NAME || (github.event.client_payload.event || github.event_name)) && !env.NIKATRU_PR) }}
+        if: ${{ !cancelled() && (inputs.worker_slot != '' || inputs.prune_trains) && (((github.event.client_payload.ref || 'refs/heads/main')) == 'refs/heads/main' && contains(fromJSON('["push","schedule","workflow_dispatch"]'), (github.event.client_payload.event || github.event_name)) && !github.event.client_payload.pr) }}
         timeout-minutes: 4
         env:
           PRUNE: ${{ inputs.prune_trains && '--prune' || inputs.worker_slot != '' && '--prune-merged' || '' }}
@@ -3130,6 +3131,27 @@ jobs:
           NIKATRU_QUIET_EOF
           NIKATRU_SHELL="${BASH:-bash}"; if command -v cygpath >/dev/null 2>&1; then NIKATRU_SHELL="$(cygpath -w "$NIKATRU_SHELL")"; fi
           node "$GITHUB_WORKSPACE/../.nikatru-shell/quiet-step.mjs" --name ops-watch.config-drift.17 -- "$NIKATRU_SHELL" -e "$NIKATRU_QUIET"
+      - name: Clients rarely get a 5xx from the platform's /v1 routes, hour by hour
+        if: ${{ !cancelled() }}
+        timeout-minutes: 5
+        env:
+          CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_READ_TOKEN }}
+        run: |
+          NIKATRU_QUIET="$(mktemp "${RUNNER_TEMP:-/tmp}/nikatru-step.XXXXXX")"
+          cat > "$NIKATRU_QUIET" <<'NIKATRU_QUIET_EOF'
+          set +e
+          node tooling/ops/check-platform-5xx-rate.mjs
+          code=$?
+          set -e
+          if [ "$code" -eq 2 ]; then
+            echo "::error title=The platform 5xx rate is UNKNOWN::The apex zone analytics could not be read for the platform host, or no hour had enough client requests to judge, so nothing is known about platform 5xx answers from this run, and that is never a pass. The step log names the reason."
+          elif [ "$code" -eq 1 ]; then
+            echo "::error title=Clients got a 5xx from the platform's /v1 routes over the hourly bound::The step log names each UTC hour, its share and its statuses. Read the platform Worker's logs and GlitchTip's platform project for those hours."
+          fi
+          exit "$code"
+          NIKATRU_QUIET_EOF
+          NIKATRU_SHELL="${BASH:-bash}"; if command -v cygpath >/dev/null 2>&1; then NIKATRU_SHELL="$(cygpath -w "$NIKATRU_SHELL")"; fi
+          node "$GITHUB_WORKSPACE/../.nikatru-shell/quiet-step.mjs" --name ops-watch.config-drift.18 -- "$NIKATRU_SHELL" -e "$NIKATRU_QUIET"
       - name: Hand this job's red detail to the report job, sealed (generated)
         id: nikatru-handoff
         if: always()
@@ -3355,26 +3377,6 @@ jobs:
           NIKATRU_QUIET_EOF
           NIKATRU_SHELL="${BASH:-bash}"; if command -v cygpath >/dev/null 2>&1; then NIKATRU_SHELL="$(cygpath -w "$NIKATRU_SHELL")"; fi
           node "$GITHUB_WORKSPACE/../.nikatru-shell/quiet-step.mjs" --name ops-watch.edge-shield.7 -- "$NIKATRU_SHELL" -e "$NIKATRU_QUIET"
-      - name: Clients rarely get a 5xx from the platform's /v1 routes, hour by hour
-        if: always()
-        env:
-          CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_READ_TOKEN }}
-        run: |
-          NIKATRU_QUIET="$(mktemp "${RUNNER_TEMP:-/tmp}/nikatru-step.XXXXXX")"
-          cat > "$NIKATRU_QUIET" <<'NIKATRU_QUIET_EOF'
-          set +e
-          node tooling/ops/check-platform-5xx-rate.mjs
-          code=$?
-          set -e
-          if [ "$code" -eq 2 ]; then
-            echo "::error title=The platform 5xx rate is UNKNOWN::The apex zone analytics could not be read for the platform host, or no hour had enough client requests to judge, so nothing is known about platform 5xx answers from this run, and that is never a pass. The step log names the reason."
-          elif [ "$code" -eq 1 ]; then
-            echo "::error title=Clients got a 5xx from the platform's /v1 routes over the hourly bound::The step log names each UTC hour, its share and its statuses. Read the platform Worker's logs and GlitchTip's platform project for those hours."
-          fi
-          exit "$code"
-          NIKATRU_QUIET_EOF
-          NIKATRU_SHELL="${BASH:-bash}"; if command -v cygpath >/dev/null 2>&1; then NIKATRU_SHELL="$(cygpath -w "$NIKATRU_SHELL")"; fi
-          node "$GITHUB_WORKSPACE/../.nikatru-shell/quiet-step.mjs" --name ops-watch.edge-shield.8 -- "$NIKATRU_SHELL" -e "$NIKATRU_QUIET"
       - name: The edge shield refused no request because its abuse ledger could not count
         if: always()
         env:
@@ -3395,7 +3397,7 @@ jobs:
           exit "$code"
           NIKATRU_QUIET_EOF
           NIKATRU_SHELL="${BASH:-bash}"; if command -v cygpath >/dev/null 2>&1; then NIKATRU_SHELL="$(cygpath -w "$NIKATRU_SHELL")"; fi
-          node "$GITHUB_WORKSPACE/../.nikatru-shell/quiet-step.mjs" --name ops-watch.edge-shield.9 -- "$NIKATRU_SHELL" -e "$NIKATRU_QUIET"
+          node "$GITHUB_WORKSPACE/../.nikatru-shell/quiet-step.mjs" --name ops-watch.edge-shield.8 -- "$NIKATRU_SHELL" -e "$NIKATRU_QUIET"
       - name: Both sites' edge traffic is read and no Web Analytics beacon is injected
         if: always()
         env:
@@ -3416,7 +3418,7 @@ jobs:
           exit "$code"
           NIKATRU_QUIET_EOF
           NIKATRU_SHELL="${BASH:-bash}"; if command -v cygpath >/dev/null 2>&1; then NIKATRU_SHELL="$(cygpath -w "$NIKATRU_SHELL")"; fi
-          node "$GITHUB_WORKSPACE/../.nikatru-shell/quiet-step.mjs" --name ops-watch.edge-shield.10 -- "$NIKATRU_SHELL" -e "$NIKATRU_QUIET"
+          node "$GITHUB_WORKSPACE/../.nikatru-shell/quiet-step.mjs" --name ops-watch.edge-shield.9 -- "$NIKATRU_SHELL" -e "$NIKATRU_QUIET"
       - name: Hand this job's red detail to the report job, sealed (generated)
         id: nikatru-handoff
         if: always()
@@ -3587,7 +3589,7 @@ jobs:
           code=$?
           set -e
           if [ "$code" -eq 2 ]; then
-            echo "::error title=The guard yield is UNKNOWN::tooling/guard-yield.json, tooling/enforcement-index.json or a test file the coverage ratchet (tooling/ci/test/coverage/) keys could not be read, so nothing about guard yield is known from this run. The step log names which."
+            echo "::error title=The guard yield is UNKNOWN::tooling/guard-yield/ (its _window.json or a shard), tooling/enforcement-index/ or a test file the coverage ratchet (tooling/ci/test/coverage/) keys could not be read, so nothing about guard yield is known from this run. The step log names which."
           elif [ "$code" -eq 1 ]; then
             echo "::error title=The guard yield is stale, blind, or not acted on::asOf is past MAX_AGE_DAYS (re-fetch with triage-failed-runs.mjs --yield), the unattributed share is over its limit (give the signatures a guard, then guard-yield.mjs --reattribute), or a zero-catch guard has no KEEP/MERGE/RETIRE, or a KEEP's mutationTest does not resolve in the test file it names (guard-yield.mjs --reattribute re-derives an exposure KEEP's). The step log names each."
           fi
@@ -3595,6 +3597,49 @@ jobs:
           NIKATRU_QUIET_EOF
           NIKATRU_SHELL="${BASH:-bash}"; if command -v cygpath >/dev/null 2>&1; then NIKATRU_SHELL="$(cygpath -w "$NIKATRU_SHELL")"; fi
           node "$GITHUB_WORKSPACE/../.nikatru-shell/quiet-step.mjs" --name ops-watch.failure-ledger.4 -- "$NIKATRU_SHELL" -e "$NIKATRU_QUIET"
+      - name: Transport re-sends per harness over the last seven days (print-only)
+        if: ${{ !cancelled() }}
+        timeout-minutes: 13
+        env:
+          GH_TOKEN: ${{ github.token }}
+          GITHUB_REPOSITORY: ${{ github.repository }}
+        run: |
+          NIKATRU_QUIET="$(mktemp "${RUNNER_TEMP:-/tmp}/nikatru-step.XXXXXX")"
+          cat > "$NIKATRU_QUIET" <<'NIKATRU_QUIET_EOF'
+          set +e
+          node tooling/ops/transport-resend-count.mjs --days 7 --job .github/workflows/ops-watch.yml#failure-ledger
+          code=$?
+          set -e
+          if [ "$code" -ne 0 ]; then
+            echo "::warning title=The weekly re-send count is UNKNOWN::A run list, jobs list or harness log did not answer, or the request ceiling or time budget was reached. The count printed above is a SUBSET; the step log names each read that did not answer."
+          fi
+          exit 0
+          NIKATRU_QUIET_EOF
+          NIKATRU_SHELL="${BASH:-bash}"; if command -v cygpath >/dev/null 2>&1; then NIKATRU_SHELL="$(cygpath -w "$NIKATRU_SHELL")"; fi
+          node "$GITHUB_WORKSPACE/../.nikatru-shell/quiet-step.mjs" --name ops-watch.failure-ledger.5 -- "$NIKATRU_SHELL" -e "$NIKATRU_QUIET"
+      - name: The rolling 7-day first-attempt ci-gate green rate per class, as a record with its verify
+        if: always()
+        timeout-minutes: 15
+        env:
+          GH_TOKEN: ${{ github.token }}
+          GITHUB_REPOSITORY: ${{ github.repository }}
+        run: |
+          NIKATRU_QUIET="$(mktemp "${RUNNER_TEMP:-/tmp}/nikatru-step.XXXXXX")"
+          cat > "$NIKATRU_QUIET" <<'NIKATRU_QUIET_EOF'
+          set +e
+          node tooling/ops/ci-wall-time.mjs --first-attempt --fetch "$GITHUB_REPOSITORY" --days 7 --record
+          code=$?
+          set -e
+          # UNKNOWN is a warning that exits 0, as the re-send count's is: this job PAGES on red, and a metric that could
+          # not be read is not a failed run to page on. No FIRST-ATTEMPT RECORD line is printed then, so none is copied.
+          if [ "$code" -eq 2 ]; then
+            echo "::warning title=The first-attempt green rate is UNKNOWN - nothing was recorded::The quota floor refused to start, the request ceiling was reached, the run list passed the API cap, a page could not be read, or a counted run's attempt-1 ci-gate job was not found. The step log names which; no FIRST-ATTEMPT RECORD line is a measurement."
+            exit 0
+          fi
+          exit "$code"
+          NIKATRU_QUIET_EOF
+          NIKATRU_SHELL="${BASH:-bash}"; if command -v cygpath >/dev/null 2>&1; then NIKATRU_SHELL="$(cygpath -w "$NIKATRU_SHELL")"; fi
+          node "$GITHUB_WORKSPACE/../.nikatru-shell/quiet-step.mjs" --name ops-watch.failure-ledger.6 --public -- "$NIKATRU_SHELL" -e "$NIKATRU_QUIET"
       - name: Hand this job's red detail to the report job, sealed (generated)
         id: nikatru-handoff
         if: always()
@@ -4671,6 +4716,7 @@ jobs:
         continue-on-error: true
         env:
           GH_TOKEN: ${{ github.token }}
+          NIKATRU_RESULTS: status=${{ needs.status.result }} supabase-drift=${{ needs.supabase-drift.result }} prod-provenance=${{ needs.prod-provenance.result }} pages-deployments=${{ needs.pages-deployments.result }} worker-source-drift=${{ needs.worker-source-drift.result }} runner-budget=${{ needs.runner-budget.result }} shell-barriers=${{ needs.shell-barriers.result }} store-vitals-state=${{ needs.store-vitals-state.result }} store-vitals=${{ needs.store-vitals.result }} glitchtip=${{ needs.glitchtip.result }} money-reconcile-marker=${{ needs.money-reconcile-marker.result }} config-drift=${{ needs.config-drift.result }} edge-shield=${{ needs.edge-shield.result }} failure-ledger=${{ needs.failure-ledger.result }} renovate-backlog=${{ needs.renovate-backlog.result }} code-scanning-age=${{ needs.code-scanning-age.result }} tech-currency=${{ needs.tech-currency.result }} self-review=${{ needs.self-review.result }} digest=${{ needs.digest.result }} alert=${{ needs.alert.result }} heartbeats=${{ needs.heartbeats.result }}
         run: python3 .github/nikatru/report.py plan .github/nikatru/ops-watch.json
       - name: Restore hand-off 0 (generated)
         id: nikatru-slot-0

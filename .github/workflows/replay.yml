@@ -489,6 +489,7 @@ jobs:
         continue-on-error: true
         env:
           GH_TOKEN: ${{ github.token }}
+          NIKATRU_RESULTS: replay=${{ needs.replay.result }}
         run: python3 .github/nikatru/report.py plan .github/nikatru/replay.json
       - name: Restore hand-off 0 (generated)
         id: nikatru-slot-0

@@ -33,7 +33,7 @@ on:
         required: false
         default: 'false'
       account:
-        description: The Claude account for the reword matrix (acct1..acct4).
+        description: The Claude account for the reword matrix (an account of tooling/ci/claude-accounts.json).
         required: false
         default: ''
       mode:
@@ -527,6 +527,7 @@ jobs:
     permissions:
       contents: read
       id-token: write
+      actions: read
     outputs:
       matrix: ${{ steps.plan.outputs.reword_matrix }}
       count: ${{ steps.plan.outputs.reword_count }}
@@ -629,6 +630,15 @@ jobs:
           NIKATRU_REF: ${{ github.event.client_payload.ref || 'refs/heads/main' }}
           NIKATRU_EVENT_NAME: ${{ github.event.client_payload.event || github.event_name }}
           NIKATRU_PR: ${{ github.event.client_payload.pr }}
+      - name: List this run's artifacts, to name a single flattened names-render-* hand-off (generated)
+        id: nikatru-names-4
+        timeout-minutes: 6
+        continue-on-error: true
+        shell: bash
+        working-directory: ${{ github.workspace }}
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: node tooling/ops/run-artifact-names.mjs --out "$RUNNER_TEMP/nikatru-run-artifacts-legs-4.json"
       - name: Restore every names-render-* hand-off of this run (generated)
         id: nikatru-restore-4
         timeout-minutes: 6
@@ -649,6 +659,7 @@ jobs:
           NIKATRU_HANDOFF_RUN: ${{ github.run_id }}
           NIKATRU_TO: ${{ runner.temp }}/slices
           NIKATRU_HANDOFF_FLAT: 'true'
+          NIKATRU_RUN_NAMES: ${{ runner.temp }}/nikatru-run-artifacts-legs-4.json
         run: node tooling/ci/shell-handoff.mjs unseal-legs
       - name: Plan the reword batches
         id: plan
@@ -708,6 +719,7 @@ jobs:
     permissions:
       contents: read
       id-token: write
+      actions: read
     strategy:
       fail-fast: false
       max-parallel: 4
@@ -811,6 +823,15 @@ jobs:
           NIKATRU_REF: ${{ github.event.client_payload.ref || 'refs/heads/main' }}
           NIKATRU_EVENT_NAME: ${{ github.event.client_payload.event || github.event_name }}
           NIKATRU_PR: ${{ github.event.client_payload.pr }}
+      - name: List this run's artifacts, to name a single flattened names-render-* hand-off (generated)
+        id: nikatru-names-6
+        timeout-minutes: 6
+        continue-on-error: true
+        shell: bash
+        working-directory: ${{ github.workspace }}
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: node tooling/ops/run-artifact-names.mjs --out "$RUNNER_TEMP/nikatru-run-artifacts-legs-6.json"
       - name: Restore every names-render-* hand-off of this run (generated)
         id: nikatru-restore-6
         timeout-minutes: 6
@@ -831,6 +852,7 @@ jobs:
           NIKATRU_HANDOFF_RUN: ${{ github.run_id }}
           NIKATRU_TO: ${{ runner.temp }}/in
           NIKATRU_HANDOFF_FLAT: 'true'
+          NIKATRU_RUN_NAMES: ${{ runner.temp }}/nikatru-run-artifacts-legs-6.json
         run: node tooling/ci/shell-handoff.mjs unseal-legs
       - name: Restore the names-batches hand-off from this run (generated)
         id: nikatru-restore-7
@@ -943,6 +965,7 @@ jobs:
     permissions:
       contents: read
       id-token: write
+      actions: read
     steps:
       - name: Check out the private tree (generated)
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
@@ -1044,6 +1067,15 @@ jobs:
           NIKATRU_REF: ${{ github.event.client_payload.ref || 'refs/heads/main' }}
           NIKATRU_EVENT_NAME: ${{ github.event.client_payload.event || github.event_name }}
           NIKATRU_PR: ${{ github.event.client_payload.pr }}
+      - name: List this run's artifacts, to name a single flattened names-render-* hand-off (generated)
+        id: nikatru-names-9
+        timeout-minutes: 6
+        continue-on-error: true
+        shell: bash
+        working-directory: ${{ github.workspace }}
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: node tooling/ops/run-artifact-names.mjs --out "$RUNNER_TEMP/nikatru-run-artifacts-legs-9.json"
       - name: Restore every names-render-* hand-off of this run (generated)
         id: nikatru-restore-9
         timeout-minutes: 6
@@ -1064,7 +1096,17 @@ jobs:
           NIKATRU_HANDOFF_RUN: ${{ github.run_id }}
           NIKATRU_TO: ${{ runner.temp }}/in
           NIKATRU_HANDOFF_FLAT: 'true'
+          NIKATRU_RUN_NAMES: ${{ runner.temp }}/nikatru-run-artifacts-legs-9.json
         run: node tooling/ci/shell-handoff.mjs unseal-legs
+      - name: List this run's artifacts, to name a single flattened names-reworded-* hand-off (generated)
+        id: nikatru-names-10
+        timeout-minutes: 6
+        continue-on-error: true
+        shell: bash
+        working-directory: ${{ github.workspace }}
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: node tooling/ops/run-artifact-names.mjs --out "$RUNNER_TEMP/nikatru-run-artifacts-legs-10.json"
       - name: Restore every names-reworded-* hand-off of this run (generated)
         id: nikatru-restore-10
         timeout-minutes: 6
@@ -1085,6 +1127,7 @@ jobs:
           NIKATRU_HANDOFF_RUN: ${{ github.run_id }}
           NIKATRU_TO: ${{ runner.temp }}/in
           NIKATRU_HANDOFF_FLAT: 'true'
+          NIKATRU_RUN_NAMES: ${{ runner.temp }}/nikatru-run-artifacts-legs-10.json
         run: node tooling/ci/shell-handoff.mjs unseal-legs
       - name: Apply every slice and batch
         id: apply

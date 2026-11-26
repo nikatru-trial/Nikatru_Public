@@ -23,7 +23,7 @@ on:
         required: false
         default: ''
       accounts:
-        description: 'The accounts to run on, lowest weekly usage first (acct1..acct4). Job i translates on the i-th and is QA''d on the next. Empty = every live account of tooling/ci/claude-accounts.json (an account past its endedOn is never planned, and naming one is refused).'
+        description: 'The accounts to run on, lowest weekly usage first (accounts of tooling/ci/claude-accounts.json). Job i translates on the i-th and is QA''d on the next. Empty = every live account of tooling/ci/claude-accounts.json (an account past its endedOn is never planned, and naming one is refused).'
         required: false
         default: ''
       force:
@@ -804,6 +804,7 @@ jobs:
     permissions:
       contents: read
       id-token: write
+      actions: read
     steps:
       - name: Check out the private tree (generated)
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
@@ -902,6 +903,15 @@ jobs:
           NIKATRU_REF: ${{ github.event.client_payload.ref || 'refs/heads/main' }}
           NIKATRU_EVENT_NAME: ${{ github.event.client_payload.event || github.event_name }}
           NIKATRU_PR: ${{ github.event.client_payload.pr }}
+      - name: List this run's artifacts, to name a single flattened wave-*-qa hand-off (generated)
+        id: nikatru-names-4
+        timeout-minutes: 6
+        continue-on-error: true
+        shell: bash
+        working-directory: ${{ github.workspace }}
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: node tooling/ops/run-artifact-names.mjs --out "$RUNNER_TEMP/nikatru-run-artifacts-legs-4.json"
       - name: Restore every wave-*-qa hand-off of this run (generated)
         id: nikatru-restore-4
         timeout-minutes: 6
@@ -922,6 +932,7 @@ jobs:
           NIKATRU_HANDOFF_RUN: ${{ github.run_id }}
           NIKATRU_TO: ${{ runner.temp }}/wave-in
           NIKATRU_HANDOFF_FLAT: 'false'
+          NIKATRU_RUN_NAMES: ${{ runner.temp }}/nikatru-run-artifacts-legs-4.json
         run: node tooling/ci/shell-handoff.mjs unseal-legs
       - name: Verify every answer against its packet and QA, import, render, retire the auto-rulings
         id: import

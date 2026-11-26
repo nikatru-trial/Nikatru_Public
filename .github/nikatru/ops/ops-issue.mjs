@@ -35,8 +35,7 @@ import { resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { callBridgeOps, opsEnv } from './bridge-ops.mjs';
 import { fitOpsBody } from './fit-ops-body.mjs';
-import { sendWithBoundedRetry } from './bounded-retry.mjs';
-import { ENV_NAMES, SEND_TIMEOUT_MS as PAGE_SEND_TIMEOUT_MS, ZONE_FILE, channels, viaCloudflare, zoneFacts } from './owner-page-watch.mjs';
+import { ENV_NAMES, ZONE_FILE, channels, sendPage, viaCloudflare, zoneFacts } from './owner-page-watch.mjs';
 
 const flag = (name) => {
   const i = process.argv.indexOf(name);
@@ -102,8 +101,8 @@ async function main() {
  * account's own activity by default. So the issue comment alone may reach nobody. This is the job's second step: one
  * page through owner-page-watch.mjs's push channel (OWNER_PAGE_PUSH_URL — the same secret and refusal rules, channels()
  * and zoneFacts(), that the hourly watch, kill-switch-dispatch.mjs and org-move.mjs use), never through the bridge,
- * Cloudflare or mail. Here, not in owner-page-watch.mjs, because an ops-watch reader that sends must use the shared
- * send plan (ops-bounded-retry.test.mjs B8), which owner-page-watch.mjs's own timers do not.
+ * Cloudflare or mail. ⏱ 2026-11-25 · O-STD-OWNER-PUSH-ONE-SENDER-CODEMOD: the sender under the shared send plan that
+ * lived here (sendPushBounded) moved to owner-page-watch.mjs as sendPage, the ONE sender every CI-side owner page uses.
  * PURE. The page for one red run: `{ title, text }`. RUN_URL is the shell run's public URL; nothing secret is in it.
  */
 export function composeAlertPage(env) {
@@ -113,40 +112,6 @@ export function composeAlertPage(env) {
     title: 'NIKATRU ops-watch is red: a scheduled duty is not reporting healthy',
     text: [`An unattended ops-watch run failed${attempt ? ` (attempt ${attempt})` : ''}: ${run}`, "The run log names the red job; the private issue 'Scheduled duty is not reporting healthy' carries every red as a comment."].join('\n'),
   };
-}
-
-/**
- * The alert page's sender: sendPush's request under the shared send plan (bounded-retry.mjs sendWithBoundedRetry —
- * re-sent only when it provably never left the runner, so one dropped connection does not lose the page and no page is
- * sent twice). `{ ok, status, headers }`, never throws; an error carries the error's NAME only (never the URL).
- */
-export async function sendPushBounded(url, token, title, text, fetchImpl = globalThis.fetch, opts = {}) {
-  const headers = { 'content-type': 'text/plain; charset=utf-8', title, priority: 'urgent', tags: 'rotating_light' };
-  if (token) headers.authorization = `Bearer ${token}`;
-  try {
-    const res = await sendWithBoundedRetry(({ signal }) => fetchImpl(url, { method: 'POST', body: text, headers, signal }), { timeoutMs: PAGE_SEND_TIMEOUT_MS, slowPath: () => {}, ...opts });
-    const out = { ok: res.ok, status: res.status, headers: Object.fromEntries([...res.headers].map(([k, v]) => [k.toLowerCase(), v])) };
-    if (res.ok) out.id = await deliveryId(res);
-    return out;
-  } catch (e) {
-    return { ok: false, status: 0, headers: {}, error: e?.name ?? 'send failed' };
-  }
-}
-
-/**
- * ⏱ 2026-11-16 · O-R52-OPS-001 (lead ruling 10:06:28Z, limb B): the delivery id ntfy gives a published message (its
- * JSON answer's `id`), so an unattended page leaves a record the lead can quote (alarm-chains.json chainsObserved).
- * Only a plain token ([A-Za-z0-9_-], at most 64) is taken: anything else — no body, not JSON, no id, a value that
- * could carry a `::` workflow command or a newline — is null, and the page is still delivered. Never throws.
- */
-export async function deliveryId(res) {
-  try {
-    const id = JSON.parse(await res.text())?.id;
-    const v = typeof id === 'number' ? String(id) : id;
-    return typeof v === 'string' && /^[A-Za-z0-9_-]{1,64}$/.test(v) ? v : null;
-  } catch {
-    return null;
-  }
 }
 
 /** PURE. The one record line of a delivered page: the id (or `unread`) and the push URL's HOST only — never its path (the topic) or a token. */
@@ -161,13 +126,44 @@ export function pagedRecord(pushUrl, id) {
 }
 
 /**
+ * ⏱ 2cf6974e · O-R52-OPS-001 (rulings 60c6c88b478b, d857127a4295; lane ops-drills-4-1121): THE RECORD'S CHANNEL. In the
+ * shell this step runs under quiet-step, which swallows a green step's stdout (the ::notice) AND points
+ * GITHUB_STEP_SUMMARY at a private file it shows only on red (tooling/ci/quiet-step.mjs), so the lead's signed-in read of
+ * slot run 44684822875 found no PAGED line at all. The record therefore goes where the failure path's reason already
+ * goes: the bridge's POST /ops `ops-issue`, kind `alert-page` (one filing step per kind, the same durable PRIVATE issue,
+ * a comment the run attempt owns). Chosen over a `::nikatru-public::` line (it would publish the push host on a public
+ * run page and needs a publicLines entry) and over a step output (no job prints it): the private issue is durable (ntfy's
+ * cache keeps a message 72 h), already signed by this step's bridge env, and it is where the lead reads the alert.
+ * Best-effort, as notPaged's filing: the page WAS delivered, so a lost record never changes the exit; it is said.
+ * Returns the line it logged (tests).
+ */
+export async function fileRecord(record, env, report, log) {
+  const runId = Number(env.GITHUB_RUN_ID);
+  const attempt = Number(env.GITHUB_RUN_ATTEMPT);
+  let r;
+  try {
+    r = Number.isSafeInteger(runId) && runId > 0 && Number.isSafeInteger(attempt) && attempt > 0
+      ? await report({ kind: 'alert-page', run_id: runId, run_attempt: attempt, body: fitOpsBody(`${record}\nThe owner was paged off GitHub for this ops-watch red. This line is the page's delivery record (alarm-chains.json chainsObserved.ops-watch-page).`).text })
+      : { lost: 'GITHUB_RUN_ID / GITHUB_RUN_ATTEMPT do not name a run' };
+  } catch (e) {
+    r = { lost: e?.name ?? 'the /ops call failed' };
+  }
+  const judged = r?.answer ? judgeAnswer(r.answer) : null;
+  const line = judged?.ok
+    ? `filed: the page record is on private issue #${judged.ok.issue} (${judged.ok.action})`
+    : `::warning title=The page was delivered, but its record was NOT filed::${r?.lost ?? r?.refused ?? judged?.lost ?? 'no answer'}`;
+  log(line);
+  return line;
+}
+
+/**
  * `--page-alert`: send composeAlertPage once. Effects injectable as in main(): send, readZone, log.
  * Exit: 0 delivered off Cloudflare · 1 a FINDING, delivered through Cloudflare · 2 COVERAGE LOST — no push channel
  * (a heartbeat alone cannot carry an event page), a push URL refused, the zone unreadable, or the push refused.
  */
 export async function pageAlert(env = process.env, deps = {}) {
   const { log = (line) => process.stdout.write(`${line}\n`) } = deps;
-  const send = deps.send ?? ((url, token, title, text) => sendPushBounded(url, token, title, text, deps.fetch ?? globalThis.fetch));
+  const send = deps.send ?? ((url, token, title, text) => sendPage(url, token, title, text, deps.fetch));
   // The step summary is the record quiet-step cannot hide (it swallows a green step's stdout).
   const summary = deps.summary ?? ((line) => env.GITHUB_STEP_SUMMARY && appendFileSync(env.GITHUB_STEP_SUMMARY, `${line}\n`));
   const readZone = deps.readZone ?? (() => JSON.parse(readFileSync(ZONE_FILE, 'utf8')));
@@ -211,6 +207,7 @@ export async function pageAlert(env = process.env, deps = {}) {
     /* an unwritable summary never turns a delivered page into a failure */
   }
   log(`::notice title=owner page::PAGED id=${id ?? 'unread'}`);
+  await fileRecord(record, env, report, log);
   if (viaCloudflare(sent.headers)) {
     log(`FINDING: the ops-watch page was delivered, but ${ENV_NAMES.push} answered through Cloudflare (cf-ray): in a Cloudflare outage it is lost.`);
     return 1;

@@ -191,6 +191,7 @@ jobs:
         with:
           repository: ${{ env.NIKATRU_PRIVATE_REPO }}
           ref: ${{ inputs.nikatru_sha || (github.event.client_payload.event == 'pull_request' && format('refs/pull/{0}/merge', github.event.client_payload.pr) || github.event.client_payload.sha || 'main') }}
+          fetch-tags: true
           ssh-key: ${{ secrets.PRIVATE_DEPLOY_KEY }}
           persist-credentials: false
       - name: Name the private commit (generated)
@@ -694,6 +695,28 @@ jobs:
           NIKATRU_QUIET_EOF
           NIKATRU_SHELL="${BASH:-bash}"; if command -v cygpath >/dev/null 2>&1; then NIKATRU_SHELL="$(cygpath -w "$NIKATRU_SHELL")"; fi
           node "$GITHUB_WORKSPACE/../.nikatru-shell/quiet-step.mjs" --name e2e-leg.e2e.25 -- "$NIKATRU_SHELL" -e "$NIKATRU_QUIET"
+      - name: The current API still serves what the last released build reads (N-1 API compat)
+        if: ${{ !cancelled() && steps.user.outcome == 'success' && env.E2E_WORKERS_TRUST == 'yes' }}
+        timeout-minutes: 5
+        env:
+          SUPABASE_URL: ${{ (inputs.auth_target || 'production') == 'selfhosted' && secrets.SELFHOSTED_SUPABASE_URL || (inputs.auth_target || 'production') == 'production' && secrets.SUPABASE_URL || '' }}
+          SUPABASE_ANON_KEY: ${{ (inputs.auth_target || 'production') == 'selfhosted' && secrets.SELFHOSTED_SUPABASE_ANON_KEY || (inputs.auth_target || 'production') == 'production' && secrets.SUPABASE_ANON_KEY || '' }}
+          SUPABASE_SERVICE_ROLE_KEY: ${{ (inputs.auth_target || 'production') == 'selfhosted' && secrets.SELFHOSTED_SUPABASE_SERVICE_ROLE_KEY || (inputs.auth_target || 'production') == 'production' && secrets.SUPABASE_SERVICE_ROLE_KEY || '' }}
+          E2E_EMAIL: ${{ steps.user.outputs.email }}
+          E2E_APP_ID: ${{ matrix.app }}
+        run: |
+          NIKATRU_QUIET="$(mktemp "${RUNNER_TEMP:-/tmp}/nikatru-step.XXXXXX")"
+          cat > "$NIKATRU_QUIET" <<'NIKATRU_QUIET_EOF'
+          set +e
+          node tooling/e2e/n-minus-1/api-compat.mjs --check --app "$E2E_APP_ID" --sign-in 2>&1 | tee "${RUNNER_TEMP}/n-minus-1.log"
+          code=${PIPESTATUS[0]}
+          { echo "### N-1 API compat ($E2E_APP_ID)"; echo '```'; cat "${RUNNER_TEMP}/n-minus-1.log"; echo '```'; } >> "$GITHUB_STEP_SUMMARY"
+          echo "EXIT"
+          echo "$code"
+          exit "$code"
+          NIKATRU_QUIET_EOF
+          NIKATRU_SHELL="${BASH:-bash}"; if command -v cygpath >/dev/null 2>&1; then NIKATRU_SHELL="$(cygpath -w "$NIKATRU_SHELL")"; fi
+          node "$GITHUB_WORKSPACE/../.nikatru-shell/quiet-step.mjs" --name e2e-leg.e2e.26 -- "$NIKATRU_SHELL" -e "$NIKATRU_QUIET"
       - name: Erase the delete-leg account headlessly (captcha-gated stack)
         if: env.E2E_EXPECT_CAPTCHA_GATE == 'yes'
         env:
@@ -711,7 +734,7 @@ jobs:
           node tooling/e2e/delete_headless.mjs
           NIKATRU_QUIET_EOF
           NIKATRU_SHELL="${BASH:-bash}"; if command -v cygpath >/dev/null 2>&1; then NIKATRU_SHELL="$(cygpath -w "$NIKATRU_SHELL")"; fi
-          node "$GITHUB_WORKSPACE/../.nikatru-shell/quiet-step.mjs" --name e2e-leg.e2e.26 -- "$NIKATRU_SHELL" -e "$NIKATRU_QUIET"
+          node "$GITHUB_WORKSPACE/../.nikatru-shell/quiet-step.mjs" --name e2e-leg.e2e.27 -- "$NIKATRU_SHELL" -e "$NIKATRU_QUIET"
       - name: Verify the in-app deletion really purged (leg 6)
         env:
           SUPABASE_URL: ${{ (inputs.auth_target || 'production') == 'selfhosted' && secrets.SELFHOSTED_SUPABASE_URL || (inputs.auth_target || 'production') == 'production' && secrets.SUPABASE_URL || '' }}
@@ -726,9 +749,12 @@ jobs:
           node tooling/e2e/verify_purged.mjs
           NIKATRU_QUIET_EOF
           NIKATRU_SHELL="${BASH:-bash}"; if command -v cygpath >/dev/null 2>&1; then NIKATRU_SHELL="$(cygpath -w "$NIKATRU_SHELL")"; fi
-          node "$GITHUB_WORKSPACE/../.nikatru-shell/quiet-step.mjs" --name e2e-leg.e2e.27 -- "$NIKATRU_SHELL" -e "$NIKATRU_QUIET"
+          node "$GITHUB_WORKSPACE/../.nikatru-shell/quiet-step.mjs" --name e2e-leg.e2e.28 -- "$NIKATRU_SHELL" -e "$NIKATRU_QUIET"
       - name: Verify the consent artifact landed in platform_db
+        id: consent
+        if: always() && steps.user.outcome == 'success' && steps.backend.outcome == 'success' && steps.drive.outcome != 'skipped'
         env:
+          E2E_DRIVE_OUTCOME: ${{ steps.drive.outcome }}
           E2E_APP_ID: ${{ matrix.app }}
           E2E_RESPONSE_DATA: apps/${{ matrix.app }}/build/integration_response_data.json
           E2E_DRIVE_LOG: ${{ runner.temp }}/drive.log
@@ -741,7 +767,7 @@ jobs:
           node tooling/e2e/verify_consent.mjs
           NIKATRU_QUIET_EOF
           NIKATRU_SHELL="${BASH:-bash}"; if command -v cygpath >/dev/null 2>&1; then NIKATRU_SHELL="$(cygpath -w "$NIKATRU_SHELL")"; fi
-          node "$GITHUB_WORKSPACE/../.nikatru-shell/quiet-step.mjs" --name e2e-leg.e2e.28 -- "$NIKATRU_SHELL" -e "$NIKATRU_QUIET"
+          node "$GITHUB_WORKSPACE/../.nikatru-shell/quiet-step.mjs" --name e2e-leg.e2e.29 -- "$NIKATRU_SHELL" -e "$NIKATRU_QUIET"
       - name: The captured frames carry drawn text
         if: ${{ (success() || (!cancelled() && (github.event.client_payload.event == 'pull_request' && startsWith(github.event.client_payload.ref, 'refs/heads/rehearsal/')) && steps.nikatru-setup-ok.outcome == 'success' && steps.nikatru-setup-6.outcome == 'success' && steps.nikatru-setup-7.outcome == 'success' && steps.backend.outcome == 'success' && steps.nikatru-setup-11.outcome == 'success' && steps.nikatru-setup-12.outcome == 'success' && steps.nikatru-setup-13.outcome == 'success' && steps.user.outcome == 'success' && steps.delete_user.outcome == 'success' && steps.nikatru-setup-18.outcome == 'success' && steps.drive.outcome == 'success')) && (steps.drive.outcome == 'success') }}
         run: |
@@ -750,7 +776,7 @@ jobs:
           node --single-threaded tooling/e2e/assert-frames-carry-text.mjs apps/${{ matrix.app }}/screenshots
           NIKATRU_QUIET_EOF
           NIKATRU_SHELL="${BASH:-bash}"; if command -v cygpath >/dev/null 2>&1; then NIKATRU_SHELL="$(cygpath -w "$NIKATRU_SHELL")"; fi
-          node "$GITHUB_WORKSPACE/../.nikatru-shell/quiet-step.mjs" --name e2e-leg.e2e.29 -- "$NIKATRU_SHELL" -e "$NIKATRU_QUIET"
+          node "$GITHUB_WORKSPACE/../.nikatru-shell/quiet-step.mjs" --name e2e-leg.e2e.30 -- "$NIKATRU_SHELL" -e "$NIKATRU_QUIET"
       - name: Store e2e-screenshots-${{ matrix.app }} in the bridge's private home (generated)
         if: always() && steps.user.outcome != 'skipped'
         shell: bash
@@ -780,7 +806,7 @@ jobs:
           node tooling/e2e/purge.mjs
           NIKATRU_QUIET_EOF
           NIKATRU_SHELL="${BASH:-bash}"; if command -v cygpath >/dev/null 2>&1; then NIKATRU_SHELL="$(cygpath -w "$NIKATRU_SHELL")"; fi
-          node "$GITHUB_WORKSPACE/../.nikatru-shell/quiet-step.mjs" --name e2e-leg.e2e.31 -- "$NIKATRU_SHELL" -e "$NIKATRU_QUIET"
+          node "$GITHUB_WORKSPACE/../.nikatru-shell/quiet-step.mjs" --name e2e-leg.e2e.32 -- "$NIKATRU_SHELL" -e "$NIKATRU_QUIET"
       - name: Purge the delete-leg user too (already gone on a green run)
         if: always() && steps.delete_user.outcome != 'skipped'
         env:
@@ -796,7 +822,7 @@ jobs:
           node tooling/e2e/purge.mjs
           NIKATRU_QUIET_EOF
           NIKATRU_SHELL="${BASH:-bash}"; if command -v cygpath >/dev/null 2>&1; then NIKATRU_SHELL="$(cygpath -w "$NIKATRU_SHELL")"; fi
-          node "$GITHUB_WORKSPACE/../.nikatru-shell/quiet-step.mjs" --name e2e-leg.e2e.32 -- "$NIKATRU_SHELL" -e "$NIKATRU_QUIET"
+          node "$GITHUB_WORKSPACE/../.nikatru-shell/quiet-step.mjs" --name e2e-leg.e2e.33 -- "$NIKATRU_SHELL" -e "$NIKATRU_QUIET"
       - name: Hand this job's red detail to the report job, sealed (generated)
         id: nikatru-handoff
         if: always()
@@ -1352,10 +1378,8 @@ jobs:
           NIKATRU_QUIET_EOF
           NIKATRU_SHELL="${BASH:-bash}"; if command -v cygpath >/dev/null 2>&1; then NIKATRU_SHELL="$(cygpath -w "$NIKATRU_SHELL")"; fi
           node "$GITHUB_WORKSPACE/../.nikatru-shell/quiet-step.mjs" --name e2e-leg.reset-revokes.3 -- "$NIKATRU_SHELL" -e "$NIKATRU_QUIET"
-      - name: Every setup step of this job succeeded (generated)
-        id: nikatru-setup-ok
-        run: echo "every setup step before the first check succeeded"
       - name: The production secret set is Box C
+        id: boxc
         run: |
           NIKATRU_QUIET="$(mktemp "${RUNNER_TEMP:-/tmp}/nikatru-step.XXXXXX")"
           cat > "$NIKATRU_QUIET" <<'NIKATRU_QUIET_EOF'
@@ -1389,6 +1413,7 @@ jobs:
           NIKATRU_SHELL="${BASH:-bash}"; if command -v cygpath >/dev/null 2>&1; then NIKATRU_SHELL="$(cygpath -w "$NIKATRU_SHELL")"; fi
           node "$GITHUB_WORKSPACE/../.nikatru-shell/quiet-step.mjs" --name e2e-leg.reset-revokes.5 -- "$NIKATRU_SHELL" -e "$NIKATRU_QUIET"
       - name: A live recovery session reaches the platform Worker's recovery door
+        if: ${{ !cancelled() && steps.boxc.outcome == 'success' }}
         env:
           SUPABASE_URL: ${{ secrets.SUPABASE_URL }}
           SUPABASE_ANON_KEY: ${{ secrets.SUPABASE_ANON_KEY }}
@@ -3402,7 +3427,7 @@ jobs:
           NIKATRU_SHELL="${BASH:-bash}"; if command -v cygpath >/dev/null 2>&1; then NIKATRU_SHELL="$(cygpath -w "$NIKATRU_SHELL")"; fi
           node "$GITHUB_WORKSPACE/../.nikatru-shell/quiet-step.mjs" --name e2e-leg.session-legs.7 -- "$NIKATRU_SHELL" -e "$NIKATRU_QUIET"
       - name: Start the app Worker and the platform Worker against the ephemeral GoTrue
-        if: ${{ success() || (!cancelled() && (github.event.client_payload.event == 'pull_request' && startsWith(github.event.client_payload.ref, 'refs/heads/rehearsal/')) && steps.nikatru-setup-ok.outcome == 'success') }}
+        id: workers
         env:
           NUJ_APP: ${{ matrix.app }}
         run: |
@@ -3413,7 +3438,7 @@ jobs:
           NIKATRU_SHELL="${BASH:-bash}"; if command -v cygpath >/dev/null 2>&1; then NIKATRU_SHELL="$(cygpath -w "$NIKATRU_SHELL")"; fi
           node "$GITHUB_WORKSPACE/../.nikatru-shell/quiet-step.mjs" --name e2e-leg.session-legs.8 -- "$NIKATRU_SHELL" -e "$NIKATRU_QUIET"
       - name: Delete after an old session — password, linked and password-less, aged past the re-auth window
-        if: ${{ success() || (!cancelled() && (github.event.client_payload.event == 'pull_request' && startsWith(github.event.client_payload.ref, 'refs/heads/rehearsal/')) && steps.nikatru-setup-ok.outcome == 'success') }}
+        if: ${{ success() || (!cancelled() && (github.event.client_payload.event == 'pull_request' && startsWith(github.event.client_payload.ref, 'refs/heads/rehearsal/')) && steps.nikatru-setup-ok.outcome == 'success' && steps.workers.outcome == 'success') }}
         timeout-minutes: 5
         env:
           NUJ_APP: ${{ matrix.app }}
@@ -3428,7 +3453,7 @@ jobs:
           NIKATRU_SHELL="${BASH:-bash}"; if command -v cygpath >/dev/null 2>&1; then NIKATRU_SHELL="$(cygpath -w "$NIKATRU_SHELL")"; fi
           node "$GITHUB_WORKSPACE/../.nikatru-shell/quiet-step.mjs" --name e2e-leg.session-legs.9 -- "$NIKATRU_SHELL" -e "$NIKATRU_QUIET"
       - name: Red control — the delete leg with its re-auth skipped must red (the door refuses the aged session)
-        if: ${{ success() || (!cancelled() && (github.event.client_payload.event == 'pull_request' && startsWith(github.event.client_payload.ref, 'refs/heads/rehearsal/')) && steps.nikatru-setup-ok.outcome == 'success') }}
+        if: ${{ success() || (!cancelled() && (github.event.client_payload.event == 'pull_request' && startsWith(github.event.client_payload.ref, 'refs/heads/rehearsal/')) && steps.nikatru-setup-ok.outcome == 'success' && steps.workers.outcome == 'success') }}
         timeout-minutes: 3
         env:
           NUJ_APP: ${{ matrix.app }}
@@ -3447,7 +3472,7 @@ jobs:
           NIKATRU_SHELL="${BASH:-bash}"; if command -v cygpath >/dev/null 2>&1; then NIKATRU_SHELL="$(cygpath -w "$NIKATRU_SHELL")"; fi
           node "$GITHUB_WORKSPACE/../.nikatru-shell/quiet-step.mjs" --name e2e-leg.session-legs.10 -- "$NIKATRU_SHELL" -e "$NIKATRU_QUIET"
       - name: A session outlives its 60 s token — wait 90 s, navigate, two tabs refresh at once
-        if: ${{ success() || (!cancelled() && (github.event.client_payload.event == 'pull_request' && startsWith(github.event.client_payload.ref, 'refs/heads/rehearsal/')) && steps.nikatru-setup-ok.outcome == 'success') }}
+        if: ${{ !cancelled() && steps.workers.outcome == 'success' }}
         timeout-minutes: 5
         env:
           NUJ_APP: ${{ matrix.app }}
@@ -3459,7 +3484,7 @@ jobs:
           NIKATRU_SHELL="${BASH:-bash}"; if command -v cygpath >/dev/null 2>&1; then NIKATRU_SHELL="$(cygpath -w "$NIKATRU_SHELL")"; fi
           node "$GITHUB_WORKSPACE/../.nikatru-shell/quiet-step.mjs" --name e2e-leg.session-legs.11 -- "$NIKATRU_SHELL" -e "$NIKATRU_QUIET"
       - name: Red control — the token-life leg with its refresh disabled must red (the expired token is refused)
-        if: ${{ success() || (!cancelled() && (github.event.client_payload.event == 'pull_request' && startsWith(github.event.client_payload.ref, 'refs/heads/rehearsal/')) && steps.nikatru-setup-ok.outcome == 'success') }}
+        if: ${{ !cancelled() && steps.workers.outcome == 'success' }}
         timeout-minutes: 5
         env:
           NUJ_APP: ${{ matrix.app }}
@@ -4035,6 +4060,7 @@ jobs:
           NIKATRU_EVENT_NAME: ${{ github.event.client_payload.event || github.event_name }}
           NIKATRU_PR: ${{ github.event.client_payload.pr }}
       - name: The sandbox app, from the leg register
+        id: sandbox-app
         run: echo "APP=$(node tooling/e2e/feedback-leg.mjs --print-app)" >> "$GITHUB_ENV"
       - name: Provision the feedback leg's throwaway account
         id: who
@@ -4083,11 +4109,10 @@ jobs:
           SUPABASE_SERVICE_ROLE_KEY: ${{ secrets.SUPABASE_SERVICE_ROLE_KEY }}
           SANDBOX_ADMIN_ROUTE_SECRET: ${{ secrets.SANDBOX_ADMIN_ROUTE_SECRET }}
           E2E_USER_ID: ${{ steps.who.outputs.user_id }}
-        run: |
-          db="$(node tooling/e2e/feedback-leg.mjs --print-platform-db)"
-          E2E_APP_ID="$APP" PLATFORM_D1_DATABASE_ID="$db" node tooling/e2e/purge.mjs
+        run: E2E_APP_ID="$APP" E2E_PURGE_SANDBOX_ACCOUNT=1 node tooling/e2e/purge.mjs
       - name: Restore the sandbox-web-build hand-off from this run (generated)
         id: nikatru-restore-2
+        if: ${{ !cancelled() && steps.sandbox-app.outcome == 'success' }}
         timeout-minutes: 6
         uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333
         with:
@@ -4095,7 +4120,7 @@ jobs:
           path: .nikatru-handoff/sealed
       - name: Unseal the sandbox-web-build hand-off (generated)
         id: nikatru-unseal-2
-        if: ${{ (success()) && steps.nikatru-restore-2.outcome == 'success' }}
+        if: ${{ (!cancelled() && steps.sandbox-app.outcome == 'success') && steps.nikatru-restore-2.outcome == 'success' }}
         shell: bash
         working-directory: ${{ github.workspace }}
         env:
@@ -4104,7 +4129,7 @@ jobs:
           NIKATRU_HANDOFF_PREFIX: nikatru-handoff-sandbox-web-build-${{ github.run_id }}-
         run: node tooling/ci/shell-handoff.mjs unseal
       - name: Place the sandbox-web-build hand-off where download-artifact put it (generated)
-        if: ${{ (success()) && steps.nikatru-unseal-2.outcome == 'success' }}
+        if: ${{ (!cancelled() && steps.sandbox-app.outcome == 'success') && steps.nikatru-unseal-2.outcome == 'success' }}
         shell: bash
         working-directory: ${{ github.workspace }}
         env:
@@ -4114,9 +4139,13 @@ jobs:
           cp -a .nikatru-handoff/x/. "$NIKATRU_TO/"
           rm -rf .nikatru-handoff/x
       - name: Install the fleet Playwright (lockfile)
+        id: playwright
+        if: ${{ !cancelled() && steps.sandbox-app.outcome == 'success' }}
         working-directory: _playwright
         run: node "$GITHUB_WORKSPACE/tooling/ops/npm-ci-retry.mjs" -- npm ci --ignore-scripts --no-audit --no-fund
       - name: Install Playwright's Chromium (and its system packages), uncached
+        id: chromium
+        if: ${{ !cancelled() && steps.playwright.outcome == 'success' }}
         timeout-minutes: 9
         working-directory: _playwright
         run: |
@@ -4133,6 +4162,7 @@ jobs:
           cached_install \
             npx playwright install --with-deps chromium
       - name: Force-update RED CONTROL (the floor not raised — must exit 1, the wall absent)
+        if: ${{ !cancelled() && steps.chromium.outcome == 'success' }}
         timeout-minutes: 5
         env:
           SANDBOX_ADMIN_ROUTE_SECRET: ${{ secrets.SANDBOX_ADMIN_ROUTE_SECRET }}
@@ -4148,6 +4178,7 @@ jobs:
           fi
           echo "RED CONTROL shown: exit 1, the wall absent with the floor not raised"
       - name: Force-update leg (the floor raised on the sandbox, the wall and its reload shown, the floor restored)
+        if: ${{ !cancelled() && steps.chromium.outcome == 'success' }}
         timeout-minutes: 12
         env:
           SANDBOX_ADMIN_ROUTE_SECRET: ${{ secrets.SANDBOX_ADMIN_ROUTE_SECRET }}

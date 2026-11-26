@@ -196,9 +196,11 @@
 // create-glitchtip-release and upload-web-sourcemaps (`secondLook: true`) —
 // every GitHub-runner call to a tunnel host whose stall reds main or fails a
 // deploy (row O-OPS-PROBE-US-EDGE-STALL).
-// ⏱ APPENDED 2026-11-20 (money walk 44728574044, paddle leg): tooling/e2e/provision_user.mjs takes it too, on its
+//
+// ⏱ APPENDED 0fcbcc47 (money walk 44728574044, paddle leg): tooling/e2e/provision_user.mjs takes it too, on its
 // user-creating POST and its admin list GET (`secondLook: true`), and its mint through tooling/e2e/magic_link.mjs
 // postGenerateLink's opt-in (`secondLook()` directly, only after the mint's own plan got no answer).
+//
 // Failing cases: tooling/ci/test/ops-bounded-retry.test.mjs (this module and the
 // adoption, both directions) and tooling/ci/test/pages-deployments.test.mjs (the
 // green control for the move).
@@ -803,7 +805,7 @@ export async function fetchWithBoundedRetry(doFetch, { describe = (s) => s, ...o
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
-// ⏱ 2026-11-26 · lane fixfirst-ops-watch-1126 (ops-watch run 45725571985, runner-budget step 4 exit 2:
+// ⏱ 932b7408 · lane fixfirst-ops-watch-1126 (ops-watch run 45725571985, runner-budget step 4 exit 2:
 // "FAIL COVERAGE LOST — terminated"; review of #1725 finding 1). A reader that let `fetch()` or `res.json()`
 // throw raw inside `readWithBoundedRetry` was never re-asked: only a `transientLook` is, and a raw
 // `TypeError: fetch failed` (no answer) or `TypeError: terminated` (a body cut mid-answer) is not one. The same

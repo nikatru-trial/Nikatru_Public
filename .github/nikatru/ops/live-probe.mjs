@@ -47,7 +47,7 @@
 // live-probe-webhook-refusal.test.ts drives every such row through the real Worker app). `canary: true` marks a row
 // tooling/ops/gradual-deploy.mjs also sends to the pinned new version at every split.
 //
-// ⏱ 2026-11-21 · O-PROD-PROBES-ONE-VANTAGE-1121 (lane front-door-probes-1121; lead ruling 10:20Z): WHERE A RUN STOOD.
+// ⏱ 0fcbcc47 · O-PROD-PROBES-ONE-VANTAGE-1121 (lane front-door-probes-1121; lead ruling 10:20Z): WHERE A RUN STOOD.
 // The probes ran from one box and never said which Cloudflare edge answered them, so "the India book is served" was
 // never asked from India. Each run now reads `/cdn-cgi/trace` ONCE (on the host of the market-book row, through the
 // same liveAnswer as every probe) and prints ONE line `colo=<CODE> loc=<CC> vantage=<name>` before its probe lines;
@@ -58,7 +58,7 @@
 // when `loc` is in its `byLoc` table the body must carry that market's book (`paywall.market` and every offering's
 // `currency_code`); for any other loc it records the book it got without judging (tooling/ci/assert-live-ops.mjs
 // holds `byLoc` to services/platform/src/config.ts MARKET_PRICE_BOOKS).
-// ⏱ 2026-11-21 · review of 9b39f66e (F2, F4): A DELIBERATE "NO PRICES" IS ITS OWN VERDICT, AND A WRONG BOOK PAGES ONCE.
+// ⏱ 0fcbcc47 · review of 9b39f66e (F2, F4): A DELIBERATE "NO PRICES" IS ITS OWN VERDICT, AND A WRONG BOOK PAGES ONCE.
 // A body with `purchases_paused: true`, or whose paywall offerings the Worker withheld (`offerings: []`), is
 // `NO PRICES (deliberate: …)` — an ok verdict, named apart, never judged as "the wrong book". A row marked
 // `alert: "once-per-state"` (every marketBook row: assert-live-ops limb 11) pages ONCE when it turns (after the same
@@ -86,7 +86,9 @@
 // No secret is ever printed: a token and the heartbeat URL are read from files and never echoed.
 //
 // Usage:
+//
 //   node live-probe.mjs --once [--vantage box-a|box-b] [--dry-run] [--now <ISO>] [--fixtures <file.json>]
+//
 //   --dry-run   probe and decide, print the message, send nothing and write no state.
 //   --fixtures  answers from a JSON file keyed `<METHOD> <url>` -> {status, body} (tests; never the network).
 // Exit: 0 the run completed and every alert it owed was delivered (a failing probe is an ALERT, not an
@@ -338,7 +340,7 @@ export function decide(prev, results, nowMs, alerting) {
       }
       continue;
     }
-    // ⏱ 2026-11-21 · review of 9b39f66e F2: a once-per-state row pages again only when its failure CHANGES; it never
+    // ⏱ 0fcbcc47 · review of 9b39f66e F2: a once-per-state row pages again only when its failure CHANGES; it never
     // escalates or reminds (a wrong price book is fixed the same day, not CONTAINED in 15 minutes).
     if (r.oncePerState) {
       if (r.why !== p.paged.why) {
@@ -434,7 +436,7 @@ function fixtureAnswerer(file) {
   return async (row) => table[`${row.method} ${row.url}`] ?? { error: 'fixture has no answer' };
 }
 
-/** The owner page's legs: hoisted to tooling/ops/box-page.mjs (O-STD-BOX-PAGE-BOTH-LEGS-CODEMOD, 2026-11-20), the one shared
+/** The owner page's legs: hoisted to tooling/ops/box-page.mjs (O-STD-BOX-PAGE-BOTH-LEGS-CODEMOD, 0fcbcc47), the one shared
  *  legs pager; re-exported here for the importers that read it from this file (gh-budget.mjs). */
 export { pageLegs };
 

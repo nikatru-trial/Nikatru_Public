@@ -110,6 +110,19 @@ export function opsEnv(env = process.env) {
   return { url: String(env[OPS_URL_VAR] ?? '').trim(), secret: String(env[OPS_OWN_SECRET_VAR] || env[OPS_SECRET_VAR] || ''), oidc: () => callerToken(env) };
 }
 
+/** PURE. ⏱ af2075a7 · O-N1117-RUNNER-BUDGET-UNKNOWN-NEVER-ESCALATES: what a thrown fetch says about WHY, from its cause
+ *  chain (undici wraps it: TypeError 'fetch failed' → cause {code} or Error('unexpected redirect')). The first `code`
+ *  found ('ENOTFOUND', 'ECONNRESET', 'CERT_HAS_EXPIRED' …), else 'redirect' for a refused redirect (redirect:'error'),
+ *  else the error's name ('TimeoutError', 'AbortError'), else null. Never the message text itself: it is not printed. */
+export function thrownCauseOf(err) {
+  for (let e = err, depth = 0; e && typeof e === 'object' && depth < 4; e = e.cause, depth += 1) {
+    if (typeof e.code === 'string' && /^[A-Z][A-Z0-9_]{1,60}$/.test(e.code)) return e.code;
+    if (/redirect/i.test(String(e.message ?? ''))) return 'redirect';
+  }
+  const name = err && typeof err === 'object' ? String(err.name ?? '') : '';
+  return /^(TimeoutError|AbortError)$/.test(name) ? name : null;
+}
+
 export async function callBridgeOps({ url, secret, op, params = {}, oidc = null, now = Date.now, fetchImpl = globalThis.fetch, timeoutMs = OPS_TIMEOUT_MS, rateWaits = RATE_WAITS_MS, hiccupWaits = [], wait = sleep }) {
   if (!url) return { lost: `no bridge ops URL (${OPS_URL_VAR}) in this step` };
   if (!readUrlOk(url) || !/\/ops$/.test(new URL(url).pathname)) return { lost: `${OPS_URL_VAR} is not the bridge's https /ops URL` };
@@ -120,11 +133,16 @@ export async function callBridgeOps({ url, secret, op, params = {}, oidc = null,
   // ⏱ 2026-11-17 · O-RUNNER-BUDGET-BILLING-READ-502: the LAST send's own hiccup (none: null). A loss whose last send was
   // itself a hiccup is marked `transient: true` — an upstream outage that outlived the plan, not a refusal or a config gap.
   let lastHiccup = null;
+  // ⏱ af2075a7 · O-N1117-RUNNER-BUDGET-UNKNOWN-NEVER-ESCALATES (ruling af7d0ea51328): the LAST throw's cause (thrownCauseOf),
+  // carried up as `cause` beside `transient` so a caller can tell an outage from a wrong door. Additive: no caller's
+  // verdict changes here; assert-runner-budget.mjs permanentLoss() is the one reader (the ruling scopes it to that read).
+  let thrownCause = null;
   for (let rate = 0; ; ) {
     const caller = oidcHeaders(oidc ? await oidc() : null);
     if (caller.lost) return { lost: `${caller.lost} (/ops ${op})` };
     const body = JSON.stringify({ ...params, op, ts: Math.floor(now() / 1000) });
     let thrown = null;
+    thrownCause = null;
     try {
       res = await fetchImpl(url, {
         method: 'POST',
@@ -135,6 +153,7 @@ export async function callBridgeOps({ url, secret, op, params = {}, oidc = null,
       });
     } catch (e) {
       thrown = `the bridge's /ops ${op} call failed: ${e?.name ?? 'error'}`;
+      thrownCause = thrownCauseOf(e);
     }
     if (thrown === null && res.status === 429 && rate < rateWaits.length) {
       await res.body?.cancel().catch(() => {});
@@ -158,7 +177,7 @@ export async function callBridgeOps({ url, secret, op, params = {}, oidc = null,
       hiccups.push(hiccup);
       continue;
     }
-    if (thrown !== null) return { lost: hiccups.length ? `${thrown} — after ${hiccups.length + 1} sends (${hiccups.join(', ')})` : thrown, transient: true };
+    if (thrown !== null) return { lost: hiccups.length ? `${thrown} — after ${hiccups.length + 1} sends (${hiccups.join(', ')})` : thrown, transient: true, ...(thrownCause ? { cause: thrownCause } : {}) };
     break;
   }
   const again = hiccups.length ? { hiccups } : {};

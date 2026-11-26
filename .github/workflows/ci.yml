@@ -2097,6 +2097,7 @@ jobs:
         continue-on-error: true
         env:
           GH_TOKEN: ${{ github.token }}
+          NIKATRU_RESULTS: first-pass=${{ needs.first-pass.result }} lane-workers=${{ needs.lane-workers.result }} lane-guards=${{ needs.lane-guards.result }} lane-sites=${{ needs.lane-sites.result }} lane-apps=${{ needs.lane-apps.result }} lane-build=${{ needs.lane-build.result }} as-if-main=${{ needs.as-if-main.result }} extensions=${{ needs.extensions.result }} main-only-setup-plan=${{ needs.main-only-setup-plan.result }} main-only-setup=${{ needs.main-only-setup.result }} ci-gate=${{ needs.ci-gate.result }}
         run: python3 .github/nikatru/report.py plan .github/nikatru/ci.json
       - name: Restore hand-off 0 (generated)
         id: nikatru-slot-0
@@ -3148,6 +3149,7 @@ jobs:
         continue-on-error: true
         env:
           GH_TOKEN: ${{ github.token }}
+          NIKATRU_RESULTS: platform-db-migrate=${{ needs.platform-db-migrate.result }} deploy-web=${{ needs.deploy-web.result }} money-plan=${{ needs.money-plan.result }} sandbox-slot=${{ needs.sandbox-slot.result }} money-sandbox=${{ needs.money-sandbox.result }} money-walk-tip=${{ needs.money-walk-tip.result }} money-gate=${{ needs.money-gate.result }} deploy-workers=${{ needs.deploy-workers.result }}
         run: python3 .github/nikatru/report.py plan .github/nikatru/ci-deploys.json
       - name: Restore hand-off 0 (generated)
         id: nikatru-slot-0

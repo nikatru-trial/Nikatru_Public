@@ -14,7 +14,7 @@ on:
   workflow_dispatch:
     inputs:
       review_account:
-        description: 'The Claude account whose subscription token reviews this run: acct1..acct4, less any with an endedOn in tooling/ci/claude-accounts.json (tooling/ops/claude-accounts.mjs dispatchableAccountIds). A bridge dispatch with none takes the evidence pack''s reviewAccount.'
+        description: 'The Claude account whose subscription token reviews this run: an account of tooling/ci/claude-accounts.json, less any with an endedOn (tooling/ops/claude-accounts.mjs dispatchableAccountIds). A bridge dispatch with none takes the evidence pack''s reviewAccount.'
         required: false
         type: choice
         options:
@@ -496,7 +496,7 @@ jobs:
           NIKATRU_REVIEW_PR="${NIKATRU_PR:-}" NIKATRU_REVIEW_HEAD="${NIKATRU_HEAD_SHA:-}" NIKATRU_REVIEW_BASE="${NIKATRU_BASE_SHA:-}" node tooling/ci/claude-review-run.mjs
           NIKATRU_QUIET_EOF
           NIKATRU_SHELL="${BASH:-bash}"; if command -v cygpath >/dev/null 2>&1; then NIKATRU_SHELL="$(cygpath -w "$NIKATRU_SHELL")"; fi
-          node "$GITHUB_WORKSPACE/../.nikatru-shell/quiet-step.mjs" --name claude-review.review.7 -- "$NIKATRU_SHELL" -e "$NIKATRU_QUIET"
+          node "$GITHUB_WORKSPACE/../.nikatru-shell/quiet-step.mjs" --name claude-review.review.7 --public -- "$NIKATRU_SHELL" -e "$NIKATRU_QUIET"
       - name: Store claude-review-verdict in the bridge's private home (generated)
         if: ${{ !cancelled() }}
         timeout-minutes: 5
@@ -592,6 +592,7 @@ jobs:
         continue-on-error: true
         env:
           GH_TOKEN: ${{ github.token }}
+          NIKATRU_RESULTS: tests=${{ needs.tests.result }} review=${{ needs.review.result }}
         run: python3 .github/nikatru/report.py plan .github/nikatru/claude-review.json
       - name: Restore hand-off 0 (generated)
         id: nikatru-slot-0

@@ -784,6 +784,7 @@ jobs:
         continue-on-error: true
         env:
           GH_TOKEN: ${{ github.token }}
+          NIKATRU_RESULTS: detect=${{ needs.detect.result }} analyze=${{ needs.analyze.result }}
         run: python3 .github/nikatru/report.py plan .github/nikatru/codeql.json
       - name: Restore hand-off 0 (generated)
         id: nikatru-slot-0

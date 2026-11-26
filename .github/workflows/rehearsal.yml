@@ -1395,6 +1395,7 @@ jobs:
         continue-on-error: true
         env:
           GH_TOKEN: ${{ github.token }}
+          NIKATRU_RESULTS: first-pass=${{ needs.first-pass.result }} lane-workers=${{ needs.lane-workers.result }} lane-guards=${{ needs.lane-guards.result }} lane-sites=${{ needs.lane-sites.result }} lane-apps=${{ needs.lane-apps.result }} lane-build=${{ needs.lane-build.result }} as-if-main=${{ needs.as-if-main.result }} extensions=${{ needs.extensions.result }} main-only-setup-plan=${{ needs.main-only-setup-plan.result }} main-only-setup=${{ needs.main-only-setup.result }} rehearsal-report=${{ needs.rehearsal-report.result }}
         run: python3 .github/nikatru/report.py plan .github/nikatru/rehearsal.json
       - name: Restore hand-off 0 (generated)
         id: nikatru-slot-0

@@ -3361,6 +3361,7 @@ jobs:
         continue-on-error: true
         env:
           GH_TOKEN: ${{ github.token }}
+          NIKATRU_RESULTS: ci=${{ needs.ci.result }} e2e-suite=${{ needs.e2e-suite.result }} e2e-branded=${{ needs.e2e-branded.result }} release=${{ needs.release.result }} attest=${{ needs.attest.result }} store-publish=${{ needs.store-publish.result }} cws-token-keepalive=${{ needs.cws-token-keepalive.result }} store-key-keepalive=${{ needs.store-key-keepalive.result }} scheduled-proof-fresh=${{ needs.scheduled-proof-fresh.result }} e2e-discover=${{ needs.e2e-discover.result }} extensions-lane-accounting=${{ needs.extensions-lane-accounting.result }}
         run: python3 .github/nikatru/report.py plan .github/nikatru/extensions.json
       - name: Restore hand-off 0 (generated)
         id: nikatru-slot-0

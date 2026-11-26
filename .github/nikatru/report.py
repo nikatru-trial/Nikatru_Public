@@ -1380,11 +1380,47 @@ def list_keys(env, prefix):
     return sorted(set(keys))
 
 
+# row O-RED-DETAIL-COMPLETE (lane bl-mnm-1-mnm1126b, the hand-off past the restore slots): a quiet job hands over its
+# detail when it has ANY section, a green job's `### NOTE` too, and plan filled the REPORT_SLOTS restore slots in key
+# order. Rehearsal 45494767271 (27 red jobs) handed over more than the slots hold, and the red first-pass sorted past
+# them: `x LOST DETAIL rehearsal/first-pass` while green jobs' notes were carried. The collect job's step now hands plan
+# each needed job's result (NIKATRU_RESULTS, `<job>=<result>` words, gen-public-shell.mjs collectJob), and the slots go
+# to the hand-offs of RED jobs first (failure, cancelled, or a result not read: UNKNOWN is never read as green), then the
+# rest, each group in key order. Only a run with more red hand-offs than slots still overflows, and that stays
+# DETAIL DROPPED, named and red.
+GREEN_RESULTS = ('success', 'skipped')
+
+
+def job_results(env):
+    """{job: result} from NIKATRU_RESULTS (`<job>=<result>` words). PURE. A malformed word is skipped."""
+    out = {}
+    for word in env.get('NIKATRU_RESULTS', '').split():
+        job, sep, result = word.partition('=')
+        if sep and job:
+            out[job] = result
+    return out
+
+
+def red_first(keys, prefix, cfg, results):
+    """`keys` with every hand-off of a job that is not known green or skipped FIRST, then the rest; each group keeps its
+    order. A key whose job the config does not name, or whose result was not handed over, counts as red (unknown is not
+    green). With no results at all (an older shell) the order is unchanged. PURE."""
+    if not results:
+        return list(keys)
+    jobs = [(p, item['job']) for item in items(cfg) for p in item['members']]
+
+    def red(key):
+        member = member_of(key, prefix)
+        job = next((j for p, j in jobs if member is not None and f'{member}.'.startswith(p)), None)
+        return job is None or results.get(job) not in GREEN_RESULTS
+    return [k for k in keys if red(k)] + [k for k in keys if not red(k)]
+
+
 def plan(env, cfg):
     prefix = run_prefix(cfg, env)
     slots = int(cfg['slots'])
     try:
-        keys = [k for k in list_keys(env, prefix) if wanted(k, prefix, cfg)]
+        keys = red_first([k for k in list_keys(env, prefix) if wanted(k, prefix, cfg)], prefix, cfg, job_results(env))
     except (urllib.error.URLError, OSError, ValueError, KeyError) as e:
         # The statuses still go out (send runs `if: always()`); only the detail is lost, and said.
         with open(env['GITHUB_OUTPUT'], 'a', encoding='utf-8') as f:

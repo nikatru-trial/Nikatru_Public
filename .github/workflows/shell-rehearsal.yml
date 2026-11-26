@@ -844,6 +844,7 @@ jobs:
         continue-on-error: true
         env:
           GH_TOKEN: ${{ github.token }}
+          NIKATRU_RESULTS: plan=${{ needs.plan.result }} rehearse=${{ needs.rehearse.result }} await=${{ needs.await.result }} shell-rehearsal=${{ needs.shell-rehearsal.result }}
         run: python3 .github/nikatru/report.py plan .github/nikatru/shell-rehearsal.json
       - name: Restore hand-off 0 (generated)
         id: nikatru-slot-0

@@ -1376,11 +1376,15 @@ jobs:
           pattern: nikatru-sealed-detail-time-travel-*
           path: ${{ runner.temp }}/nikatru-sealed-cells
       - name: List this run's artifacts, to name a single flattened cell (generated)
+        if: ${{ !cancelled() }}
+        continue-on-error: true
+        timeout-minutes: 6
         shell: bash
         env:
           GH_TOKEN: ${{ github.token }}
         run: node tooling/ops/run-artifact-names.mjs --out "$RUNNER_TEMP/nikatru-run-artifacts.json"
       - name: Open each branch job's sealed red detail (generated)
+        if: ${{ !cancelled() }}
         shell: bash
         env:
           NIKATRU_DETAIL_KEY: ${{ secrets.NIKATRU_DETAIL_KEY }}

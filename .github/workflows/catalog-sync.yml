@@ -616,6 +616,7 @@ jobs:
         continue-on-error: true
         env:
           GH_TOKEN: ${{ github.token }}
+          NIKATRU_RESULTS: dry-run=${{ needs.dry-run.result }}
         run: python3 .github/nikatru/report.py plan .github/nikatru/catalog-sync.json
       - name: Restore hand-off 0 (generated)
         id: nikatru-slot-0

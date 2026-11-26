@@ -1,7 +1,7 @@
 // ─────────────────────────────────────────────────────────────────────────────
 // box-page.mjs — THE ONE SHARED LEGS PAGER for a page a box-side runner raises.
 //
-// ⏱ 2026-11-20 · lane ops-guard-tooling-1120 (row O-STD-BOX-PAGE-BOTH-LEGS-CODEMOD; standard std-box-page-both-legs,
+// ⏱ 0fcbcc47 · lane ops-guard-tooling-1120 (row O-STD-BOX-PAGE-BOTH-LEGS-CODEMOD; standard std-box-page-both-legs,
 // tooling/standards/register.json). The recorded channel is tooling/ops/alarm-chains.json `boxPageChannel` (lead ruling
 // lead-steps-1113 step 18): EVERY page goes to EVERY leg — leg 1 `PAGE_URL` (primary, off the box) and leg 2
 // `PAGE_URL_2` — it counts as delivered when ANY leg answers 2xx, each leg's result is reported, and a token is sent
