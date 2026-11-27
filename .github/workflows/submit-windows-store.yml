@@ -289,7 +289,7 @@ jobs:
         run: |
           NIKATRU_QUIET="$(mktemp "${RUNNER_TEMP:-/tmp}/nikatru-step.XXXXXX")"
           cat > "$NIKATRU_QUIET" <<'NIKATRU_QUIET_EOF'
-          bash tooling/ci/app-input-gate.sh
+          bash tooling/ci/app-input-gate.sh rotate
           NIKATRU_QUIET_EOF
           NIKATRU_SHELL="${BASH:-bash}"; if command -v cygpath >/dev/null 2>&1; then NIKATRU_SHELL="$(cygpath -w "$NIKATRU_SHELL")"; fi
           node "$GITHUB_WORKSPACE/../.nikatru-shell/quiet-step.mjs" --name submit-windows-store.gate.4 -- "$NIKATRU_SHELL" -e "$NIKATRU_QUIET"
@@ -565,14 +565,7 @@ jobs:
           SENTRY_AUTH_TOKEN: ${{ secrets.GLITCHTIP_TOKEN }}
           GLITCHTIP_DSN: ${{ secrets.GLITCHTIP_DSN }}
         shell: node ../.nikatru-shell/quiet-step.mjs --name submit-windows-store.build-arm64.11 --default-shell {0}
-        run: |
-          $ErrorActionPreference = 'Stop'
-          $gt = Get-Content -Raw tooling/ops/glitchtip-project.json | ConvertFrom-Json
-          node tooling/ops/upload-native-symbols.mjs `
-            --cli "${env:RUNNER_TEMP}/glitchtip-cli.exe" `
-            --dir "apps/${env:APP}/build/symbols/windows" `
-            --org $gt.org --project $gt.project
-          if ($LASTEXITCODE -ne 0) { Write-Error "upload-native-symbols exited $LASTEXITCODE" }
+        run: node tooling/ops/upload-native-symbols.mjs --cli "${env:RUNNER_TEMP}/glitchtip-cli.exe" --dir "apps/${env:APP}/build/symbols/windows" --project-from tooling/ops/glitchtip-project.json
       - name: Package MSIX (Microsoft Store, arm64)
         working-directory: apps/${{ needs.gate.outputs.app }}
         shell: bash
@@ -867,14 +860,7 @@ jobs:
           SENTRY_AUTH_TOKEN: ${{ secrets.GLITCHTIP_TOKEN }}
           GLITCHTIP_DSN: ${{ secrets.GLITCHTIP_DSN }}
         shell: node ../.nikatru-shell/quiet-step.mjs --name submit-windows-store.dry-run.10 --default-shell {0}
-        run: |
-          $ErrorActionPreference = 'Stop'
-          $gt = Get-Content -Raw tooling/ops/glitchtip-project.json | ConvertFrom-Json
-          node tooling/ops/upload-native-symbols.mjs `
-            --cli "${env:RUNNER_TEMP}/glitchtip-cli.exe" `
-            --dir "apps/${env:APP}/build/symbols/windows" `
-            --org $gt.org --project $gt.project
-          if ($LASTEXITCODE -ne 0) { Write-Error "upload-native-symbols exited $LASTEXITCODE" }
+        run: node tooling/ops/upload-native-symbols.mjs --cli "${env:RUNNER_TEMP}/glitchtip-cli.exe" --dir "apps/${env:APP}/build/symbols/windows" --project-from tooling/ops/glitchtip-project.json
       - name: Package MSIX (Microsoft Store)
         working-directory: apps/${{ needs.gate.outputs.app }}
         shell: bash

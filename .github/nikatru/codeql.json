@@ -7,18 +7,18 @@
   "sendBudgetS": 360,
   "redLogBudgetS": 240,
   "gate": {
-    "job": "analyze",
+    "job": "verdict",
     "context": "codeql",
     "members": [
-      "codeql.analyze."
+      "codeql.verdict."
     ]
   },
   "lanes": [
     {
-      "job": "detect",
-      "context": "codeql/detect",
+      "job": "codeql",
+      "context": "codeql/codeql",
       "members": [
-        "codeql.detect."
+        "codeql-unit."
       ]
     }
   ],

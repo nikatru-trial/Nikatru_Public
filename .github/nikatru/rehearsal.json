@@ -32,7 +32,8 @@
       "job": "lane-guards",
       "context": "rehearsal/lane-guards",
       "members": [
-        "lane-guards."
+        "lane-guards.",
+        "codeql-unit."
       ]
     },
     {

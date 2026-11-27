@@ -156,6 +156,8 @@ jobs:
       matrix: ${{ steps.plan.outputs.matrix }}
       dry_run: ${{ steps.plan.outputs.dry_run }}
       keys: ${{ steps.plan.outputs.keys }}
+      translate_model: ${{ steps.plan.outputs.translate_model }}
+      qa_model: ${{ steps.plan.outputs.qa_model }}
     steps:
       - name: Check out the private tree (generated)
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
@@ -537,7 +539,7 @@ jobs:
           NIKATRU_WAVE_ACCOUNT: ${{ matrix.translator }}
           NIKATRU_WAVE_DIR: ${{ runner.temp }}/wave
           NIKATRU_WAVE_LANE: gha-t-${{ github.run_id }}-${{ matrix.id }}
-          NIKATRU_WAVE_MODEL: claude-opus-5-5
+          NIKATRU_WAVE_MODEL: ${{ needs.plan.outputs.translate_model }}
           CLAUDE_CODE_OAUTH_TOKEN: ${{ (matrix.translator == 'acct1' && secrets.CLAUDE_CODE_OAUTH_TOKEN_ACCT1) || (matrix.translator == 'acct2' && secrets.CLAUDE_CODE_OAUTH_TOKEN_ACCT2) || (matrix.translator == 'acct3' && secrets.CLAUDE_CODE_OAUTH_TOKEN_ACCT3) || (matrix.translator == 'acct4' && secrets.CLAUDE_CODE_OAUTH_TOKEN_ACCT4) || '' }}
         run: |
           NIKATRU_QUIET="$(mktemp "${RUNNER_TEMP:-/tmp}/nikatru-step.XXXXXX")"
@@ -732,7 +734,7 @@ jobs:
           NIKATRU_WAVE_ACCOUNT: ${{ matrix.qa }}
           NIKATRU_WAVE_DIR: ${{ runner.temp }}/wave
           NIKATRU_WAVE_LANE: gha-q-${{ github.run_id }}-${{ matrix.id }}
-          NIKATRU_WAVE_MODEL: claude-opus-5-5
+          NIKATRU_WAVE_MODEL: ${{ needs.plan.outputs.qa_model }}
           CLAUDE_CODE_OAUTH_TOKEN: ${{ (matrix.qa == 'acct1' && secrets.CLAUDE_CODE_OAUTH_TOKEN_ACCT1) || (matrix.qa == 'acct2' && secrets.CLAUDE_CODE_OAUTH_TOKEN_ACCT2) || (matrix.qa == 'acct3' && secrets.CLAUDE_CODE_OAUTH_TOKEN_ACCT3) || (matrix.qa == 'acct4' && secrets.CLAUDE_CODE_OAUTH_TOKEN_ACCT4) || '' }}
         run: |
           NIKATRU_QUIET="$(mktemp "${RUNNER_TEMP:-/tmp}/nikatru-step.XXXXXX")"

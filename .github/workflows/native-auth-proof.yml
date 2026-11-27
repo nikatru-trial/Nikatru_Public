@@ -46,18 +46,19 @@ on:
         default: ''
         type: string
       observed_window:
-        description: "sign_in: form and targets: android only. <ISO>/<ISO> (UTC, at most 2 h, ended, within 6 days): the window a person signed in, signed up and recovered on a store-delivered build. Empty (default): no observed leg."
+        description: "sign_in: form and targets: android, or targets: ios, only. <ISO>/<ISO> (UTC, at most 2 h, ended, within 6 days): the window a person signed in (android: and signed up and recovered) on a store-delivered build. Empty (default): no observed leg."
         required: false
         default: ''
         type: string
       observed_channel:
-        description: 'The Play Integrity channel the observed build must have attested as: play (Google Play delivered) or sideload (the pinned sideload build).'
+        description: 'What the observed build must have attested as: play (Google Play delivered) or sideload (the pinned sideload build) for targets android; appstore (production App Attest: TestFlight or App Store) for targets ios.'
         type: choice
         required: false
         default: play
         options:
           - play
           - sideload
+          - appstore
       delete_reprove:
         description: 'true: run ONLY the delete-reprove job — a desktop password account deleted through the browser re-proof, on each desktop target asked (macos, windows, linux).'
         required: false
@@ -368,26 +369,12 @@ jobs:
         id: app
         env:
           APP_INPUT: ${{ inputs.app }}
-          EVENT: ${{ (github.event.client_payload.event || github.event_name) }}
+          EVENT_NAME: ${{ (github.event.client_payload.event || github.event_name) }}
           WORKER_SLOT: ${{ inputs.worker_slot }}
         run: |
           NIKATRU_QUIET="$(mktemp "${RUNNER_TEMP:-/tmp}/nikatru-step.XXXXXX")"
           cat > "$NIKATRU_QUIET" <<'NIKATRU_QUIET_EOF'
-          set -euo pipefail
-          # why: ⏱ 2026-10-26 · cron-off-github-1026: the platform Worker's slot (worker_slot set) IS the schedule, so it
-          # proves the whole set. `app` is required, so the Worker sends the placeholder `weekly-rotation`, never read
-          # as an app: a worker-slot run carrying any other value is refused; a hand dispatch keeps its own check.
-          if [ -n "$WORKER_SLOT" ] && [ "$APP_INPUT" != weekly-rotation ]; then
-            echo "::error::a worker-slot run (${WORKER_SLOT}) proves every app; its app input must be the placeholder weekly-rotation, not '${APP_INPUT}'"
-            exit 1
-          fi
-          if [ "$EVENT" = schedule ] || [ -n "$WORKER_SLOT" ]; then
-            apps="$(node tooling/ci/assert-release-lane-generic.mjs --emit-apps)"
-          else
-            apps="$(node tooling/ci/assert-release-lane-generic.mjs --emit-apps --app "$APP_INPUT")"
-          fi
-          echo "apps: ${apps}"
-          echo "apps=${apps}" >> "$GITHUB_OUTPUT"
+          bash tooling/ci/app-input-gate.sh every-app
           NIKATRU_QUIET_EOF
           NIKATRU_SHELL="${BASH:-bash}"; if command -v cygpath >/dev/null 2>&1; then NIKATRU_SHELL="$(cygpath -w "$NIKATRU_SHELL")"; fi
           node "$GITHUB_WORKSPACE/../.nikatru-shell/quiet-step.mjs" --name native-auth-proof.gate.5 -- "$NIKATRU_SHELL" -e "$NIKATRU_QUIET"
@@ -398,7 +385,9 @@ jobs:
           EVENT: ${{ (github.event.client_payload.event || github.event_name) }}
           WORKER_SLOT: ${{ inputs.worker_slot }}
           OBSERVED_WINDOW: ${{ inputs.observed_window }}
+          OBSERVED_CHANNEL: ${{ inputs.observed_channel }}
           SIGN_IN_FORM: ${{ inputs.sign_in == 'form' }}
+          REF: ${{ (github.event.client_payload.ref || inputs.private_ref || 'refs/heads/main') }}
         run: |
           NIKATRU_QUIET="$(mktemp "${RUNNER_TEMP:-/tmp}/nikatru-step.XXXXXX")"
           cat > "$NIKATRU_QUIET" <<'NIKATRU_QUIET_EOF'
@@ -432,12 +421,25 @@ jobs:
               exit 1
             fi
           fi
-          # why: an observed dispatch is the android-observed job's proof alone (review of #1189, finding 6): with any
-          # other sign_in its job never runs, and with any other target the form legs it would also run can red the run
-          # the register cites. So it is refused, as a bad target is.
+          # why: an observed dispatch is the android-observed or ios-observed job's proof alone (review of #1189,
+          # finding 6): with any other sign_in its job never runs, and with any other target the form legs it would
+          # also run can red the run the register cites. Each target takes only its own channel. ios-observed is
+          # main-only (its `if:`), so targets=ios off main would skip every job but this one and conclude green
+          # having proved nothing: refused here, before any job runs.
           if [ -n "${OBSERVED_WINDOW:-}" ]; then
-            if [ "${SIGN_IN_FORM:-}" != true ] || [ "$targets" != android ]; then
-              echo "::error title=Targets::observed_window needs sign_in=form and targets=android (got sign_in form=${SIGN_IN_FORM:-false}, targets=${targets})"
+            if [ "${SIGN_IN_FORM:-}" != true ] || { [ "$targets" != android ] && [ "$targets" != ios ]; }; then
+              echo "::error title=Targets::observed_window needs sign_in=form and targets=android or targets=ios (got sign_in form=${SIGN_IN_FORM:-false}, targets=${targets})"
+              exit 1
+            fi
+            case "${targets}:${OBSERVED_CHANNEL:-}" in
+              android:play|android:sideload|ios:appstore) ;;
+              *)
+                echo "::error title=Targets::observed_channel '${OBSERVED_CHANNEL:-}' is not one targets=${targets} attests as (android: play or sideload; ios: appstore)"
+                exit 1
+                ;;
+            esac
+            if [ "$targets" = ios ] && [ "${REF:-}" != refs/heads/main ]; then
+              echo "::error title=Targets::an iOS observed run proves from main only (ios-observed is main-only); this run is on '${REF:-}', where every job would skip"
               exit 1
             fi
           fi
@@ -1006,6 +1008,150 @@ jobs:
           NIKATRU_BRIDGE_ARTIFACT_URL: https://gh-bridge.nikatru.workers.dev/artifact
         run: node tooling/ops/bridge-artifact.mjs upload
 
+  ios-observed:
+    name: iOS — observed, a store-delivered build signs in at the Worker · private commit ${{ needs.gate.outputs.sha }}
+    needs: [nikatru-pin, nikatru-approve, gate]
+    if: needs.nikatru-pin.result == 'success' && (needs.nikatru-approve.result == 'success' || (needs.nikatru-approve.result == 'skipped' && !((inputs.private_ref || '') != ''))) && !cancelled() && !failure() && needs.gate.result == 'success' && ((github.event.client_payload.ref || inputs.private_ref || 'refs/heads/main') == 'refs/heads/main' && inputs.sign_in == 'form' && inputs.observed_window != '' && (needs.gate.outputs.targets == 'all' || contains(format(',{0},', needs.gate.outputs.targets), ',ios,')))
+    strategy:
+      fail-fast: false
+      matrix:
+        app: ${{ fromJSON(needs.gate.outputs.apps) }}
+    runs-on: ubuntu-24.04
+    timeout-minutes: 10
+    permissions:
+      contents: read
+      id-token: write
+    env:
+      APP: ${{ matrix.app }}
+    steps:
+      - name: Check out the private tree (generated)
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
+        with:
+          repository: ${{ env.NIKATRU_PRIVATE_REPO }}
+          ref: ${{ needs.nikatru-pin.outputs.sha || 'nikatru-pin-did-not-succeed..' }}
+          ssh-key: ${{ secrets.PRIVATE_DEPLOY_KEY }}
+          persist-credentials: false
+      - name: Name the private commit (generated)
+        shell: bash
+        working-directory: ${{ github.workspace }}
+        env:
+          NIKATRU_P_EVENT: ${{ github.event.client_payload.event || github.event_name }}
+          NIKATRU_P_REF: ${{ github.event.client_payload.ref || inputs.private_ref || 'refs/heads/main' }}
+          NIKATRU_P_BASE_SHA: ${{ github.event.client_payload.base_sha }}
+          NIKATRU_P_BASE_REF: ${{ github.event.client_payload.base_ref }}
+          NIKATRU_P_PR: ${{ github.event.client_payload.pr }}
+          NIKATRU_P_PR_CREATED_AT: ${{ github.event.client_payload.pr_created_at }}
+          NIKATRU_P_DRAFT: ${{ github.event.client_payload.draft }}
+          NIKATRU_P_SHA: ${{ github.event.client_payload.sha }}
+        run: |
+          if [ "$NIKATRU_P_EVENT" = pull_request ]; then
+            set -- $(git cat-file -p HEAD | sed -n '1,/^$/s/^parent //p')
+            if [ "${2:-}" != "$NIKATRU_P_SHA" ]; then
+              echo "::error::the checked-out merge of PR #$NIKATRU_P_PR is not the merge of the dispatched head $NIKATRU_P_SHA (its second parent is ${2:-none}); the nikatru-pin job pins it — re-run the whole workflow, not this job"
+              exit 1
+            fi
+          fi
+          {
+            echo "NIKATRU_SHA=$(git rev-parse HEAD)"
+            echo "NIKATRU_HEAD_SHA=${NIKATRU_P_SHA:-$(git rev-parse HEAD)}"
+            echo "NIKATRU_EVENT_NAME=$NIKATRU_P_EVENT"
+            echo "NIKATRU_REF=$NIKATRU_P_REF"
+            echo "NIKATRU_REF_NAME=${NIKATRU_P_REF#refs/*/}"
+            echo "NIKATRU_BASE_SHA=$NIKATRU_P_BASE_SHA"
+            echo "NIKATRU_BASE_REF=$NIKATRU_P_BASE_REF"
+            echo "NIKATRU_PR=$NIKATRU_P_PR"
+            echo "NIKATRU_PR_CREATED_AT=$NIKATRU_P_PR_CREATED_AT"
+            echo "NIKATRU_DRAFT=$NIKATRU_P_DRAFT"
+          } >> "$GITHUB_ENV"
+      - name: Check out this shell repository's own step wrapper and reporter (generated)
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
+        with:
+          path: .nikatru-shell
+          sparse-checkout: .github/nikatru
+          persist-credentials: false
+      - name: Stage the shell's own copies outside the private checkout (generated)
+        shell: bash
+        working-directory: ${{ github.workspace }}
+        run: |
+          rm -rf ../.nikatru-shell
+          mv .nikatru-shell/.github/nikatru ../.nikatru-shell
+          rm -rf .nikatru-shell
+      - name: Check out private main's composite actions (generated)
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
+        with:
+          repository: ${{ env.NIKATRU_PRIVATE_REPO }}
+          ref: refs/heads/main
+          path: .nikatru-trusted
+          sparse-checkout: .github/actions
+          ssh-key: ${{ secrets.PRIVATE_DEPLOY_KEY }}
+          persist-credentials: false
+      - name: Keep private main's composite actions out of the branch's tree (generated)
+        id: nikatru-trusted-tree
+        shell: bash
+        working-directory: ${{ github.workspace }}
+        run: |
+          if x="$(git rev-parse --git-path info/exclude 2>/dev/null)"; then mkdir -p "${x%/*}"; grep -qxF '/.nikatru-trusted/' "$x" 2>/dev/null || printf '/.nikatru-trusted/\n' >> "$x"; fi
+          NIKATRU_TRUSTED_GIT="$(command -v git)"; case "$NIKATRU_TRUSTED_GIT" in /*) ;; *) echo "::error::git does not resolve to an absolute path ($NIKATRU_TRUSTED_GIT)"; exit 1 ;; esac
+          tree="$(for v in $(compgen -e); do case "$v" in (GIT_*) unset "$v" ;; esac; done && d="$RUNNER_TEMP/nikatru-trusted.$$.$RANDOM" && [ ! -e "$d.git" ] && [ ! -e "$d.index" ] && export GIT_DIR="$d.git" GIT_INDEX_FILE="$d.index" GIT_CONFIG_GLOBAL=/dev/null GIT_CONFIG_NOSYSTEM=1 && "$NIKATRU_TRUSTED_GIT" init -q --bare --template= "$GIT_DIR" && "$NIKATRU_TRUSTED_GIT" -C .nikatru-trusted --work-tree=. add -A -f .github/actions && "$NIKATRU_TRUSTED_GIT" write-tree --prefix=.github/actions/)"
+          main="$(git -C .nikatru-trusted rev-parse HEAD:.github/actions)"
+          if [ -z "$tree" ] || [ "$tree" != "$main" ]; then echo "::error::.nikatru-trusted: the working tree ($tree) is not private main's .github/actions ($main)"; exit 1; fi
+          rm -rf "$RUNNER_TEMP/nikatru-trusted-actions" && mkdir -p "$RUNNER_TEMP/nikatru-trusted-actions" && cp -R .nikatru-trusted/.github "$RUNNER_TEMP/nikatru-trusted-actions/"
+          echo "tree=$tree" >> "$GITHUB_OUTPUT"
+          echo "git=$NIKATRU_TRUSTED_GIT" >> "$GITHUB_OUTPUT"
+      - name: Verify private main's composite actions are the checked-out tree (generated)
+        shell: bash
+        working-directory: ${{ github.workspace }}
+        env:
+          NIKATRU_TRUSTED_TREE: ${{ steps.nikatru-trusted-tree.outputs.tree }}
+          NIKATRU_TRUSTED_GIT: ${{ steps.nikatru-trusted-tree.outputs.git }}
+        run: |
+          case "$NIKATRU_TRUSTED_GIT" in /*) ;; *) echo "::error::.nikatru-trusted: no git path was recorded before the job's own steps ($NIKATRU_TRUSTED_GIT)"; exit 1 ;; esac
+          rm -rf .nikatru-trusted/.github && mkdir -p .nikatru-trusted && cp -R "$RUNNER_TEMP/nikatru-trusted-actions/.github" .nikatru-trusted/
+          if x="$(git rev-parse --git-path info/exclude 2>/dev/null)"; then mkdir -p "${x%/*}"; grep -qxF '/.nikatru-trusted/' "$x" 2>/dev/null || printf '/.nikatru-trusted/\n' >> "$x"; fi
+          tree="$(for v in $(compgen -e); do case "$v" in (GIT_*) unset "$v" ;; esac; done && d="$RUNNER_TEMP/nikatru-trusted.$$.$RANDOM" && [ ! -e "$d.git" ] && [ ! -e "$d.index" ] && export GIT_DIR="$d.git" GIT_INDEX_FILE="$d.index" GIT_CONFIG_GLOBAL=/dev/null GIT_CONFIG_NOSYSTEM=1 && "$NIKATRU_TRUSTED_GIT" init -q --bare --template= "$GIT_DIR" && "$NIKATRU_TRUSTED_GIT" -C .nikatru-trusted --work-tree=. add -A -f .github/actions && "$NIKATRU_TRUSTED_GIT" write-tree --prefix=.github/actions/)"
+          if [ -z "$NIKATRU_TRUSTED_TREE" ] || [ "$tree" != "$NIKATRU_TRUSTED_TREE" ]; then echo "::error::.nikatru-trusted is not the tree checked out from private main ($NIKATRU_TRUSTED_TREE, now $tree): a step of this job edited its copy"; exit 1; fi
+      - uses: ./.nikatru-trusted/.github/actions/setup-node
+        env:
+          NIKATRU_REF: ${{ github.event.client_payload.ref || inputs.private_ref || 'refs/heads/main' }}
+          NIKATRU_EVENT_NAME: ${{ github.event.client_payload.event || github.event_name }}
+          NIKATRU_PR: ${{ github.event.client_payload.pr }}
+      - name: Resolve this app's databases from its Worker's wrangler file
+        id: backend
+        run: |
+          NIKATRU_QUIET="$(mktemp "${RUNNER_TEMP:-/tmp}/nikatru-step.XXXXXX")"
+          cat > "$NIKATRU_QUIET" <<'NIKATRU_QUIET_EOF'
+          node tooling/e2e/backend.mjs --app "$APP" --emit-output
+          NIKATRU_QUIET_EOF
+          NIKATRU_SHELL="${BASH:-bash}"; if command -v cygpath >/dev/null 2>&1; then NIKATRU_SHELL="$(cygpath -w "$NIKATRU_SHELL")"; fi
+          node "$GITHUB_WORKSPACE/../.nikatru-shell/quiet-step.mjs" --name native-auth-proof.ios-observed.3 -- "$NIKATRU_SHELL" -e "$NIKATRU_QUIET"
+      - name: The observed proof — the Worker admitted the build's attested sign-in
+        env:
+          CLOUDFLARE_ACCOUNT_ID: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
+          CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_READ_TOKEN }}
+          CLOUDFLARE_D1_TOKEN: ${{ secrets.CLOUDFLARE_D1_TOKEN }}
+          PLATFORM_D1_DATABASE_ID: ${{ steps.backend.outputs.platform_db }}
+          WINDOW: ${{ inputs.observed_window }}
+          CHANNEL: ${{ inputs.observed_channel }}
+        run: |
+          NIKATRU_QUIET="$(mktemp "${RUNNER_TEMP:-/tmp}/nikatru-step.XXXXXX")"
+          cat > "$NIKATRU_QUIET" <<'NIKATRU_QUIET_EOF'
+          node tooling/e2e/native_auth_proof.mjs --app "$APP" --target ios --sign-in form --expect-sign-in --observed --window "$WINDOW" --channel "$CHANNEL"
+          NIKATRU_QUIET_EOF
+          NIKATRU_SHELL="${BASH:-bash}"; if command -v cygpath >/dev/null 2>&1; then NIKATRU_SHELL="$(cygpath -w "$NIKATRU_SHELL")"; fi
+          node "$GITHUB_WORKSPACE/../.nikatru-shell/quiet-step.mjs" --name native-auth-proof.ios-observed.4 -- "$NIKATRU_SHELL" -e "$NIKATRU_QUIET"
+      - name: Store this job's red detail in the bridge's private home (generated)
+        if: always()
+        continue-on-error: true
+        shell: bash
+        working-directory: ${{ github.workspace }}
+        env:
+          NIKATRU_PATHS: ${{ runner.temp }}/report-detail.md
+          NIKATRU_ARTIFACT_NAME: report-detail-native-auth-proof.ios-observed.${{ strategy.job-index }}
+          NIKATRU_IF_NO_FILES: ignore
+          BRIDGE_ARTIFACT_SECRET: ${{ secrets.BRIDGE_ARTIFACT_SECRET }}
+          NIKATRU_BRIDGE_ARTIFACT_URL: https://gh-bridge.nikatru.workers.dev/artifact
+        run: node tooling/ops/bridge-artifact.mjs upload
+
   ios:
     name: iOS — simulator, form to Home, the app opens its own callback
     needs: [nikatru-pin, nikatru-approve, gate]
@@ -1016,7 +1162,7 @@ jobs:
         level:
           - targetSdk
           - minSdk
-    if: needs.nikatru-pin.result == 'success' && (needs.nikatru-approve.result == 'success' || (needs.nikatru-approve.result == 'skipped' && !((inputs.private_ref || '') != ''))) && !cancelled() && !failure() && needs.gate.result == 'success' && (needs.gate.outputs.darwin == 'true' && (needs.gate.outputs.targets == 'all' || contains(format(',{0},', needs.gate.outputs.targets), ',ios,')))
+    if: needs.nikatru-pin.result == 'success' && (needs.nikatru-approve.result == 'success' || (needs.nikatru-approve.result == 'skipped' && !((inputs.private_ref || '') != ''))) && !cancelled() && !failure() && needs.gate.result == 'success' && (inputs.observed_window == '' && needs.gate.outputs.darwin == 'true' && (needs.gate.outputs.targets == 'all' || contains(format(',{0},', needs.gate.outputs.targets), ',ios,')))
     runs-on: macos-26
     timeout-minutes: 60
     permissions:
@@ -2557,7 +2703,7 @@ jobs:
       fail-fast: false
       matrix:
         app: ${{ fromJSON(needs.gate.outputs.apps) }}
-    if: needs.nikatru-pin.result == 'success' && (needs.nikatru-approve.result == 'success' || (needs.nikatru-approve.result == 'skipped' && !((inputs.private_ref || '') != ''))) && !cancelled() && !failure() && needs.gate.result == 'success' && (needs.gate.outputs.darwin == 'true' && (needs.gate.outputs.targets == 'all' || contains(format(',{0},', needs.gate.outputs.targets), ',ios,')))
+    if: needs.nikatru-pin.result == 'success' && (needs.nikatru-approve.result == 'success' || (needs.nikatru-approve.result == 'skipped' && !((inputs.private_ref || '') != ''))) && !cancelled() && !failure() && needs.gate.result == 'success' && (inputs.observed_window == '' && needs.gate.outputs.darwin == 'true' && (needs.gate.outputs.targets == 'all' || contains(format(',{0},', needs.gate.outputs.targets), ',ios,')))
     runs-on: macos-26
     timeout-minutes: 45
     permissions:
@@ -3338,7 +3484,7 @@ jobs:
 
   nikatru-ran:
     name: Fail this run if it ran nothing (generated)
-    needs: [gate, android, android-observed, ios, macos, windows, linux, delete-reprove, android-oauth-return, ios-oauth-return, macos-oauth-return, windows-oauth-return, linux-oauth-return]
+    needs: [gate, android, android-observed, ios-observed, ios, macos, windows, linux, delete-reprove, android-oauth-return, ios-oauth-return, macos-oauth-return, windows-oauth-return, linux-oauth-return]
     if: "!cancelled()"
     runs-on: ubuntu-24.04
     defaults:
@@ -3358,7 +3504,7 @@ jobs:
       - name: Fail when every job of this run was skipped (generated)
         shell: bash
         env:
-          NIKATRU_RESULTS: gate=${{ needs.gate.result }} android=${{ needs.android.result }} android-observed=${{ needs.android-observed.result }} ios=${{ needs.ios.result }} macos=${{ needs.macos.result }} windows=${{ needs.windows.result }} linux=${{ needs.linux.result }} delete-reprove=${{ needs.delete-reprove.result }} android-oauth-return=${{ needs.android-oauth-return.result }} ios-oauth-return=${{ needs.ios-oauth-return.result }} macos-oauth-return=${{ needs.macos-oauth-return.result }} windows-oauth-return=${{ needs.windows-oauth-return.result }} linux-oauth-return=${{ needs.linux-oauth-return.result }}
+          NIKATRU_RESULTS: gate=${{ needs.gate.result }} android=${{ needs.android.result }} android-observed=${{ needs.android-observed.result }} ios-observed=${{ needs.ios-observed.result }} ios=${{ needs.ios.result }} macos=${{ needs.macos.result }} windows=${{ needs.windows.result }} linux=${{ needs.linux.result }} delete-reprove=${{ needs.delete-reprove.result }} android-oauth-return=${{ needs.android-oauth-return.result }} ios-oauth-return=${{ needs.ios-oauth-return.result }} macos-oauth-return=${{ needs.macos-oauth-return.result }} windows-oauth-return=${{ needs.windows-oauth-return.result }} linux-oauth-return=${{ needs.linux-oauth-return.result }}
         run: |
           for r in $NIKATRU_RESULTS; do
             if [ "${r#*=}" != skipped ]; then echo "ran: $NIKATRU_RESULTS"; exit 0; fi

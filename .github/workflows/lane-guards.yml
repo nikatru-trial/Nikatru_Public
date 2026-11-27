@@ -4240,12 +4240,26 @@ jobs:
           key: nikatru-detail-${{ github.run_id }}-${{ github.run_attempt }}-lane-guards.security-scan.${{ strategy.job-index }}
           enableCrossOsArchive: true
 
-  codeql-pr-rule:
-    name: Security — this pull request's CodeQL verdict
+  codeql:
+    name: CodeQL
     needs: detect
     if: needs.detect.outputs.affected == 'true'
+    uses: ./.github/workflows/codeql-unit.yml
+    with:
+      pull_request_only: true
+      nikatru_sha: ${{ inputs.nikatru_sha }}
+    permissions:
+      contents: read
+    secrets:
+      PRIVATE_DEPLOY_KEY: ${{ secrets.PRIVATE_DEPLOY_KEY }}
+      NIKATRU_DETAIL_KEY: ${{ secrets.NIKATRU_DETAIL_KEY }}
+
+  codeql-pr-rule:
+    name: Security — this pull request's CodeQL verdict
+    needs: [detect, codeql]
+    if: needs.detect.outputs.affected == 'true'
     runs-on: ubuntu-24.04
-    timeout-minutes: 30
+    timeout-minutes: 10
     permissions:
       contents: read
     steps:
@@ -4683,7 +4697,7 @@ jobs:
 
   lane-verdict:
     name: lane-verdict
-    needs: [detect, guard-tests, guard-tests-floor, guard-meta, guards-platform, guards-legal, guards-store, guards-chassis, security-scan, codeql-pr-rule, d1-local-sql, rename-drill]
+    needs: [detect, guard-tests, guard-tests-floor, guard-meta, guards-platform, guards-legal, guards-store, guards-chassis, security-scan, codeql, codeql-pr-rule, d1-local-sql, rename-drill]
     if: always()
     runs-on: ubuntu-24.04
     timeout-minutes: 5

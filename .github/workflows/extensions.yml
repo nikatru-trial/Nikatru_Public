@@ -495,28 +495,11 @@ jobs:
           node "$GITHUB_WORKSPACE/../.nikatru-shell/quiet-step.mjs" --name extensions.e2e-suite.5 -- "$NIKATRU_SHELL" -e "$NIKATRU_QUIET"
       - name: Xvfb, for suites that need a real display
         timeout-minutes: 9
+        working-directory: .
         run: |
           NIKATRU_QUIET="$(mktemp "${RUNNER_TEMP:-/tmp}/nikatru-step.XXXXXX")"
           cat > "$NIKATRU_QUIET" <<'NIKATRU_QUIET_EOF'
-          cached_install() {
-            if [ -f "$GITHUB_WORKSPACE/tooling/ops/ci-install-cache.mjs" ]; then
-              node "$GITHUB_WORKSPACE/tooling/ops/ci-install-cache.mjs" run --cache-dir "${DEBS_DIR:-$RUNNER_TEMP/ci-install-debs}" --attempt-minutes "${ATTEMPT_MINUTES:-4}" -- "$@"
-              return
-            fi
-            bound="$(awk -v m="${ATTEMPT_MINUTES:-4}" 'BEGIN { print int(m * 120) + 1 }')"
-            echo "::warning title=Install uncached::this checkout has no tooling/ops/ci-install-cache.mjs (it predates #981): $* runs uncached, bounded at ${bound} s"
-            if [ "$1" = sudo ]; then timeout -k 15 "$bound" sudo apt-get update; fi
-            timeout -k 15 "$bound" "$@"
-          }
-          cached_install \
-            sudo apt-get install -y \
-            xvfb
-          # ⏱ 2026-11-17 · integ-m2-1117b main merge: the xvfb-run PATH check is the end of this step, not a second
-          # copied step (std-one-app-input-gate, assert-workflow-hardening limb 22).
-          if ! command -v xvfb-run; then
-            echo "::error::xvfb is installed but xvfb-run is not on PATH; a suite that declares e2e-display: headful cannot run"
-            exit 1
-          fi
+          bash tooling/ci/steps/xvfb-install.sh
           NIKATRU_QUIET_EOF
           NIKATRU_SHELL="${BASH:-bash}"; if command -v cygpath >/dev/null 2>&1; then NIKATRU_SHELL="$(cygpath -w "$NIKATRU_SHELL")"; fi
           node "$GITHUB_WORKSPACE/../.nikatru-shell/quiet-step.mjs" --name extensions.e2e-suite.6 -- "$NIKATRU_SHELL" -e "$NIKATRU_QUIET"

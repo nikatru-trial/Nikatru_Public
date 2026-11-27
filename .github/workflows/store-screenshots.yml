@@ -344,19 +344,7 @@ jobs:
         run: |
           NIKATRU_QUIET="$(mktemp "${RUNNER_TEMP:-/tmp}/nikatru-step.XXXXXX")"
           cat > "$NIKATRU_QUIET" <<'NIKATRU_QUIET_EOF'
-          set -euo pipefail
-          if [ -z "$APP_INPUT" ]; then
-            if [ "$DRY_RUN" != "true" ] && [ "$REF" = "refs/heads/main" ]; then
-              echo "::error title=Every app is a dry run::an empty app input captures every app of the workspace, and only as a dry run: each capture job declares one proposal branch per run, so two apps' sets would propose onto one. Dispatch -f app=<id>, or -f dry_run=true."
-              exit 1
-            fi
-            apps="$(node tooling/ci/assert-release-lane-generic.mjs --emit-apps)"
-          else
-            apps="$(node tooling/ci/assert-release-lane-generic.mjs --emit-apps --app "$APP_INPUT")"
-          fi
-          echo "app=${APP_INPUT}" >> "$GITHUB_OUTPUT"
-          echo "apps=${apps}" >> "$GITHUB_OUTPUT"
-          echo "Capturing: ${apps}" >> "${GITHUB_STEP_SUMMARY:-/dev/null}"
+          bash tooling/ci/app-input-gate.sh one-or-every
           NIKATRU_QUIET_EOF
           NIKATRU_SHELL="${BASH:-bash}"; if command -v cygpath >/dev/null 2>&1; then NIKATRU_SHELL="$(cygpath -w "$NIKATRU_SHELL")"; fi
           node "$GITHUB_WORKSPACE/../.nikatru-shell/quiet-step.mjs" --name store-screenshots.gate.5 -- "$NIKATRU_SHELL" -e "$NIKATRU_QUIET"

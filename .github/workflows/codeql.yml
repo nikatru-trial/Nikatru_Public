@@ -10,7 +10,7 @@ run-name: "${{ !(github.event.client_payload.pr) && ((github.event.schedule || g
 
 on:
   repository_dispatch:
-    types: [ci, rehearsal, main]
+    types: [main]
   workflow_dispatch:
     inputs:
       worker_slot:
@@ -28,13 +28,13 @@ permissions:
   contents: read
 
 concurrency:
-  group: codeql-${{ (github.event.client_payload.event || github.event_name) == 'pull_request' && (github.event.client_payload.pr || github.event.client_payload.ref || 'refs/heads/main') || github.run_id }}
-  cancel-in-progress: ${{ (github.event.client_payload.event || github.event_name) == 'pull_request' }}
+  group: codeql-${{ github.run_id }}
+  cancel-in-progress: false
 
 jobs:
   nikatru-pin:
     name: Pin the private commit this run builds (generated)
-    if: (github.event_name != 'repository_dispatch' || github.event.client_payload.event == 'pull_request' || (github.event.client_payload.event == 'push' && github.event.client_payload.ref == 'refs/heads/main'))
+    if: (github.event_name != 'repository_dispatch' || (github.event.client_payload.event == 'push' && github.event.client_payload.ref == 'refs/heads/main'))
     runs-on: ubuntu-24.04
     defaults:
       run:
@@ -64,202 +64,7 @@ jobs:
           NIKATRU_P_EVENT: ${{ github.event.client_payload.event || github.event_name }}
           NIKATRU_P_SHA: ${{ github.event.client_payload.sha }}
           NIKATRU_ATTEMPT: '1'
-          NIKATRU_ATTEMPTS: '6'
-          NIKATRU_WAIT_S: '10'
-        run: |
-          if [ "$NIKATRU_CHECKOUT" != success ]; then
-            echo "attempt $NIKATRU_ATTEMPT: the candidate could not be checked out"
-          else
-            sha="$(git rev-parse HEAD)"
-            if [ "$NIKATRU_P_EVENT" = pull_request ]; then
-              if ! [[ $NIKATRU_P_SHA =~ ^[0-9a-f]{40}$ ]]; then echo "::error::the dispatch of a pull request names no 40-hex head sha (\"$NIKATRU_P_SHA\"): nothing is pinned"; exit 1; fi
-              second="$(git cat-file -p HEAD | sed -n '1,/^$/s/^parent //p' | sed -n 2p)"
-              if [ "$second" = "$NIKATRU_P_SHA" ]; then echo "sha=$sha" >> "$GITHUB_OUTPUT"; exit 0; fi
-              echo "attempt $NIKATRU_ATTEMPT: $sha is not yet the merge of the dispatched head $NIKATRU_P_SHA (its second parent is ${second:-none})"
-            else
-              echo "sha=$sha" >> "$GITHUB_OUTPUT"
-              exit 0
-            fi
-          fi
-          if [ "$NIKATRU_ATTEMPT" -lt "$NIKATRU_ATTEMPTS" ]; then sleep "$NIKATRU_WAIT_S"; fi
-      - name: Check out the candidate commit, attempt 2 (generated)
-        id: nikatru-pin-checkout-2
-        if: steps.nikatru-pin-test-1.outputs.sha == ''
-        continue-on-error: true
-        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
-        with:
-          repository: ${{ env.NIKATRU_PRIVATE_REPO }}
-          ref: ${{ github.event.client_payload.event == 'pull_request' && format('refs/pull/{0}/merge', github.event.client_payload.pr) || github.event.client_payload.sha || 'main' }}
-          sparse-checkout: .github/ISSUE_TEMPLATE
-          ssh-key: ${{ secrets.PRIVATE_DEPLOY_KEY }}
-          persist-credentials: false
-      - name: Test the candidate commit, attempt 2 (generated)
-        id: nikatru-pin-test-2
-        if: steps.nikatru-pin-test-1.outputs.sha == ''
-        shell: bash
-        working-directory: ${{ github.workspace }}
-        env:
-          NIKATRU_CHECKOUT: ${{ steps.nikatru-pin-checkout-2.outcome }}
-          NIKATRU_P_EVENT: ${{ github.event.client_payload.event || github.event_name }}
-          NIKATRU_P_SHA: ${{ github.event.client_payload.sha }}
-          NIKATRU_ATTEMPT: '2'
-          NIKATRU_ATTEMPTS: '6'
-          NIKATRU_WAIT_S: '10'
-        run: |
-          if [ "$NIKATRU_CHECKOUT" != success ]; then
-            echo "attempt $NIKATRU_ATTEMPT: the candidate could not be checked out"
-          else
-            sha="$(git rev-parse HEAD)"
-            if [ "$NIKATRU_P_EVENT" = pull_request ]; then
-              if ! [[ $NIKATRU_P_SHA =~ ^[0-9a-f]{40}$ ]]; then echo "::error::the dispatch of a pull request names no 40-hex head sha (\"$NIKATRU_P_SHA\"): nothing is pinned"; exit 1; fi
-              second="$(git cat-file -p HEAD | sed -n '1,/^$/s/^parent //p' | sed -n 2p)"
-              if [ "$second" = "$NIKATRU_P_SHA" ]; then echo "sha=$sha" >> "$GITHUB_OUTPUT"; exit 0; fi
-              echo "attempt $NIKATRU_ATTEMPT: $sha is not yet the merge of the dispatched head $NIKATRU_P_SHA (its second parent is ${second:-none})"
-            else
-              echo "sha=$sha" >> "$GITHUB_OUTPUT"
-              exit 0
-            fi
-          fi
-          if [ "$NIKATRU_ATTEMPT" -lt "$NIKATRU_ATTEMPTS" ]; then sleep "$NIKATRU_WAIT_S"; fi
-      - name: Check out the candidate commit, attempt 3 (generated)
-        id: nikatru-pin-checkout-3
-        if: steps.nikatru-pin-test-2.outputs.sha == ''
-        continue-on-error: true
-        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
-        with:
-          repository: ${{ env.NIKATRU_PRIVATE_REPO }}
-          ref: ${{ github.event.client_payload.event == 'pull_request' && format('refs/pull/{0}/merge', github.event.client_payload.pr) || github.event.client_payload.sha || 'main' }}
-          sparse-checkout: .github/ISSUE_TEMPLATE
-          ssh-key: ${{ secrets.PRIVATE_DEPLOY_KEY }}
-          persist-credentials: false
-      - name: Test the candidate commit, attempt 3 (generated)
-        id: nikatru-pin-test-3
-        if: steps.nikatru-pin-test-2.outputs.sha == ''
-        shell: bash
-        working-directory: ${{ github.workspace }}
-        env:
-          NIKATRU_CHECKOUT: ${{ steps.nikatru-pin-checkout-3.outcome }}
-          NIKATRU_P_EVENT: ${{ github.event.client_payload.event || github.event_name }}
-          NIKATRU_P_SHA: ${{ github.event.client_payload.sha }}
-          NIKATRU_ATTEMPT: '3'
-          NIKATRU_ATTEMPTS: '6'
-          NIKATRU_WAIT_S: '10'
-        run: |
-          if [ "$NIKATRU_CHECKOUT" != success ]; then
-            echo "attempt $NIKATRU_ATTEMPT: the candidate could not be checked out"
-          else
-            sha="$(git rev-parse HEAD)"
-            if [ "$NIKATRU_P_EVENT" = pull_request ]; then
-              if ! [[ $NIKATRU_P_SHA =~ ^[0-9a-f]{40}$ ]]; then echo "::error::the dispatch of a pull request names no 40-hex head sha (\"$NIKATRU_P_SHA\"): nothing is pinned"; exit 1; fi
-              second="$(git cat-file -p HEAD | sed -n '1,/^$/s/^parent //p' | sed -n 2p)"
-              if [ "$second" = "$NIKATRU_P_SHA" ]; then echo "sha=$sha" >> "$GITHUB_OUTPUT"; exit 0; fi
-              echo "attempt $NIKATRU_ATTEMPT: $sha is not yet the merge of the dispatched head $NIKATRU_P_SHA (its second parent is ${second:-none})"
-            else
-              echo "sha=$sha" >> "$GITHUB_OUTPUT"
-              exit 0
-            fi
-          fi
-          if [ "$NIKATRU_ATTEMPT" -lt "$NIKATRU_ATTEMPTS" ]; then sleep "$NIKATRU_WAIT_S"; fi
-      - name: Check out the candidate commit, attempt 4 (generated)
-        id: nikatru-pin-checkout-4
-        if: steps.nikatru-pin-test-3.outputs.sha == ''
-        continue-on-error: true
-        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
-        with:
-          repository: ${{ env.NIKATRU_PRIVATE_REPO }}
-          ref: ${{ github.event.client_payload.event == 'pull_request' && format('refs/pull/{0}/merge', github.event.client_payload.pr) || github.event.client_payload.sha || 'main' }}
-          sparse-checkout: .github/ISSUE_TEMPLATE
-          ssh-key: ${{ secrets.PRIVATE_DEPLOY_KEY }}
-          persist-credentials: false
-      - name: Test the candidate commit, attempt 4 (generated)
-        id: nikatru-pin-test-4
-        if: steps.nikatru-pin-test-3.outputs.sha == ''
-        shell: bash
-        working-directory: ${{ github.workspace }}
-        env:
-          NIKATRU_CHECKOUT: ${{ steps.nikatru-pin-checkout-4.outcome }}
-          NIKATRU_P_EVENT: ${{ github.event.client_payload.event || github.event_name }}
-          NIKATRU_P_SHA: ${{ github.event.client_payload.sha }}
-          NIKATRU_ATTEMPT: '4'
-          NIKATRU_ATTEMPTS: '6'
-          NIKATRU_WAIT_S: '10'
-        run: |
-          if [ "$NIKATRU_CHECKOUT" != success ]; then
-            echo "attempt $NIKATRU_ATTEMPT: the candidate could not be checked out"
-          else
-            sha="$(git rev-parse HEAD)"
-            if [ "$NIKATRU_P_EVENT" = pull_request ]; then
-              if ! [[ $NIKATRU_P_SHA =~ ^[0-9a-f]{40}$ ]]; then echo "::error::the dispatch of a pull request names no 40-hex head sha (\"$NIKATRU_P_SHA\"): nothing is pinned"; exit 1; fi
-              second="$(git cat-file -p HEAD | sed -n '1,/^$/s/^parent //p' | sed -n 2p)"
-              if [ "$second" = "$NIKATRU_P_SHA" ]; then echo "sha=$sha" >> "$GITHUB_OUTPUT"; exit 0; fi
-              echo "attempt $NIKATRU_ATTEMPT: $sha is not yet the merge of the dispatched head $NIKATRU_P_SHA (its second parent is ${second:-none})"
-            else
-              echo "sha=$sha" >> "$GITHUB_OUTPUT"
-              exit 0
-            fi
-          fi
-          if [ "$NIKATRU_ATTEMPT" -lt "$NIKATRU_ATTEMPTS" ]; then sleep "$NIKATRU_WAIT_S"; fi
-      - name: Check out the candidate commit, attempt 5 (generated)
-        id: nikatru-pin-checkout-5
-        if: steps.nikatru-pin-test-4.outputs.sha == ''
-        continue-on-error: true
-        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
-        with:
-          repository: ${{ env.NIKATRU_PRIVATE_REPO }}
-          ref: ${{ github.event.client_payload.event == 'pull_request' && format('refs/pull/{0}/merge', github.event.client_payload.pr) || github.event.client_payload.sha || 'main' }}
-          sparse-checkout: .github/ISSUE_TEMPLATE
-          ssh-key: ${{ secrets.PRIVATE_DEPLOY_KEY }}
-          persist-credentials: false
-      - name: Test the candidate commit, attempt 5 (generated)
-        id: nikatru-pin-test-5
-        if: steps.nikatru-pin-test-4.outputs.sha == ''
-        shell: bash
-        working-directory: ${{ github.workspace }}
-        env:
-          NIKATRU_CHECKOUT: ${{ steps.nikatru-pin-checkout-5.outcome }}
-          NIKATRU_P_EVENT: ${{ github.event.client_payload.event || github.event_name }}
-          NIKATRU_P_SHA: ${{ github.event.client_payload.sha }}
-          NIKATRU_ATTEMPT: '5'
-          NIKATRU_ATTEMPTS: '6'
-          NIKATRU_WAIT_S: '10'
-        run: |
-          if [ "$NIKATRU_CHECKOUT" != success ]; then
-            echo "attempt $NIKATRU_ATTEMPT: the candidate could not be checked out"
-          else
-            sha="$(git rev-parse HEAD)"
-            if [ "$NIKATRU_P_EVENT" = pull_request ]; then
-              if ! [[ $NIKATRU_P_SHA =~ ^[0-9a-f]{40}$ ]]; then echo "::error::the dispatch of a pull request names no 40-hex head sha (\"$NIKATRU_P_SHA\"): nothing is pinned"; exit 1; fi
-              second="$(git cat-file -p HEAD | sed -n '1,/^$/s/^parent //p' | sed -n 2p)"
-              if [ "$second" = "$NIKATRU_P_SHA" ]; then echo "sha=$sha" >> "$GITHUB_OUTPUT"; exit 0; fi
-              echo "attempt $NIKATRU_ATTEMPT: $sha is not yet the merge of the dispatched head $NIKATRU_P_SHA (its second parent is ${second:-none})"
-            else
-              echo "sha=$sha" >> "$GITHUB_OUTPUT"
-              exit 0
-            fi
-          fi
-          if [ "$NIKATRU_ATTEMPT" -lt "$NIKATRU_ATTEMPTS" ]; then sleep "$NIKATRU_WAIT_S"; fi
-      - name: Check out the candidate commit, attempt 6 (generated)
-        id: nikatru-pin-checkout-6
-        if: steps.nikatru-pin-test-5.outputs.sha == ''
-        continue-on-error: true
-        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
-        with:
-          repository: ${{ env.NIKATRU_PRIVATE_REPO }}
-          ref: ${{ github.event.client_payload.event == 'pull_request' && format('refs/pull/{0}/merge', github.event.client_payload.pr) || github.event.client_payload.sha || 'main' }}
-          sparse-checkout: .github/ISSUE_TEMPLATE
-          ssh-key: ${{ secrets.PRIVATE_DEPLOY_KEY }}
-          persist-credentials: false
-      - name: Test the candidate commit, attempt 6 (generated)
-        id: nikatru-pin-test-6
-        if: steps.nikatru-pin-test-5.outputs.sha == ''
-        shell: bash
-        working-directory: ${{ github.workspace }}
-        env:
-          NIKATRU_CHECKOUT: ${{ steps.nikatru-pin-checkout-6.outcome }}
-          NIKATRU_P_EVENT: ${{ github.event.client_payload.event || github.event_name }}
-          NIKATRU_P_SHA: ${{ github.event.client_payload.sha }}
-          NIKATRU_ATTEMPT: '6'
-          NIKATRU_ATTEMPTS: '6'
+          NIKATRU_ATTEMPTS: '1'
           NIKATRU_WAIT_S: '10'
         run: |
           if [ "$NIKATRU_CHECKOUT" != success ]; then
@@ -293,7 +98,7 @@ jobs:
         id: pin
         shell: bash
         env:
-          NIKATRU_PINNED: ${{ steps.nikatru-pin-test-1.outputs.sha || steps.nikatru-pin-test-2.outputs.sha || steps.nikatru-pin-test-3.outputs.sha || steps.nikatru-pin-test-4.outputs.sha || steps.nikatru-pin-test-5.outputs.sha || steps.nikatru-pin-test-6.outputs.sha }}
+          NIKATRU_PINNED: ${{ steps.nikatru-pin-test-1.outputs.sha }}
           NIKATRU_P_SHA: ${{ github.event.client_payload.sha }}
           NIKATRU_P_MAIN_PUSH: ${{ github.event.client_payload.event == 'push' && github.event.client_payload.ref == 'refs/heads/main' }}
         run: |
@@ -332,29 +137,40 @@ jobs:
             fi
           fi
           if [ -z "$NIKATRU_PINNED" ]; then
-            echo "::error::no candidate became the commit this run builds in 6 attempt(s) (a pull request's merge ref never named the dispatched head $NIKATRU_P_SHA as its second parent): nothing is built — push again, or re-run this workflow"
+            echo "::error::no candidate became the commit this run builds in 1 attempt(s) (a pull request's merge ref never named the dispatched head $NIKATRU_P_SHA as its second parent): nothing is built — push again, or re-run this workflow"
             exit 1
           fi
           echo "pinned $NIKATRU_PINNED"
           echo "sha=$NIKATRU_PINNED" >> "$GITHUB_OUTPUT"
 
-  detect:
+  codeql:
     needs: [nikatru-pin]
-    name: detect
-    if: (github.event_name != 'repository_dispatch' || github.event.client_payload.event == 'pull_request' || (github.event.client_payload.event == 'push' && github.event.client_payload.ref == 'refs/heads/main')) && (github.event.client_payload.draft != true)
+    name: CodeQL
+    if: (github.event_name != 'repository_dispatch' || (github.event.client_payload.event == 'push' && github.event.client_payload.ref == 'refs/heads/main'))
+    uses: ./.github/workflows/codeql-unit.yml
+    permissions:
+      contents: read
+    with:
+      nikatru_sha: ${{ needs.nikatru-pin.outputs.sha || 'nikatru-pin-did-not-succeed..' }}
+    secrets:
+      PRIVATE_DEPLOY_KEY: ${{ secrets.PRIVATE_DEPLOY_KEY }}
+      NIKATRU_DETAIL_KEY: ${{ secrets.NIKATRU_DETAIL_KEY }}
+
+  verdict:
+    name: CodeQL verdict
+    needs: [nikatru-pin, codeql]
+    if: (github.event_name != 'repository_dispatch' || (github.event.client_payload.event == 'push' && github.event.client_payload.ref == 'refs/heads/main')) && (always())
     runs-on: ubuntu-24.04
     timeout-minutes: 5
     permissions:
       contents: read
-    outputs:
-      analyse: ${{ steps.plan.outputs.analyse }}
     steps:
       - name: Check out the private tree (generated)
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
         with:
           repository: ${{ env.NIKATRU_PRIVATE_REPO }}
           ref: ${{ needs.nikatru-pin.outputs.sha || 'nikatru-pin-did-not-succeed..' }}
-          fetch-depth: ${{ env.NIKATRU_PRIVATE_REPO && '0' || '1' }}
+          fetch-depth: 2
           ssh-key: ${{ secrets.PRIVATE_DEPLOY_KEY }}
           persist-credentials: false
       - name: Name the private commit (generated)
@@ -407,87 +223,18 @@ jobs:
           rm -rf .nikatru-shell
           py=python3; python3 -c '' >/dev/null 2>&1 || py=python
           "$py" -I "$GITHUB_WORKSPACE/../.nikatru-shell/report.py" derive
-      - name: Check out private main's composite actions (generated)
-        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
-        with:
-          repository: ${{ env.NIKATRU_PRIVATE_REPO }}
-          ref: refs/heads/main
-          path: .nikatru-trusted
-          sparse-checkout: .github/actions
-          ssh-key: ${{ secrets.PRIVATE_DEPLOY_KEY }}
-          persist-credentials: false
-      - name: Keep private main's composite actions out of the branch's tree (generated)
-        id: nikatru-trusted-tree
-        shell: bash
-        working-directory: ${{ github.workspace }}
-        run: |
-          if x="$(git rev-parse --git-path info/exclude 2>/dev/null)"; then mkdir -p "${x%/*}"; grep -qxF '/.nikatru-trusted/' "$x" 2>/dev/null || printf '/.nikatru-trusted/\n' >> "$x"; fi
-          NIKATRU_TRUSTED_GIT="$(command -v git)"; case "$NIKATRU_TRUSTED_GIT" in /*) ;; *) echo "::error::git does not resolve to an absolute path ($NIKATRU_TRUSTED_GIT)"; exit 1 ;; esac
-          tree="$(for v in $(compgen -e); do case "$v" in (GIT_*) unset "$v" ;; esac; done && d="$RUNNER_TEMP/nikatru-trusted.$$.$RANDOM" && [ ! -e "$d.git" ] && [ ! -e "$d.index" ] && export GIT_DIR="$d.git" GIT_INDEX_FILE="$d.index" GIT_CONFIG_GLOBAL=/dev/null GIT_CONFIG_NOSYSTEM=1 && "$NIKATRU_TRUSTED_GIT" init -q --bare --template= "$GIT_DIR" && "$NIKATRU_TRUSTED_GIT" -C .nikatru-trusted --work-tree=. add -A -f .github/actions && "$NIKATRU_TRUSTED_GIT" write-tree --prefix=.github/actions/)"
-          main="$(git -C .nikatru-trusted rev-parse HEAD:.github/actions)"
-          if [ -z "$tree" ] || [ "$tree" != "$main" ]; then echo "::error::.nikatru-trusted: the working tree ($tree) is not private main's .github/actions ($main)"; exit 1; fi
-          rm -rf "$RUNNER_TEMP/nikatru-trusted-actions" && mkdir -p "$RUNNER_TEMP/nikatru-trusted-actions" && cp -R .nikatru-trusted/.github "$RUNNER_TEMP/nikatru-trusted-actions/"
-          echo "tree=$tree" >> "$GITHUB_OUTPUT"
-          echo "git=$NIKATRU_TRUSTED_GIT" >> "$GITHUB_OUTPUT"
-      - name: Verify private main's composite actions are the checked-out tree (generated)
-        shell: bash
-        working-directory: ${{ github.workspace }}
+      - name: The CodeQL analysis of this commit concluded success
         env:
-          NIKATRU_TRUSTED_TREE: ${{ steps.nikatru-trusted-tree.outputs.tree }}
-          NIKATRU_TRUSTED_GIT: ${{ steps.nikatru-trusted-tree.outputs.git }}
-        run: |
-          case "$NIKATRU_TRUSTED_GIT" in /*) ;; *) echo "::error::.nikatru-trusted: no git path was recorded before the job's own steps ($NIKATRU_TRUSTED_GIT)"; exit 1 ;; esac
-          rm -rf .nikatru-trusted/.github && mkdir -p .nikatru-trusted && cp -R "$RUNNER_TEMP/nikatru-trusted-actions/.github" .nikatru-trusted/
-          if x="$(git rev-parse --git-path info/exclude 2>/dev/null)"; then mkdir -p "${x%/*}"; grep -qxF '/.nikatru-trusted/' "$x" 2>/dev/null || printf '/.nikatru-trusted/\n' >> "$x"; fi
-          tree="$(for v in $(compgen -e); do case "$v" in (GIT_*) unset "$v" ;; esac; done && d="$RUNNER_TEMP/nikatru-trusted.$$.$RANDOM" && [ ! -e "$d.git" ] && [ ! -e "$d.index" ] && export GIT_DIR="$d.git" GIT_INDEX_FILE="$d.index" GIT_CONFIG_GLOBAL=/dev/null GIT_CONFIG_NOSYSTEM=1 && "$NIKATRU_TRUSTED_GIT" init -q --bare --template= "$GIT_DIR" && "$NIKATRU_TRUSTED_GIT" -C .nikatru-trusted --work-tree=. add -A -f .github/actions && "$NIKATRU_TRUSTED_GIT" write-tree --prefix=.github/actions/)"
-          if [ -z "$NIKATRU_TRUSTED_TREE" ] || [ "$tree" != "$NIKATRU_TRUSTED_TREE" ]; then echo "::error::.nikatru-trusted is not the tree checked out from private main ($NIKATRU_TRUSTED_TREE, now $tree): a step of this job edited its copy"; exit 1; fi
-      - uses: ./.nikatru-trusted/.github/actions/setup-node
-        env:
-          NIKATRU_REF: ${{ github.event.client_payload.ref || 'refs/heads/main' }}
-          NIKATRU_EVENT_NAME: ${{ github.event.client_payload.event || github.event_name }}
-          NIKATRU_PR: ${{ github.event.client_payload.pr }}
-      - name: List every changed file, and the count the PR reports
-        if: (github.event.client_payload.event || github.event_name) == 'pull_request'
-        env:
-          GH_TOKEN: ${{ github.token }}
-          PR_NUMBER: ${{ github.event.client_payload.pr }}
-          PRIVATE_REPO: ${{ env.NIKATRU_PRIVATE_REPO }}
-          BASE_SHA: ${{ (github.event.client_payload.event == 'pull_request' && github.event.client_payload.base_sha || '') }}
+          CODEQL_RESULT: ${{ needs.codeql.result }}
         run: |
           NIKATRU_QUIET="$(mktemp "${RUNNER_TEMP:-/tmp}/nikatru-step.XXXXXX")"
           cat > "$NIKATRU_QUIET" <<'NIKATRU_QUIET_EOF'
           set -euo pipefail
-          if [ -n "$PRIVATE_REPO" ]; then
-            git diff --name-status -M "$BASE_SHA...HEAD" | awk -F'\t' '{ if ($1 ~ /^[RC]/) print $3 "\t" $2; else print $2 "\t" }' > "$RUNNER_TEMP/files.tsv"
-            wc -l < "$RUNNER_TEMP/files.tsv" | tr -d ' ' > "$RUNNER_TEMP/changed-files.txt"
-          else
-            # The PR is the CODE repository's, never the run's own (gh-repoint-f2): one source, the register.
-            code_repo="$(node tooling/ops/repo-phase.mjs --get code)"
-            gh api --paginate "repos/$code_repo/pulls/$PR_NUMBER/files" --jq '.[] | [.filename, (.previous_filename // "")] | @tsv' > "$RUNNER_TEMP/files.tsv"
-            gh api "repos/$code_repo/pulls/$PR_NUMBER" --jq '.changed_files' > "$RUNNER_TEMP/changed-files.txt"
-          fi
+          echo "codeql-unit.yml concluded: ${CODEQL_RESULT}"
+          test "$CODEQL_RESULT" = success
           NIKATRU_QUIET_EOF
           NIKATRU_SHELL="${BASH:-bash}"; if command -v cygpath >/dev/null 2>&1; then NIKATRU_SHELL="$(cygpath -w "$NIKATRU_SHELL")"; fi
-          node "$GITHUB_WORKSPACE/../.nikatru-shell/quiet-step.mjs" --name codeql.detect.3 -- "$NIKATRU_SHELL" -e "$NIKATRU_QUIET"
-      - name: Every setup step of this job succeeded (generated)
-        id: nikatru-setup-ok
-        run: echo "every setup step before the first check succeeded"
-      - name: Does anything CodeQL reads change?
-        id: plan
-        env:
-          EVENT_NAME: ${{ (github.event.client_payload.event || github.event_name) }}
-        run: |
-          NIKATRU_QUIET="$(mktemp "${RUNNER_TEMP:-/tmp}/nikatru-step.XXXXXX")"
-          cat > "$NIKATRU_QUIET" <<'NIKATRU_QUIET_EOF'
-          set -euo pipefail
-          if [ "$EVENT_NAME" = "pull_request" ]; then
-            node tooling/ci/codeql-detect.mjs "$RUNNER_TEMP/files.tsv" "$RUNNER_TEMP/changed-files.txt"
-          else
-            node tooling/ci/codeql-detect.mjs --not-a-pull-request
-          fi
-          NIKATRU_QUIET_EOF
-          NIKATRU_SHELL="${BASH:-bash}"; if command -v cygpath >/dev/null 2>&1; then NIKATRU_SHELL="$(cygpath -w "$NIKATRU_SHELL")"; fi
-          node "$GITHUB_WORKSPACE/../.nikatru-shell/quiet-step.mjs" --name codeql.detect.4 -- "$NIKATRU_SHELL" -e "$NIKATRU_QUIET"
+          node "$GITHUB_WORKSPACE/../.nikatru-shell/quiet-step.mjs" --name codeql.verdict.1 -- "$NIKATRU_SHELL" -e "$NIKATRU_QUIET"
       - name: Hand this job's red detail to the report job, sealed (generated)
         id: nikatru-handoff
         if: always()
@@ -495,7 +242,7 @@ jobs:
         working-directory: ${{ github.workspace }}
         env:
           NIKATRU_DETAIL_KEY_FILE: ${{ github.workspace }}/../.nikatru-shell/detail.key
-          NIKATRU_HANDOFF: nikatru-detail-${{ github.run_id }}-${{ github.run_attempt }}-codeql.detect.${{ strategy.job-index }}
+          NIKATRU_HANDOFF: nikatru-detail-${{ github.run_id }}-${{ github.run_attempt }}-codeql.verdict.${{ strategy.job-index }}
         run: |
           if [ -s "$RUNNER_TEMP/report-detail.md" ]; then
             py=python3; python3 -c '' >/dev/null 2>&1 || py=python
@@ -506,229 +253,13 @@ jobs:
         uses: actions/cache/save@55cc8345863c7cc4c66a329aec7e433d2d1c52a9
         with:
           path: .nikatru-detail
-          key: nikatru-detail-${{ github.run_id }}-${{ github.run_attempt }}-codeql.detect.${{ strategy.job-index }}
-          enableCrossOsArchive: true
-
-  analyze:
-    name: Analyze JavaScript and TypeScript
-    needs: [nikatru-pin, detect]
-    if: (github.event_name != 'repository_dispatch' || github.event.client_payload.event == 'pull_request' || (github.event.client_payload.event == 'push' && github.event.client_payload.ref == 'refs/heads/main')) && (github.event.client_payload.draft != true && needs.detect.outputs.analyse == 'true')
-    runs-on: ubuntu-24.04
-    permissions:
-      contents: read
-    timeout-minutes: 30
-    steps:
-      - name: Check out the private tree (generated)
-        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
-        with:
-          repository: ${{ env.NIKATRU_PRIVATE_REPO }}
-          ref: ${{ needs.nikatru-pin.outputs.sha || 'nikatru-pin-did-not-succeed..' }}
-          fetch-depth: ${{ env.NIKATRU_PRIVATE_REPO && '11' || '1' }}
-          ssh-key: ${{ secrets.PRIVATE_DEPLOY_KEY }}
-          persist-credentials: false
-      - name: Name the private commit (generated)
-        shell: bash
-        working-directory: ${{ github.workspace }}
-        env:
-          NIKATRU_P_EVENT: ${{ github.event.client_payload.event || github.event_name }}
-          NIKATRU_P_REF: ${{ github.event.client_payload.ref || 'refs/heads/main' }}
-          NIKATRU_P_BASE_SHA: ${{ github.event.client_payload.base_sha }}
-          NIKATRU_P_BASE_REF: ${{ github.event.client_payload.base_ref }}
-          NIKATRU_P_PR: ${{ github.event.client_payload.pr }}
-          NIKATRU_P_PR_CREATED_AT: ${{ github.event.client_payload.pr_created_at }}
-          NIKATRU_P_DRAFT: ${{ github.event.client_payload.draft }}
-          NIKATRU_P_SHA: ${{ github.event.client_payload.sha }}
-        run: |
-          if [ "$NIKATRU_P_EVENT" = pull_request ]; then
-            set -- $(git cat-file -p HEAD | sed -n '1,/^$/s/^parent //p')
-            if [ "${2:-}" != "$NIKATRU_P_SHA" ]; then
-              echo "::error::the checked-out merge of PR #$NIKATRU_P_PR is not the merge of the dispatched head $NIKATRU_P_SHA (its second parent is ${2:-none}); the nikatru-pin job pins it — re-run the whole workflow, not this job"
-              exit 1
-            fi
-          fi
-          {
-            echo "NIKATRU_SHA=$(git rev-parse HEAD)"
-            echo "NIKATRU_HEAD_SHA=${NIKATRU_P_SHA:-$(git rev-parse HEAD)}"
-            echo "NIKATRU_EVENT_NAME=$NIKATRU_P_EVENT"
-            echo "NIKATRU_REF=$NIKATRU_P_REF"
-            echo "NIKATRU_REF_NAME=${NIKATRU_P_REF#refs/*/}"
-            echo "NIKATRU_BASE_SHA=$NIKATRU_P_BASE_SHA"
-            echo "NIKATRU_BASE_REF=$NIKATRU_P_BASE_REF"
-            echo "NIKATRU_PR=$NIKATRU_P_PR"
-            echo "NIKATRU_PR_CREATED_AT=$NIKATRU_P_PR_CREATED_AT"
-            echo "NIKATRU_DRAFT=$NIKATRU_P_DRAFT"
-          } >> "$GITHUB_ENV"
-      - name: Check out this shell repository's own step wrapper and reporter (generated)
-        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
-        with:
-          path: .nikatru-shell
-          sparse-checkout: .github/nikatru
-          persist-credentials: false
-      - name: Stage the shell's own copies outside the private checkout (generated)
-        shell: bash
-        working-directory: ${{ github.workspace }}
-        env:
-          NIKATRU_DETAIL_KEY: ${{ secrets.NIKATRU_DETAIL_KEY }}
-          NIKATRU_BASELINE_KEY_FILE: ${{ github.workspace }}/../.nikatru-shell/baseline.key
-          NIKATRU_DETAIL_KEY_FILE: ${{ github.workspace }}/../.nikatru-shell/detail.key
-        run: |
-          rm -rf ../.nikatru-shell
-          mv .nikatru-shell/.github/nikatru ../.nikatru-shell
-          rm -rf .nikatru-shell
-          py=python3; python3 -c '' >/dev/null 2>&1 || py=python
-          "$py" -I "$GITHUB_WORKSPACE/../.nikatru-shell/report.py" derive
-      - name: Check out private main's composite actions (generated)
-        if: ${{ (github.event.client_payload.event || github.event_name) != 'pull_request' || env.NIKATRU_PRIVATE_REPO != '' }}
-        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
-        with:
-          repository: ${{ env.NIKATRU_PRIVATE_REPO }}
-          ref: refs/heads/main
-          path: .nikatru-trusted
-          sparse-checkout: .github/actions
-          ssh-key: ${{ secrets.PRIVATE_DEPLOY_KEY }}
-          persist-credentials: false
-      - name: Keep private main's composite actions out of the branch's tree (generated)
-        id: nikatru-trusted-tree
-        if: ${{ (github.event.client_payload.event || github.event_name) != 'pull_request' || env.NIKATRU_PRIVATE_REPO != '' }}
-        shell: bash
-        working-directory: ${{ github.workspace }}
-        run: |
-          if x="$(git rev-parse --git-path info/exclude 2>/dev/null)"; then mkdir -p "${x%/*}"; grep -qxF '/.nikatru-trusted/' "$x" 2>/dev/null || printf '/.nikatru-trusted/\n' >> "$x"; fi
-          NIKATRU_TRUSTED_GIT="$(command -v git)"; case "$NIKATRU_TRUSTED_GIT" in /*) ;; *) echo "::error::git does not resolve to an absolute path ($NIKATRU_TRUSTED_GIT)"; exit 1 ;; esac
-          tree="$(for v in $(compgen -e); do case "$v" in (GIT_*) unset "$v" ;; esac; done && d="$RUNNER_TEMP/nikatru-trusted.$$.$RANDOM" && [ ! -e "$d.git" ] && [ ! -e "$d.index" ] && export GIT_DIR="$d.git" GIT_INDEX_FILE="$d.index" GIT_CONFIG_GLOBAL=/dev/null GIT_CONFIG_NOSYSTEM=1 && "$NIKATRU_TRUSTED_GIT" init -q --bare --template= "$GIT_DIR" && "$NIKATRU_TRUSTED_GIT" -C .nikatru-trusted --work-tree=. add -A -f .github/actions && "$NIKATRU_TRUSTED_GIT" write-tree --prefix=.github/actions/)"
-          main="$(git -C .nikatru-trusted rev-parse HEAD:.github/actions)"
-          if [ -z "$tree" ] || [ "$tree" != "$main" ]; then echo "::error::.nikatru-trusted: the working tree ($tree) is not private main's .github/actions ($main)"; exit 1; fi
-          rm -rf "$RUNNER_TEMP/nikatru-trusted-actions" && mkdir -p "$RUNNER_TEMP/nikatru-trusted-actions" && cp -R .nikatru-trusted/.github "$RUNNER_TEMP/nikatru-trusted-actions/"
-          echo "tree=$tree" >> "$GITHUB_OUTPUT"
-          echo "git=$NIKATRU_TRUSTED_GIT" >> "$GITHUB_OUTPUT"
-      - name: Verify private main's composite actions are the checked-out tree (generated)
-        if: ${{ (github.event.client_payload.event || github.event_name) != 'pull_request' || env.NIKATRU_PRIVATE_REPO != '' }}
-        shell: bash
-        working-directory: ${{ github.workspace }}
-        env:
-          NIKATRU_TRUSTED_TREE: ${{ steps.nikatru-trusted-tree.outputs.tree }}
-          NIKATRU_TRUSTED_GIT: ${{ steps.nikatru-trusted-tree.outputs.git }}
-        run: |
-          case "$NIKATRU_TRUSTED_GIT" in /*) ;; *) echo "::error::.nikatru-trusted: no git path was recorded before the job's own steps ($NIKATRU_TRUSTED_GIT)"; exit 1 ;; esac
-          rm -rf .nikatru-trusted/.github && mkdir -p .nikatru-trusted && cp -R "$RUNNER_TEMP/nikatru-trusted-actions/.github" .nikatru-trusted/
-          if x="$(git rev-parse --git-path info/exclude 2>/dev/null)"; then mkdir -p "${x%/*}"; grep -qxF '/.nikatru-trusted/' "$x" 2>/dev/null || printf '/.nikatru-trusted/\n' >> "$x"; fi
-          tree="$(for v in $(compgen -e); do case "$v" in (GIT_*) unset "$v" ;; esac; done && d="$RUNNER_TEMP/nikatru-trusted.$$.$RANDOM" && [ ! -e "$d.git" ] && [ ! -e "$d.index" ] && export GIT_DIR="$d.git" GIT_INDEX_FILE="$d.index" GIT_CONFIG_GLOBAL=/dev/null GIT_CONFIG_NOSYSTEM=1 && "$NIKATRU_TRUSTED_GIT" init -q --bare --template= "$GIT_DIR" && "$NIKATRU_TRUSTED_GIT" -C .nikatru-trusted --work-tree=. add -A -f .github/actions && "$NIKATRU_TRUSTED_GIT" write-tree --prefix=.github/actions/)"
-          if [ -z "$NIKATRU_TRUSTED_TREE" ] || [ "$tree" != "$NIKATRU_TRUSTED_TREE" ]; then echo "::error::.nikatru-trusted is not the tree checked out from private main ($NIKATRU_TRUSTED_TREE, now $tree): a step of this job edited its copy"; exit 1; fi
-      - uses: ./.nikatru-trusted/.github/actions/setup-node
-        if: ${{ (github.event.client_payload.event || github.event_name) != 'pull_request' || env.NIKATRU_PRIVATE_REPO != '' }}
-        env:
-          NIKATRU_REF: ${{ github.event.client_payload.ref || 'refs/heads/main' }}
-          NIKATRU_EVENT_NAME: ${{ github.event.client_payload.event || github.event_name }}
-          NIKATRU_PR: ${{ github.event.client_payload.pr }}
-      - name: List main's commits a baseline may come from (generated)
-        id: baseline-keys
-        if: ${{ (github.event.client_payload.event || github.event_name) == 'pull_request' && env.NIKATRU_PRIVATE_REPO != '' }}
-        shell: bash
-        working-directory: ${{ github.workspace }}
-        run: |
-          py=python3; python3 -c '' >/dev/null 2>&1 || py=python
-          "$py" -I "$GITHUB_WORKSPACE/../.nikatru-shell/report.py" baseline-keys
-      - name: Restore main's CodeQL baseline
-        if: ${{ (github.event.client_payload.event || github.event_name) == 'pull_request' && env.NIKATRU_PRIVATE_REPO != '' }}
-        id: baseline
-        uses: actions/cache/restore@55cc8345863c7cc4c66a329aec7e433d2d1c52a9
-        with:
-          path: ${{ runner.temp }}/codeql-baseline
-          key: codeql-main-baseline-${{ (github.event.client_payload.event == 'pull_request' && github.event.client_payload.base_sha || '') }}
-          restore-keys: ${{ steps.baseline-keys.outputs.keys }}
-      - name: Verify main's CodeQL baseline (generated)
-        if: ${{ (github.event.client_payload.event || github.event_name) == 'pull_request' && env.NIKATRU_PRIVATE_REPO != '' }}
-        shell: bash
-        working-directory: ${{ github.workspace }}
-        env:
-          NIKATRU_BASELINE_KEY_FILE: ${{ github.workspace }}/../.nikatru-shell/baseline.key
-          NIKATRU_BASELINE_MATCHED_KEY: ${{ steps.baseline.outputs.cache-matched-key }}
-          NIKATRU_BASELINE_DIR: ${{ runner.temp }}/codeql-baseline
-        run: |
-          py=python3; python3 -c '' >/dev/null 2>&1 || py=python
-          "$py" -I "$GITHUB_WORKSPACE/../.nikatru-shell/report.py" baseline-verify "$NIKATRU_BASELINE_DIR"
-      - name: Forget the baseline key once the restore is verified (generated)
-        if: ${{ always() && !((github.event.client_payload.event || github.event_name) != 'pull_request' && (github.event.client_payload.ref || 'refs/heads/main') == 'refs/heads/main') }}
-        shell: bash
-        working-directory: ${{ github.workspace }}
-        env:
-          NIKATRU_BASELINE_KEY_FILE: ${{ github.workspace }}/../.nikatru-shell/baseline.key
-        run: rm -f "$NIKATRU_BASELINE_KEY_FILE"
-      - name: Initialise CodeQL
-        uses: github/codeql-action/init@24c54180a607b1449ed407dd24f251e4e9147c8d
-        with:
-          languages: javascript-typescript
-          queries: security-and-quality
-          config-file: ./.github/codeql/codeql-config.yml
-          trap-caching: false
-      - name: Analyze
-        uses: github/codeql-action/analyze@24c54180a607b1449ed407dd24f251e4e9147c8d
-        with:
-          category: /language:javascript-typescript
-          output: ${{ runner.temp }}/codeql-sarif
-          upload: never
-          upload-database: false
-      - name: CodeQL counts, the alerts to the private pull request
-        if: ${{ env.NIKATRU_PRIVATE_REPO != '' }}
-        id: sarif-report
-        env:
-          BASELINE_KEY: ${{ steps.baseline.outputs.cache-matched-key }}
-        run: |
-          NIKATRU_QUIET="$(mktemp "${RUNNER_TEMP:-/tmp}/nikatru-step.XXXXXX")"
-          cat > "$NIKATRU_QUIET" <<'NIKATRU_QUIET_EOF'
-          node tooling/ci/codeql-sarif-report.mjs "$RUNNER_TEMP/codeql-sarif" --baseline "$RUNNER_TEMP/codeql-baseline/baseline.json" --baseline-verified "$RUNNER_TEMP/codeql-baseline/baseline.verified" --baseline-key "$BASELINE_KEY" --write-baseline "$RUNNER_TEMP/codeql-baseline/baseline.json"
-          NIKATRU_QUIET_EOF
-          NIKATRU_SHELL="${BASH:-bash}"; if command -v cygpath >/dev/null 2>&1; then NIKATRU_SHELL="$(cygpath -w "$NIKATRU_SHELL")"; fi
-          node "$GITHUB_WORKSPACE/../.nikatru-shell/quiet-step.mjs" --name codeql.analyze.7 --public -- "$NIKATRU_SHELL" -e "$NIKATRU_QUIET"
-      - name: Seal this main analysis's baseline (generated)
-        if: ${{ always() && (github.event.client_payload.event || github.event_name) != 'pull_request' && env.NIKATRU_PRIVATE_REPO != '' && steps.sarif-report.outcome != 'skipped' && (github.event.client_payload.event || github.event_name) != 'pull_request' && (github.event.client_payload.ref || 'refs/heads/main') == 'refs/heads/main' }}
-        shell: bash
-        working-directory: ${{ github.workspace }}
-        env:
-          NIKATRU_BASELINE_KEY_FILE: ${{ github.workspace }}/../.nikatru-shell/baseline.key
-          NIKATRU_BASELINE_CACHE_KEY: codeql-main-baseline-${{ env.NIKATRU_SHA }}
-          NIKATRU_BASELINE_DIR: ${{ runner.temp }}/codeql-baseline
-        run: |
-          py=python3; python3 -c '' >/dev/null 2>&1 || py=python
-          if [ -f "$NIKATRU_BASELINE_DIR/baseline.json" ]; then "$py" -I "$GITHUB_WORKSPACE/../.nikatru-shell/report.py" baseline-seal "$NIKATRU_BASELINE_DIR"; else echo "baseline: none written, nothing to seal"; fi
-      - name: Save this main analysis's CodeQL baseline
-        if: ${{ always() && (github.event.client_payload.event || github.event_name) != 'pull_request' && env.NIKATRU_PRIVATE_REPO != '' && steps.sarif-report.outcome != 'skipped' }}
-        uses: actions/cache/save@55cc8345863c7cc4c66a329aec7e433d2d1c52a9
-        with:
-          path: ${{ runner.temp }}/codeql-baseline
-          key: codeql-main-baseline-${{ env.NIKATRU_SHA }}
-      - name: Forget the baseline key once the baseline is sealed (generated)
-        if: always()
-        shell: bash
-        working-directory: ${{ github.workspace }}
-        env:
-          NIKATRU_BASELINE_KEY_FILE: ${{ github.workspace }}/../.nikatru-shell/baseline.key
-        run: rm -f "$NIKATRU_BASELINE_KEY_FILE"
-      - name: Hand this job's red detail to the report job, sealed (generated)
-        id: nikatru-handoff
-        if: always()
-        shell: bash
-        working-directory: ${{ github.workspace }}
-        env:
-          NIKATRU_DETAIL_KEY_FILE: ${{ github.workspace }}/../.nikatru-shell/detail.key
-          NIKATRU_HANDOFF: nikatru-detail-${{ github.run_id }}-${{ github.run_attempt }}-codeql.analyze.${{ strategy.job-index }}
-        run: |
-          if [ -s "$RUNNER_TEMP/report-detail.md" ]; then
-            py=python3; python3 -c '' >/dev/null 2>&1 || py=python
-            "$py" -I "$GITHUB_WORKSPACE/../.nikatru-shell/report.py" handoff
-          fi
-      - name: Save the hand-off (generated)
-        if: always() && steps.nikatru-handoff.outputs.has == 'true'
-        uses: actions/cache/save@55cc8345863c7cc4c66a329aec7e433d2d1c52a9
-        with:
-          path: .nikatru-detail
-          key: nikatru-detail-${{ github.run_id }}-${{ github.run_attempt }}-codeql.analyze.${{ strategy.job-index }}
+          key: nikatru-detail-${{ github.run_id }}-${{ github.run_attempt }}-codeql.verdict.${{ strategy.job-index }}
           enableCrossOsArchive: true
 
   nikatru-ran:
     name: Fail this run if it ran nothing (generated)
-    needs: [detect, analyze]
-    if: (github.event_name != 'repository_dispatch' || github.event.client_payload.event == 'pull_request' || (github.event.client_payload.event == 'push' && github.event.client_payload.ref == 'refs/heads/main')) && !cancelled() && github.event_name != 'repository_dispatch'
+    needs: [codeql, verdict]
+    if: (github.event_name != 'repository_dispatch' || (github.event.client_payload.event == 'push' && github.event.client_payload.ref == 'refs/heads/main')) && !cancelled() && github.event_name != 'repository_dispatch'
     runs-on: ubuntu-24.04
     defaults:
       run:
@@ -747,7 +278,7 @@ jobs:
       - name: Fail when every job of this run was skipped (generated)
         shell: bash
         env:
-          NIKATRU_RESULTS: detect=${{ needs.detect.result }} analyze=${{ needs.analyze.result }}
+          NIKATRU_RESULTS: codeql=${{ needs.codeql.result }} verdict=${{ needs.verdict.result }}
         run: |
           for r in $NIKATRU_RESULTS; do
             if [ "${r#*=}" != skipped ]; then echo "ran: $NIKATRU_RESULTS"; exit 0; fi
@@ -757,8 +288,8 @@ jobs:
 
   nikatru-collect:
     name: Collect the red detail, without the report secret (generated)
-    needs: [detect, analyze]
-    if: always() && (github.event_name == 'repository_dispatch' || github.event_name == 'workflow_dispatch') && (github.event_name != 'repository_dispatch' || github.event.client_payload.event == 'pull_request' || (github.event.client_payload.event == 'push' && github.event.client_payload.ref == 'refs/heads/main'))
+    needs: [codeql, verdict]
+    if: always() && (github.event_name == 'repository_dispatch' || github.event_name == 'workflow_dispatch') && (github.event_name != 'repository_dispatch' || (github.event.client_payload.event == 'push' && github.event.client_payload.ref == 'refs/heads/main'))
     runs-on: ubuntu-24.04
     defaults:
       run:
@@ -786,7 +317,7 @@ jobs:
         continue-on-error: true
         env:
           GH_TOKEN: ${{ github.token }}
-          NIKATRU_RESULTS: detect=${{ needs.detect.result }} analyze=${{ needs.analyze.result }}
+          NIKATRU_RESULTS: codeql=${{ needs.codeql.result }} verdict=${{ needs.verdict.result }}
         run: python3 .github/nikatru/report.py plan .github/nikatru/codeql.json
       - name: Restore hand-off 0 (generated)
         id: nikatru-slot-0
@@ -1757,8 +1288,8 @@ jobs:
 
   nikatru-report:
     name: Report to the private repository (generated)
-    needs: [detect, analyze, nikatru-collect]
-    if: always() && (github.event_name == 'repository_dispatch' || github.event_name == 'workflow_dispatch') && (github.event_name != 'repository_dispatch' || github.event.client_payload.event == 'pull_request' || (github.event.client_payload.event == 'push' && github.event.client_payload.ref == 'refs/heads/main'))
+    needs: [codeql, verdict, nikatru-collect]
+    if: always() && (github.event_name == 'repository_dispatch' || github.event_name == 'workflow_dispatch') && (github.event_name != 'repository_dispatch' || (github.event.client_payload.event == 'push' && github.event.client_payload.ref == 'refs/heads/main'))
     runs-on: ubuntu-24.04
     defaults:
       run:
@@ -1790,7 +1321,7 @@ jobs:
           NIKATRU_P_EVENT: ${{ github.event.client_payload.event }}
           NIKATRU_P_PR: ${{ github.event.client_payload.pr }}
           NIKATRU_P_REF: ${{ github.event.client_payload.ref }}
-          NIKATRU_RESULTS: '{"detect": "${{ needs.detect.result }}", "analyze": "${{ needs.analyze.result }}"}'
+          NIKATRU_RESULTS: '{"codeql": "${{ needs.codeql.result }}", "verdict": "${{ needs.verdict.result }}"}'
         run: /usr/bin/python3 -I .github/nikatru/report.py send .github/nikatru/codeql.json
       - name: Report every lane and the gate without detail, as the step above did not run to its end (generated)
         if: always() && steps.send.outputs.reported != 'true'
@@ -1800,5 +1331,5 @@ jobs:
           NIKATRU_P_EVENT: ${{ github.event.client_payload.event }}
           NIKATRU_P_PR: ${{ github.event.client_payload.pr }}
           NIKATRU_P_REF: ${{ github.event.client_payload.ref }}
-          NIKATRU_RESULTS: '{"detect": "${{ needs.detect.result }}", "analyze": "${{ needs.analyze.result }}"}'
+          NIKATRU_RESULTS: '{"codeql": "${{ needs.codeql.result }}", "verdict": "${{ needs.verdict.result }}"}'
         run: /usr/bin/python3 -I .github/nikatru/report.py send .github/nikatru/codeql.json

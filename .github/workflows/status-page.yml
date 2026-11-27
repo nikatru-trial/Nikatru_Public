@@ -335,10 +335,7 @@ jobs:
             echo "refused=true" >> "$GITHUB_OUTPUT"
           fi
       - name: Grade the committed status site
-        run: |
-          node tooling/status/build-status.mjs --sitemap
-          node tooling/ci/check-site-integrity.mjs . --only sites/status
-          node tooling/status/build-status.mjs --check
+        run: bash tooling/ci/steps/status-site-grade.sh
       - name: Read the surfaces and the live document, and build the site
         id: build
         env:
