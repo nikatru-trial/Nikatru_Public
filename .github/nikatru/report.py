@@ -1846,6 +1846,10 @@ def gate_origin_ok(env, cfg=None):
         return re.fullmatch(r'[1-9][0-9]{0,9}', env.get('NIKATRU_P_PR', '')) is not None
     if event == 'workflow_dispatch' and (cfg or {}).get('leadDispatch') is True:
         return ref.startswith('refs/heads/')
+    # hand-run-is-main-1127: a person's dispatch of a hand-sha root that built private main (hand_main)
+    # writes the gate as a push to main does; a hand dispatch carrying a PR never does.
+    if hand_main(env) is not None and env.get('NIKATRU_P_PR', '') == '':
+        return True
     return event == 'push' and (ref == 'refs/heads/main' or ref.startswith('refs/tags/'))
 
 
@@ -1866,6 +1870,29 @@ def dispatch_detail(details, lost, results, cfg):
 # detail at the private home instead (POST /dispatch-detail): a manual run, and ⏱ 2026-10-24 ·
 # O-SCHEDULED-RUN-RED-DETAIL-NEVER-DELIVERED a scheduled one, whose hand-offs used to reach nobody.
 UNDISPATCHED_EVENTS = ('workflow_dispatch', 'schedule')
+
+# hand-run-is-main-1127 (lead acct1; measured on main 26405e7a, runs 46001048182 / 46003614108). After a
+# shell-changing merge the real main run is re-dispatched BY HAND (`lead-dispatch.sh ci.yml`, title `[hand] CI ·
+# <sha40>`). Such a run builds private main: ci.yml's workflow_dispatch has no ref input (refs/heads/main always), and its
+# pin step reds unless main IS `inputs.sha` (gen-public-shell.mjs HAND_SHA_CHECK). gate-pr-body.mjs already judges it as
+# main (SHELL_MAIN_DISPATCH). Until now its send went to send_dispatch and posted NO status, so the cancelled stale
+# [main] run's red ci-gate stayed main's gate at that commit (branch-proofs precheck 4b refused every branch money
+# walk). Now it posts its statuses at that sha exactly as the push's run does; the report job hands the sha over as
+# HAND_SHA_ENV (gen-public-shell.mjs reportJob `handSha`), set only in a root that declares the `sha` input.
+# DEPLOY ORDER: a bridge deployed before this refuses the run `... not repository_dispatch` (OLD_BRIDGE_REFUSAL). Such a
+# refusal is said, not red, and the run's red detail still goes to POST /dispatch-detail as before; once the bridge
+# that accepts a hand main run is live the statuses land.
+HAND_SHA_ENV = 'NIKATRU_P_HAND_SHA'
+OLD_BRIDGE_REFUSAL = 'not repository_dispatch'
+
+
+def hand_main(env):
+    """The private main sha a person's workflow_dispatch of a hand-sha root built (HAND_SHA_ENV, 40 hex), or None:
+    any other event, a hand run given no sha (its title names no commit), or a value that is not a sha."""
+    if env.get('GITHUB_EVENT_NAME', '') != 'workflow_dispatch':
+        return None
+    sha = env.get(HAND_SHA_ENV, '')
+    return sha if SHA.match(sha) else None
 
 
 def send_dispatch(env, cfg, opener=urllib.request.urlopen, clock=time.monotonic):
@@ -2082,7 +2109,11 @@ def refused_on_green(item, cfg, state, status, why, gate_green):
 
 
 def send(env, cfg, opener=urllib.request.urlopen, clock=time.monotonic):
-    if env.get('GITHUB_EVENT_NAME') in UNDISPATCHED_EVENTS:
+    hand = hand_main(env) if env.get('NIKATRU_P_PR', '') == '' else None
+    if hand is not None:
+        # hand-run-is-main-1127: the statuses at the main commit this hand run built (never a payload sha: it has none).
+        env = {**env, 'NIKATRU_HEAD_SHA': hand}
+    elif env.get('GITHUB_EVENT_NAME') in UNDISPATCHED_EVENTS:
         return send_dispatch(env, cfg, opener, clock)
     url = cfg.get('bridgeUrl')
     if not url:
@@ -2131,7 +2162,7 @@ def send(env, cfg, opener=urllib.request.urlopen, clock=time.monotonic):
     skipped = 0
     # O-REPORT-403-ONE-OF-NINE-REDS-THE-RUN: True once THIS send posted the gate `success` and the bridge took it (the
     # gate goes first, items()); a config with no gate, or a gate not posted success, never turns a refusal green.
-    gate_green, warned = False, 0
+    gate_green, warned, old_bridge = False, 0, 0
     for item in items(cfg):
         state = STATE_OF.get(results.get(item['job'], ''))
         if state is None:
@@ -2177,6 +2208,11 @@ def send(env, cfg, opener=urllib.request.urlopen, clock=time.monotonic):
                       f"(meta {env.get('NIKATRU_GATE_META', '')[:20]!r}, and no hold this report can read): posted failure, never success")
         status, why = post(url, secret, build(item['context'], state, env, detail, is_gate(item, cfg)), cfg['postTimeoutS'], opener, stamp=True,
                            oidc=lambda: report_token(env, opener))
+        if hand is not None and status == 403 and OLD_BRIDGE_REFUSAL in str(why or ''):
+            # hand-run-is-main-1127 DEPLOY ORDER: the bridge as deployed predates hand main runs; said, not red.
+            old_bridge += 1
+            print(f"-- {item['context']} {state}: NOT reported -> HTTP 403 ({why}); the bridge as deployed predates hand main runs")
+            continue
         # A 409 is this very body already delivered (the bridge's seen-key, O-BRIDGE-REPORT-REPLAY-WINDOW): not a failure.
         ok = 200 <= status < 300 or status == 409
         if is_gate(item, cfg):
@@ -2194,6 +2230,15 @@ def send(env, cfg, opener=urllib.request.urlopen, clock=time.monotonic):
         print(f'-- {skipped} context(s) already reported at this sha, not posted again')
     if warned:
         print(f'-- WARNING: {warned} lane status(es) refused `{NO_REPORT_JOB}` with ci-gate success; named above, not posted')
+    if old_bridge:
+        # hand-run-is-main-1127: nothing reached the commit, so the red detail goes where a hand run's always went.
+        print(f'::warning title=hand main run not reported::WARNING {old_bridge} status(es) refused by a bridge that predates '
+              'hand main runs; this run files its red detail at POST /dispatch-detail instead')
+        if lost:
+            print(f'x COVERAGE LOST - report.py: {lost}', file=sys.stderr)
+            return 2
+        code = send_dispatch(env, cfg, opener, clock)
+        return code if code else (1 if failed else 0)
     # Every status was attempted: the report job's fallback step (no detail) need not run.
     if env.get('GITHUB_OUTPUT'):
         with open(env['GITHUB_OUTPUT'], 'a', encoding='utf-8') as f:

@@ -1078,7 +1078,7 @@ jobs:
 
   money-plan:
     name: money-plan
-    needs: [nikatru-pin, ci-gate]
+    needs: [nikatru-pin, first-pass]
     if: (github.event_name != 'repository_dispatch' || (github.event.client_payload.event == 'push' && github.event.client_payload.ref == 'refs/heads/main') || github.event.client_payload.event == 'pull_request') && (((github.event.client_payload.event || github.event_name) == 'push' || (github.event.client_payload.event || github.event_name) == 'workflow_dispatch') && (github.event.client_payload.ref || 'refs/heads/main') == 'refs/heads/main')
     runs-on: ubuntu-24.04
     timeout-minutes: 5
@@ -1092,6 +1092,7 @@ jobs:
       touches: ${{ steps.plan.outputs.touches }}
       enforce: ${{ steps.plan.outputs.enforce }}
       reused: ${{ steps.plan.outputs.reused }}
+      migrates: ${{ steps.migrates.outputs.migrates }}
     steps:
       - name: Check out the private tree (generated)
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
@@ -1202,6 +1203,19 @@ jobs:
           NIKATRU_QUIET_EOF
           NIKATRU_SHELL="${BASH:-bash}"; if command -v cygpath >/dev/null 2>&1; then NIKATRU_SHELL="$(cygpath -w "$NIKATRU_SHELL")"; fi
           node "$GITHUB_WORKSPACE/../.nikatru-shell/quiet-step.mjs" --name ci.money-plan.3 --public -- "$NIKATRU_SHELL" -e "$NIKATRU_QUIET"
+      - name: Does this commit carry a D1 migration no passed ci-gate judged
+        id: migrates
+        if: steps.plan.outputs.money == 'true'
+        env:
+          GITHUB_TOKEN: ${{ github.token }}
+          TARGET_SHA: ${{ env.NIKATRU_SHA }}
+        run: |
+          NIKATRU_QUIET="$(mktemp "${RUNNER_TEMP:-/tmp}/nikatru-step.XXXXXX")"
+          cat > "$NIKATRU_QUIET" <<'NIKATRU_QUIET_EOF'
+          node tooling/ci/sandbox-migrates.mjs "$TARGET_SHA"
+          NIKATRU_QUIET_EOF
+          NIKATRU_SHELL="${BASH:-bash}"; if command -v cygpath >/dev/null 2>&1; then NIKATRU_SHELL="$(cygpath -w "$NIKATRU_SHELL")"; fi
+          node "$GITHUB_WORKSPACE/../.nikatru-shell/quiet-step.mjs" --name ci.money-plan.4 -- "$NIKATRU_SHELL" -e "$NIKATRU_QUIET"
       - name: Hand this job's red detail to the report job, sealed (generated)
         id: nikatru-handoff
         if: always()
@@ -1225,7 +1239,7 @@ jobs:
 
   sandbox-slot:
     name: sandbox-slot
-    needs: [nikatru-pin, ci-gate, money-plan]
+    needs: [nikatru-pin, money-plan]
     if: (github.event_name != 'repository_dispatch' || (github.event.client_payload.event == 'push' && github.event.client_payload.ref == 'refs/heads/main') || github.event.client_payload.event == 'pull_request') && (((github.event.client_payload.event || github.event_name) == 'push' || (github.event.client_payload.event || github.event_name) == 'workflow_dispatch') && (github.event.client_payload.ref || 'refs/heads/main') == 'refs/heads/main')
     runs-on: ubuntu-24.04
     timeout-minutes: 107
@@ -1355,18 +1369,31 @@ jobs:
           NIKATRU_REF: ${{ github.event.client_payload.ref || 'refs/heads/main' }}
           NIKATRU_EVENT_NAME: ${{ github.event.client_payload.event || github.event_name }}
           NIKATRU_PR: ${{ github.event.client_payload.pr }}
+      - name: A D1 migration no passed ci-gate judged waits for this run's ci-gate before the sandbox
+        if: needs.money-plan.outputs.money == 'true' && needs.money-plan.outputs.migrates != 'false'
+        env:
+          GITHUB_TOKEN: ${{ github.token }}
+          TARGET_SHA: ${{ env.NIKATRU_SHA }}
+        run: |
+          NIKATRU_QUIET="$(mktemp "${RUNNER_TEMP:-/tmp}/nikatru-step.XXXXXX")"
+          cat > "$NIKATRU_QUIET" <<'NIKATRU_QUIET_EOF'
+          node tooling/ci/assert-gate-passed.mjs "$TARGET_SHA" --timeout-seconds 3000
+          NIKATRU_QUIET_EOF
+          NIKATRU_SHELL="${BASH:-bash}"; if command -v cygpath >/dev/null 2>&1; then NIKATRU_SHELL="$(cygpath -w "$NIKATRU_SHELL")"; fi
+          node "$GITHUB_WORKSPACE/../.nikatru-shell/quiet-step.mjs" --name ci.sandbox-slot.4 -- "$NIKATRU_SHELL" -e "$NIKATRU_QUIET"
       - name: Wait until the deploy-sandbox group has no pending entry
         id: slot
         if: needs.money-plan.outputs.money == 'true'
         env:
           GITHUB_TOKEN: ${{ github.token }}
+          SLOT_CEILING: ${{ needs.money-plan.outputs.migrates != 'false' && '50' || '100' }}
         run: |
           NIKATRU_QUIET="$(mktemp "${RUNNER_TEMP:-/tmp}/nikatru-step.XXXXXX")"
           cat > "$NIKATRU_QUIET" <<'NIKATRU_QUIET_EOF'
-          node tooling/ci/sandbox-slot.mjs --role main --run-id "$GITHUB_RUN_ID" --history .slot-history
+          node tooling/ci/sandbox-slot.mjs --role main --run-id "$GITHUB_RUN_ID" --ceiling-minutes "$SLOT_CEILING" --history .slot-history
           NIKATRU_QUIET_EOF
           NIKATRU_SHELL="${BASH:-bash}"; if command -v cygpath >/dev/null 2>&1; then NIKATRU_SHELL="$(cygpath -w "$NIKATRU_SHELL")"; fi
-          node "$GITHUB_WORKSPACE/../.nikatru-shell/quiet-step.mjs" --name ci.sandbox-slot.4 -- "$NIKATRU_SHELL" -e "$NIKATRU_QUIET"
+          node "$GITHUB_WORKSPACE/../.nikatru-shell/quiet-step.mjs" --name ci.sandbox-slot.5 -- "$NIKATRU_SHELL" -e "$NIKATRU_QUIET"
       - name: Every setup step of this job succeeded (generated)
         id: nikatru-setup-ok
         run: echo "every setup step before the first check succeeded"
@@ -1380,7 +1407,7 @@ jobs:
           echo "::notice title=sandbox-slot::superseded by $SUPERSEDED; money-sandbox and every job behind it skip"
           NIKATRU_QUIET_EOF
           NIKATRU_SHELL="${BASH:-bash}"; if command -v cygpath >/dev/null 2>&1; then NIKATRU_SHELL="$(cygpath -w "$NIKATRU_SHELL")"; fi
-          node "$GITHUB_WORKSPACE/../.nikatru-shell/quiet-step.mjs" --name ci.sandbox-slot.5 -- "$NIKATRU_SHELL" -e "$NIKATRU_QUIET"
+          node "$GITHUB_WORKSPACE/../.nikatru-shell/quiet-step.mjs" --name ci.sandbox-slot.6 -- "$NIKATRU_SHELL" -e "$NIKATRU_QUIET"
       - name: Hand this job's red detail to the report job, sealed (generated)
         id: nikatru-handoff
         if: always()
@@ -1404,7 +1431,7 @@ jobs:
 
   money-sandbox:
     name: money-sandbox
-    needs: [nikatru-pin, ci-gate, money-plan, sandbox-slot]
+    needs: [nikatru-pin, money-plan, sandbox-slot]
     if: (github.event_name != 'repository_dispatch' || (github.event.client_payload.event == 'push' && github.event.client_payload.ref == 'refs/heads/main') || github.event.client_payload.event == 'pull_request') && (((github.event.client_payload.event || github.event_name) == 'push' || (github.event.client_payload.event || github.event_name) == 'workflow_dispatch') && (github.event.client_payload.ref || 'refs/heads/main') == 'refs/heads/main' && needs.sandbox-slot.outputs.superseded == '')
     uses: ./.github/workflows/deploy-sandbox-unit.yml
     concurrency:
@@ -1428,7 +1455,7 @@ jobs:
 
   money-walk-tip:
     name: money-walk-tip
-    needs: [nikatru-pin, ci-gate, money-plan, money-sandbox]
+    needs: [nikatru-pin, money-plan, money-sandbox]
     if: (github.event_name != 'repository_dispatch' || (github.event.client_payload.event == 'push' && github.event.client_payload.ref == 'refs/heads/main') || github.event.client_payload.event == 'pull_request') && (((github.event.client_payload.event || github.event_name) == 'push' || (github.event.client_payload.event || github.event_name) == 'workflow_dispatch') && (github.event.client_payload.ref || 'refs/heads/main') == 'refs/heads/main')
     runs-on: ubuntu-24.04
     timeout-minutes: 10
@@ -1607,7 +1634,7 @@ jobs:
 
   money-gate:
     name: money-gate
-    needs: [nikatru-pin, ci-gate, money-plan, money-sandbox, money-walk-tip]
+    needs: [nikatru-pin, money-plan, money-sandbox, money-walk-tip]
     if: (github.event_name != 'repository_dispatch' || (github.event.client_payload.event == 'push' && github.event.client_payload.ref == 'refs/heads/main') || github.event.client_payload.event == 'pull_request') && (((github.event.client_payload.event || github.event_name) == 'push' || (github.event.client_payload.event || github.event_name) == 'workflow_dispatch') && (github.event.client_payload.ref || 'refs/heads/main') == 'refs/heads/main' && needs.money-walk-tip.outputs.superseded == '')
     uses: ./.github/workflows/money-sandbox-legs.yml
     with:
@@ -3106,6 +3133,7 @@ jobs:
           NIKATRU_P_EVENT: ${{ github.event.client_payload.event }}
           NIKATRU_P_PR: ${{ github.event.client_payload.pr }}
           NIKATRU_P_REF: ${{ github.event.client_payload.ref }}
+          NIKATRU_P_HAND_SHA: ${{ inputs.sha }}
           NIKATRU_RESULTS: '{"first-pass": "${{ needs.first-pass.result }}", "lane-workers": "${{ needs.lane-workers.result }}", "lane-guards": "${{ needs.lane-guards.result }}", "lane-sites": "${{ needs.lane-sites.result }}", "lane-apps": "${{ needs.lane-apps.result }}", "lane-build": "${{ needs.lane-build.result }}", "as-if-main": "${{ needs.as-if-main.result }}", "extensions": "${{ needs.extensions.result }}", "main-only-setup-plan": "${{ needs.main-only-setup-plan.result }}", "main-only-setup": "${{ needs.main-only-setup.result }}", "ci-gate": "${{ needs.ci-gate.result }}"}'
           NIKATRU_GATE_META: ${{ needs.ci-gate.outputs.meta }}
           NIKATRU_TIER: ${{ needs.nikatru-pin.outputs.tier }}
@@ -3118,6 +3146,7 @@ jobs:
           NIKATRU_P_EVENT: ${{ github.event.client_payload.event }}
           NIKATRU_P_PR: ${{ github.event.client_payload.pr }}
           NIKATRU_P_REF: ${{ github.event.client_payload.ref }}
+          NIKATRU_P_HAND_SHA: ${{ inputs.sha }}
           NIKATRU_RESULTS: '{"first-pass": "${{ needs.first-pass.result }}", "lane-workers": "${{ needs.lane-workers.result }}", "lane-guards": "${{ needs.lane-guards.result }}", "lane-sites": "${{ needs.lane-sites.result }}", "lane-apps": "${{ needs.lane-apps.result }}", "lane-build": "${{ needs.lane-build.result }}", "as-if-main": "${{ needs.as-if-main.result }}", "extensions": "${{ needs.extensions.result }}", "main-only-setup-plan": "${{ needs.main-only-setup-plan.result }}", "main-only-setup": "${{ needs.main-only-setup.result }}", "ci-gate": "${{ needs.ci-gate.result }}"}'
           NIKATRU_GATE_META: ${{ needs.ci-gate.outputs.meta }}
           NIKATRU_TIER: ${{ needs.nikatru-pin.outputs.tier }}

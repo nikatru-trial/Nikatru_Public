@@ -62,7 +62,7 @@ permissions:
   contents: read
 
 concurrency:
-  group: ${{ (inputs.private_pr != '' && vars.MONEY_WALK_SLOTS == 'on') && format('money-walk-slot-{0}', '1') || 'deploy-sandbox' }}
+  group: ${{ (inputs.private_pr != '' && vars.MONEY_WALK_SLOTS == 'on') && format('money-walk-slot-{0}', ((endsWith(inputs.private_pr, '1') || endsWith(inputs.private_pr, '3') || endsWith(inputs.private_pr, '5') || endsWith(inputs.private_pr, '7') || endsWith(inputs.private_pr, '9')) && '2') || '1') || 'deploy-sandbox' }}
   cancel-in-progress: false
 
 jobs:
@@ -995,7 +995,7 @@ jobs:
 
   main-gate:
     name: private main's newest gated commit (to put the sandbox back)
-    needs: [nikatru-pin, nikatru-approve, deploy, proof]
+    needs: [nikatru-pin, nikatru-approve, deploy, proof, walk-slot]
     if: needs.nikatru-pin.result == 'success' && (needs.nikatru-approve.result == 'success' || (needs.nikatru-approve.result == 'skipped' && !((inputs.private_ref || '') != ''))) && (always() && (github.event.client_payload.ref || inputs.private_ref || 'refs/heads/main') != 'refs/heads/main' && needs.deploy.result != 'skipped')
     runs-on: ubuntu-24.04
     timeout-minutes: 25
@@ -1092,8 +1092,26 @@ jobs:
           NIKATRU_REF: ${{ github.event.client_payload.ref || inputs.private_ref || 'refs/heads/main' }}
           NIKATRU_EVENT_NAME: ${{ github.event.client_payload.event || github.event_name }}
           NIKATRU_PR: ${{ github.event.client_payload.pr }}
+      - name: Does this walk run on its own slot
+        id: own
+        env:
+          GATE: ${{ vars.MONEY_WALK_SLOTS }}
+          MODE: ${{ needs.walk-slot.outputs.mode }}
+          SLOT: ${{ needs.walk-slot.outputs.slot }}
+        run: |
+          NIKATRU_QUIET="$(mktemp "${RUNNER_TEMP:-/tmp}/nikatru-step.XXXXXX")"
+          cat > "$NIKATRU_QUIET" <<'NIKATRU_QUIET_EOF'
+          if [ "$GATE" = "on" ] && [ "$MODE" = "slot" ] && [ "${SLOT:-0}" -ge 2 ] 2>/dev/null; then
+            echo "own=true" >> "$GITHUB_OUTPUT"
+          else
+            echo "own=false" >> "$GITHUB_OUTPUT"
+          fi
+          NIKATRU_QUIET_EOF
+          NIKATRU_SHELL="${BASH:-bash}"; if command -v cygpath >/dev/null 2>&1; then NIKATRU_SHELL="$(cygpath -w "$NIKATRU_SHELL")"; fi
+          node "$GITHUB_WORKSPACE/../.nikatru-shell/quiet-step.mjs" --name money-sandbox-e2e.main-gate.3 -- "$NIKATRU_SHELL" -e "$NIKATRU_QUIET"
       - name: Private main's newest commit whose ci-gate passed
         id: verdict
+        continue-on-error: ${{ steps.own.outputs.own == 'true' }}
         env:
           GITHUB_TOKEN: ${{ github.token }}
           GITHUB_REPOSITORY: ${{ github.repository }}
@@ -1104,7 +1122,18 @@ jobs:
           node tooling/ci/assert-gate-passed.mjs "$(git rev-parse HEAD)" --schedule-lookback 20 --event schedule --output sha
           NIKATRU_QUIET_EOF
           NIKATRU_SHELL="${BASH:-bash}"; if command -v cygpath >/dev/null 2>&1; then NIKATRU_SHELL="$(cygpath -w "$NIKATRU_SHELL")"; fi
-          node "$GITHUB_WORKSPACE/../.nikatru-shell/quiet-step.mjs" --name money-sandbox-e2e.main-gate.3 -- "$NIKATRU_SHELL" -e "$NIKATRU_QUIET"
+          node "$GITHUB_WORKSPACE/../.nikatru-shell/quiet-step.mjs" --name money-sandbox-e2e.main-gate.4 -- "$NIKATRU_SHELL" -e "$NIKATRU_QUIET"
+      - name: An own slot keeps its build when main has no green commit
+        if: steps.own.outputs.own == 'true' && steps.verdict.outcome == 'failure'
+        env:
+          SLOT: ${{ needs.walk-slot.outputs.slot }}
+        run: |
+          NIKATRU_QUIET="$(mktemp "${RUNNER_TEMP:-/tmp}/nikatru-step.XXXXXX")"
+          cat > "$NIKATRU_QUIET" <<'NIKATRU_QUIET_EOF'
+          echo "::notice title=Own walk slot::no green main commit: slot ${SLOT} keeps this walk's build until its next lease; slot 1 and platform-sandbox were never touched"
+          NIKATRU_QUIET_EOF
+          NIKATRU_SHELL="${BASH:-bash}"; if command -v cygpath >/dev/null 2>&1; then NIKATRU_SHELL="$(cygpath -w "$NIKATRU_SHELL")"; fi
+          node "$GITHUB_WORKSPACE/../.nikatru-shell/quiet-step.mjs" --name money-sandbox-e2e.main-gate.5 -- "$NIKATRU_SHELL" -e "$NIKATRU_QUIET"
       - name: Store this job's red detail in the bridge's private home (generated)
         if: always()
         continue-on-error: true
@@ -1121,7 +1150,7 @@ jobs:
   restore:
     name: restore
     needs: [nikatru-pin, nikatru-approve, main-gate, ephemeral-db, sandbox-slot]
-    if: needs.nikatru-pin.result == 'success' && (needs.nikatru-approve.result == 'success' || (needs.nikatru-approve.result == 'skipped' && !((inputs.private_ref || '') != ''))) && (always() && (github.event.client_payload.ref || inputs.private_ref || 'refs/heads/main') != 'refs/heads/main' && needs.main-gate.result == 'success')
+    if: needs.nikatru-pin.result == 'success' && (needs.nikatru-approve.result == 'success' || (needs.nikatru-approve.result == 'skipped' && !((inputs.private_ref || '') != ''))) && (always() && (github.event.client_payload.ref || inputs.private_ref || 'refs/heads/main') != 'refs/heads/main' && needs.main-gate.result == 'success' && needs.main-gate.outputs.sha != '')
     uses: ./.github/workflows/deploy-sandbox-unit.yml
     with:
       worker: all

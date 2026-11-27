@@ -13,7 +13,15 @@
       "e2e-leg."
     ]
   },
-  "lanes": [],
+  "lanes": [
+    {
+      "job": "live-slot",
+      "context": "new-user-e2e/live-slot",
+      "members": [
+        "new-user-e2e.live-slot."
+      ]
+    }
+  ],
   "leadDispatch": true,
   "dispatchDetailUrl": "https://gh-bridge.nikatru.workers.dev/dispatch-detail",
   "artifactUrl": "https://gh-bridge.nikatru.workers.dev/artifact"

@@ -416,7 +416,7 @@ jobs:
     if: (github.event_name != 'repository_dispatch' || (github.event.client_payload.event == 'push' && startsWith(github.event.client_payload.ref, 'refs/tags/subscriptiontracker-v')))
     runs-on: ubuntu-24.04
     environment: signing
-    timeout-minutes: 79
+    timeout-minutes: 84
     needs: [nikatru-pin, prepare]
     strategy:
       fail-fast: false
@@ -1184,9 +1184,38 @@ jobs:
           NIKATRU_QUIET_EOF
           NIKATRU_SHELL="${BASH:-bash}"; if command -v cygpath >/dev/null 2>&1; then NIKATRU_SHELL="$(cygpath -w "$NIKATRU_SHELL")"; fi
           node "$GITHUB_WORKSPACE/../.nikatru-shell/quiet-step.mjs" --name build-platforms.linux_web_android.51 -- "$NIKATRU_SHELL" -e "$NIKATRU_QUIET"
+      - name: Say why the Play release launch is skipped (no upload key in this run)
+        if: ${{ !cancelled() && steps.play_ok.outcome == 'success' && steps.rl_boot.outcome == 'success' && env.ANDROID_SIGNING_POSTURE != 'release-signed' }}
+        env:
+          POSTURE: ${{ env.ANDROID_SIGNING_POSTURE }}
+        run: |
+          NIKATRU_QUIET="$(mktemp "${RUNNER_TEMP:-/tmp}/nikatru-step.XXXXXX")"
+          cat > "$NIKATRU_QUIET" <<'NIKATRU_QUIET_EOF'
+          echo "::notice title=release launch android-play::SKIPPED, signing posture '${POSTURE:-unset}' is not release-signed, so no pinned key can sign the universal .apk"
+          NIKATRU_QUIET_EOF
+          NIKATRU_SHELL="${BASH:-bash}"; if command -v cygpath >/dev/null 2>&1; then NIKATRU_SHELL="$(cygpath -w "$NIKATRU_SHELL")"; fi
+          node "$GITHUB_WORKSPACE/../.nikatru-shell/quiet-step.mjs" --name build-platforms.linux_web_android.52 -- "$NIKATRU_SHELL" -e "$NIKATRU_QUIET"
       - name: Launch the Play release once (universal .apk from the signed .aab)
-        if: ${{ !cancelled() && steps.play_ok.outcome == 'success' && steps.rl_boot.outcome == 'success' }}
+        if: ${{ !cancelled() && steps.play_ok.outcome == 'success' && steps.rl_boot.outcome == 'success' && env.ANDROID_SIGNING_POSTURE == 'release-signed' }}
         id: rl_play
+        timeout-minutes: 5
+        env:
+          APP: ${{ matrix.app }}
+          API_LEVEL: ${{ steps.rl_boot.outputs.api_level }}
+          ANDROID_KEYSTORE_PATH: ${{ steps.play_key.outputs.ANDROID_KEYSTORE_PATH }}
+          ANDROID_KEYSTORE_PASSWORD: ${{ secrets.ANDROID_KEYSTORE_PASSWORD }}
+          ANDROID_KEY_ALIAS: ${{ secrets.ANDROID_KEY_ALIAS }}
+          ANDROID_KEY_PASSWORD: ${{ secrets.ANDROID_KEY_PASSWORD }}
+        run: |
+          NIKATRU_QUIET="$(mktemp "${RUNNER_TEMP:-/tmp}/nikatru-step.XXXXXX")"
+          cat > "$NIKATRU_QUIET" <<'NIKATRU_QUIET_EOF'
+          set -euo pipefail
+          node tooling/smoke/release-launch/launch.mjs --launch-channel android-play --app "$APP" --api "$API_LEVEL" --signer upload --bundletool "$RUNNER_TEMP/bundletool/bundletool.jar" --artifact "apps/$APP/build/app/outputs/bundle/release/app-release.aab" --out "$RUNNER_TEMP/release-launch"
+          NIKATRU_QUIET_EOF
+          NIKATRU_SHELL="${BASH:-bash}"; if command -v cygpath >/dev/null 2>&1; then NIKATRU_SHELL="$(cygpath -w "$NIKATRU_SHELL")"; fi
+          node "$GITHUB_WORKSPACE/../.nikatru-shell/quiet-step.mjs" --name build-platforms.linux_web_android.53 -- "$NIKATRU_SHELL" -e "$NIKATRU_QUIET"
+      - name: The Play release's foreign-signed control (a key in no pin → the modified-copy screen)
+        if: ${{ !cancelled() && steps.play_ok.outcome == 'success' && steps.rl_boot.outcome == 'success' }}
         timeout-minutes: 5
         env:
           APP: ${{ matrix.app }}
@@ -1195,10 +1224,10 @@ jobs:
           NIKATRU_QUIET="$(mktemp "${RUNNER_TEMP:-/tmp}/nikatru-step.XXXXXX")"
           cat > "$NIKATRU_QUIET" <<'NIKATRU_QUIET_EOF'
           set -euo pipefail
-          node tooling/smoke/release-launch/launch.mjs --launch-channel android-play --app "$APP" --api "$API_LEVEL" --bundletool "$RUNNER_TEMP/bundletool/bundletool.jar" --artifact "apps/$APP/build/app/outputs/bundle/release/app-release.aab" --out "$RUNNER_TEMP/release-launch"
+          node tooling/smoke/release-launch/launch.mjs --launch-channel android-play --app "$APP" --api "$API_LEVEL" --signer throwaway --expect gate --bundletool "$RUNNER_TEMP/bundletool/bundletool.jar" --artifact "apps/$APP/build/app/outputs/bundle/release/app-release.aab" --out "$RUNNER_TEMP/release-launch/foreign-signed-control"
           NIKATRU_QUIET_EOF
           NIKATRU_SHELL="${BASH:-bash}"; if command -v cygpath >/dev/null 2>&1; then NIKATRU_SHELL="$(cygpath -w "$NIKATRU_SHELL")"; fi
-          node "$GITHUB_WORKSPACE/../.nikatru-shell/quiet-step.mjs" --name build-platforms.linux_web_android.52 -- "$NIKATRU_SHELL" -e "$NIKATRU_QUIET"
+          node "$GITHUB_WORKSPACE/../.nikatru-shell/quiet-step.mjs" --name build-platforms.linux_web_android.54 -- "$NIKATRU_SHELL" -e "$NIKATRU_QUIET"
       - name: Stage store-${{ matrix.app }}-android-aab-${{ env.ANDROID_SIGNING_POSTURE }} for this run's later jobs (generated)
         id: nikatru-stage-3
         if: ${{ (!cancelled() && steps.rl_play.outcome == 'success') && (startsWith(github.event.client_payload.ref || 'refs/heads/main', 'refs/tags/') && 'tag' || 'branch') == 'tag' }}
@@ -1241,7 +1270,7 @@ jobs:
           node tooling/smoke/release-launch/launch.mjs --launch-channel linux-snap --app "$APP" --artifact "apps/$APP/build/linux/snap/$APP.snap" --out "$RUNNER_TEMP/release-launch"
           NIKATRU_QUIET_EOF
           NIKATRU_SHELL="${BASH:-bash}"; if command -v cygpath >/dev/null 2>&1; then NIKATRU_SHELL="$(cygpath -w "$NIKATRU_SHELL")"; fi
-          node "$GITHUB_WORKSPACE/../.nikatru-shell/quiet-step.mjs" --name build-platforms.linux_web_android.55 -- "$NIKATRU_SHELL" -e "$NIKATRU_QUIET"
+          node "$GITHUB_WORKSPACE/../.nikatru-shell/quiet-step.mjs" --name build-platforms.linux_web_android.57 -- "$NIKATRU_SHELL" -e "$NIKATRU_QUIET"
       - name: Stage store-${{ matrix.app }}-linux-snap for this run's later jobs (generated)
         id: nikatru-stage-4
         if: ${{ (!cancelled() && steps.rl_snap.outcome == 'success') && (startsWith(github.event.client_payload.ref || 'refs/heads/main', 'refs/tags/') && 'tag' || 'branch') == 'tag' }}
@@ -1279,7 +1308,7 @@ jobs:
           "${BOOT_EMULATOR_ADB:-adb}" emu kill || echo "emulator already gone"
           NIKATRU_QUIET_EOF
           NIKATRU_SHELL="${BASH:-bash}"; if command -v cygpath >/dev/null 2>&1; then NIKATRU_SHELL="$(cygpath -w "$NIKATRU_SHELL")"; fi
-          node "$GITHUB_WORKSPACE/../.nikatru-shell/quiet-step.mjs" --name build-platforms.linux_web_android.57 -- "$NIKATRU_SHELL" -e "$NIKATRU_QUIET"
+          node "$GITHUB_WORKSPACE/../.nikatru-shell/quiet-step.mjs" --name build-platforms.linux_web_android.59 -- "$NIKATRU_SHELL" -e "$NIKATRU_QUIET"
       - name: Store ci-proof-release-launch-${{ matrix.app }}-linux-android in the bridge's private home (generated)
         if: ${{ !cancelled() }}
         shell: bash
@@ -1289,6 +1318,8 @@ jobs:
             ${{ runner.temp }}/release-launch/*.json
             ${{ runner.temp }}/release-launch/*.txt
             ${{ runner.temp }}/release-launch/*.xml
+            ${{ runner.temp }}/release-launch/foreign-signed-control/*.json
+            ${{ runner.temp }}/release-launch/foreign-signed-control/*.txt
           NIKATRU_ARTIFACT_NAME: ci-proof-release-launch-${{ matrix.app }}-linux-android
           NIKATRU_IF_NO_FILES: warn
           BRIDGE_ARTIFACT_SECRET: ${{ secrets.BRIDGE_ARTIFACT_SECRET }}
@@ -1338,7 +1369,7 @@ jobs:
           echo "removed the decoded apps.gov.in keystore from \$RUNNER_TEMP"
           NIKATRU_QUIET_EOF
           NIKATRU_SHELL="${BASH:-bash}"; if command -v cygpath >/dev/null 2>&1; then NIKATRU_SHELL="$(cygpath -w "$NIKATRU_SHELL")"; fi
-          node "$GITHUB_WORKSPACE/../.nikatru-shell/quiet-step.mjs" --name build-platforms.linux_web_android.60 -- "$NIKATRU_SHELL" -e "$NIKATRU_QUIET"
+          node "$GITHUB_WORKSPACE/../.nikatru-shell/quiet-step.mjs" --name build-platforms.linux_web_android.62 -- "$NIKATRU_SHELL" -e "$NIKATRU_QUIET"
       - name: Hand this job's red detail to the report job, sealed (generated)
         id: nikatru-handoff
         if: always()

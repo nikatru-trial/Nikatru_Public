@@ -15,6 +15,13 @@
   },
   "lanes": [
     {
+      "job": "live-slot",
+      "context": "e2e/live-slot",
+      "members": [
+        "e2e.live-slot."
+      ]
+    },
+    {
       "job": "last-green",
       "context": "e2e/last-green",
       "members": [

@@ -467,6 +467,16 @@ jobs:
           plan="$(node tooling/ci/money-walk-plan.mjs --rail "$RAIL_INPUT")"
           echo "$plan"
           echo "Proving: ${plan}" >> "$GITHUB_STEP_SUMMARY"
+      - name: Each rail's shard plan (one buyer pair per shard, every leg walked once)
+        if: needs.plan.outputs.money == 'true'
+        env:
+          MATRIX: ${{ steps.rails.outputs.matrix }}
+          GATE: ${{ vars.MONEY_WALK_SLOTS }}
+          RUN_ID: ${{ github.run_id }}
+        run: |
+          set -euo pipefail
+          if [ ! -f tooling/ci/money-rail-shards.mjs ]; then echo "::notice title=Money rail shards::this checkout predates the shard plan: every rail walks once, as before"; exit 0; fi
+          node tooling/ci/money-rail-shards.mjs --rails-json "$MATRIX" --slots-on "$GATE" --run "$RUN_ID" | tee -a "$GITHUB_STEP_SUMMARY"
       - name: The app the money walk proves (the register's one app)
         id: app
         if: needs.plan.outputs.money == 'true'
@@ -757,6 +767,17 @@ jobs:
           NIKATRU_REF: ${{ github.event.client_payload.ref || 'refs/heads/main' }}
           NIKATRU_EVENT_NAME: ${{ github.event.client_payload.event || github.event_name }}
           NIKATRU_PR: ${{ github.event.client_payload.pr }}
+      - name: A re-run of the money gate walks only while the sandbox still runs this head
+        if: needs.plan.outputs.money == 'true' && !contains(fromJSON(needs.plan.outputs.held || '[]'), format('{0}-web', matrix.rail))
+        shell: bash
+        env:
+          GATE: ${{ inputs.gate == true }}
+          RUN_ATTEMPT: ${{ github.run_attempt }}
+        run: |
+          if [ "$GATE" != "true" ] || [ "$RUN_ATTEMPT" = "1" ]; then echo "attempt $RUN_ATTEMPT, gate $GATE: not a re-run of the money gate, nothing to check."; exit 0; fi
+          if node tooling/e2e/money/preflight.mjs --one-commit "$NIKATRU_SHA"; then echo "attempt $RUN_ATTEMPT: the sandbox still runs this head, so this re-run walks."; exit 0; fi
+          echo "::error title=Re-run of the money gate refused::attempt $RUN_ATTEMPT re-runs this proof job but not money-sandbox, and the sandbox could not be shown to run this head (the line above says which: another commit is deployed, or its health could not be read). Re-run the money-sandbox job of this run instead (it redeploys the head, then re-runs money-walk-tip, money-gate and the deploys)."
+          exit 1
       - name: Stamp this proof job's start
         if: needs.plan.outputs.money == 'true' && !contains(fromJSON(needs.plan.outputs.held || '[]'), format('{0}-web', matrix.rail))
         run: echo "T0=$(date +%s)" >> "$GITHUB_ENV"
@@ -1102,6 +1123,17 @@ jobs:
           NIKATRU_REF: ${{ github.event.client_payload.ref || 'refs/heads/main' }}
           NIKATRU_EVENT_NAME: ${{ github.event.client_payload.event || github.event_name }}
           NIKATRU_PR: ${{ github.event.client_payload.pr }}
+      - name: A re-run of the money gate walks only while the sandbox still runs this head
+        if: success() && !cancelled() && needs.plan.outputs.money == 'true' && needs.preflight.result == 'success' && needs.open-paywall.result == 'success' && !contains(fromJSON(needs.plan.outputs.held || '[]'), 'desktop-linux')
+        shell: bash
+        env:
+          GATE: ${{ inputs.gate == true }}
+          RUN_ATTEMPT: ${{ github.run_attempt }}
+        run: |
+          if [ "$GATE" != "true" ] || [ "$RUN_ATTEMPT" = "1" ]; then echo "attempt $RUN_ATTEMPT, gate $GATE: not a re-run of the money gate, nothing to check."; exit 0; fi
+          if node tooling/e2e/money/preflight.mjs --one-commit "$NIKATRU_SHA"; then echo "attempt $RUN_ATTEMPT: the sandbox still runs this head, so this re-run walks."; exit 0; fi
+          echo "::error title=Re-run of the money gate refused::attempt $RUN_ATTEMPT re-runs this proof job but not money-sandbox, and the sandbox could not be shown to run this head (the line above says which: another commit is deployed, or its health could not be read). Re-run the money-sandbox job of this run instead (it redeploys the head, then re-runs money-walk-tip, money-gate and the deploys)."
+          exit 1
       - name: Stamp this proof job's start
         if: success() && !cancelled() && needs.plan.outputs.money == 'true' && needs.preflight.result == 'success' && needs.open-paywall.result == 'success' && !contains(fromJSON(needs.plan.outputs.held || '[]'), 'desktop-linux')
         run: echo "T0=$(date +%s)" >> "$GITHUB_ENV"
@@ -1375,6 +1407,17 @@ jobs:
           NIKATRU_REF: ${{ github.event.client_payload.ref || 'refs/heads/main' }}
           NIKATRU_EVENT_NAME: ${{ github.event.client_payload.event || github.event_name }}
           NIKATRU_PR: ${{ github.event.client_payload.pr }}
+      - name: A re-run of the money gate walks only while the sandbox still runs this head
+        if: success() && !cancelled() && needs.plan.outputs.money == 'true' && needs.preflight.result == 'success' && needs.open-paywall.result == 'success' && !contains(fromJSON(needs.plan.outputs.held || '[]'), 'desktop-windows')
+        shell: bash
+        env:
+          GATE: ${{ inputs.gate == true }}
+          RUN_ATTEMPT: ${{ github.run_attempt }}
+        run: |
+          if [ "$GATE" != "true" ] || [ "$RUN_ATTEMPT" = "1" ]; then echo "attempt $RUN_ATTEMPT, gate $GATE: not a re-run of the money gate, nothing to check."; exit 0; fi
+          if node tooling/e2e/money/preflight.mjs --one-commit "$NIKATRU_SHA"; then echo "attempt $RUN_ATTEMPT: the sandbox still runs this head, so this re-run walks."; exit 0; fi
+          echo "::error title=Re-run of the money gate refused::attempt $RUN_ATTEMPT re-runs this proof job but not money-sandbox, and the sandbox could not be shown to run this head (the line above says which: another commit is deployed, or its health could not be read). Re-run the money-sandbox job of this run instead (it redeploys the head, then re-runs money-walk-tip, money-gate and the deploys)."
+          exit 1
       - name: Stamp this proof job's start
         if: success() && !cancelled() && needs.plan.outputs.money == 'true' && needs.preflight.result == 'success' && needs.open-paywall.result == 'success' && !contains(fromJSON(needs.plan.outputs.held || '[]'), 'desktop-windows')
         run: echo "T0=$(date +%s)" >> "$GITHUB_ENV"
@@ -1620,6 +1663,17 @@ jobs:
           NIKATRU_REF: ${{ github.event.client_payload.ref || 'refs/heads/main' }}
           NIKATRU_EVENT_NAME: ${{ github.event.client_payload.event || github.event_name }}
           NIKATRU_PR: ${{ github.event.client_payload.pr }}
+      - name: A re-run of the money gate walks only while the sandbox still runs this head
+        if: success() && !cancelled() && needs.plan.outputs.money == 'true' && needs.preflight.result == 'success' && needs.open-paywall.result == 'success' && !contains(fromJSON(needs.plan.outputs.held || '[]'), 'apk-android')
+        shell: bash
+        env:
+          GATE: ${{ inputs.gate == true }}
+          RUN_ATTEMPT: ${{ github.run_attempt }}
+        run: |
+          if [ "$GATE" != "true" ] || [ "$RUN_ATTEMPT" = "1" ]; then echo "attempt $RUN_ATTEMPT, gate $GATE: not a re-run of the money gate, nothing to check."; exit 0; fi
+          if node tooling/e2e/money/preflight.mjs --one-commit "$NIKATRU_SHA"; then echo "attempt $RUN_ATTEMPT: the sandbox still runs this head, so this re-run walks."; exit 0; fi
+          echo "::error title=Re-run of the money gate refused::attempt $RUN_ATTEMPT re-runs this proof job but not money-sandbox, and the sandbox could not be shown to run this head (the line above says which: another commit is deployed, or its health could not be read). Re-run the money-sandbox job of this run instead (it redeploys the head, then re-runs money-walk-tip, money-gate and the deploys)."
+          exit 1
       - name: Stamp this proof job's start
         if: success() && !cancelled() && needs.plan.outputs.money == 'true' && needs.preflight.result == 'success' && needs.open-paywall.result == 'success' && !contains(fromJSON(needs.plan.outputs.held || '[]'), 'apk-android')
         run: echo "T0=$(date +%s)" >> "$GITHUB_ENV"
