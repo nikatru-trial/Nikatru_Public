@@ -1539,6 +1539,8 @@ jobs:
         id: nikatru-setup-ok
         run: echo "every setup step before the first check succeeded"
       - name: Schema evolution is additive-only
+        env:
+          CHECK_MIGRATIONS_BASE: ${{ github.event.client_payload.base_ref && format('origin/{0}', github.event.client_payload.base_ref) || '' }}
         run: |
           NIKATRU_QUIET="$(mktemp "${RUNNER_TEMP:-/tmp}/nikatru-step.XXXXXX")"
           cat > "$NIKATRU_QUIET" <<'NIKATRU_QUIET_EOF'
