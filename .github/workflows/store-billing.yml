@@ -910,16 +910,11 @@ jobs:
         run: |
           NIKATRU_QUIET="$(mktemp "${RUNNER_TEMP:-/tmp}/nikatru-step.XXXXXX")"
           cat > "$NIKATRU_QUIET" <<'NIKATRU_QUIET_EOF'
-          log="${RUNNER_TEMP}/xcodebuild.log"
-          if [ -s "$log" ]; then
-            tail -n 300 "$log"
-          else
-            echo "xcodebuild.log is empty or missing: xcodebuild never started"
-          fi
+          node tooling/store-billing/xcresult-evidence.mjs --xcresult "${RUNNER_TEMP}/StoreBillingTests.xcresult" --log "${RUNNER_TEMP}/xcodebuild.log" --out "${RUNNER_TEMP}/storekit-evidence"
           exit 1
           NIKATRU_QUIET_EOF
           NIKATRU_SHELL="${BASH:-bash}"; if command -v cygpath >/dev/null 2>&1; then NIKATRU_SHELL="$(cygpath -w "$NIKATRU_SHELL")"; fi
-          node "$GITHUB_WORKSPACE/../.nikatru-shell/quiet-step.mjs" --name store-billing.storekit.14 -- "$NIKATRU_SHELL" -e "$NIKATRU_QUIET"
+          node "$GITHUB_WORKSPACE/../.nikatru-shell/quiet-step.mjs" --name store-billing.storekit.14 --public -- "$NIKATRU_SHELL" -e "$NIKATRU_QUIET"
       - name: Seal storekit-xcresult-${{ matrix.app }} to this run's one-time key (generated)
         id: nikatru-seal-upload-1
         if: always()
@@ -928,6 +923,7 @@ jobs:
         working-directory: ${{ github.workspace }}
         env:
           NIKATRU_PATHS: |
+            ${{ runner.temp }}/storekit-evidence/
             ${{ runner.temp }}/xcodebuild.log
             ${{ runner.temp }}/StoreBillingTests.xcresult
           NIKATRU_IF_NO_FILES: ignore
@@ -1232,16 +1228,11 @@ jobs:
         run: |
           NIKATRU_QUIET="$(mktemp "${RUNNER_TEMP:-/tmp}/nikatru-step.XXXXXX")"
           cat > "$NIKATRU_QUIET" <<'NIKATRU_QUIET_EOF'
-          log="${RUNNER_TEMP}/xcodebuild.log"
-          if [ -s "$log" ]; then
-            tail -n 300 "$log"
-          else
-            echo "xcodebuild.log is empty or missing: xcodebuild never started"
-          fi
+          node tooling/store-billing/xcresult-evidence.mjs --xcresult "${RUNNER_TEMP}/StoreBillingTests.xcresult" --log "${RUNNER_TEMP}/xcodebuild.log" --out "${RUNNER_TEMP}/storekit-evidence"
           exit 1
           NIKATRU_QUIET_EOF
           NIKATRU_SHELL="${BASH:-bash}"; if command -v cygpath >/dev/null 2>&1; then NIKATRU_SHELL="$(cygpath -w "$NIKATRU_SHELL")"; fi
-          node "$GITHUB_WORKSPACE/../.nikatru-shell/quiet-step.mjs" --name store-billing.storekit-macos.13 -- "$NIKATRU_SHELL" -e "$NIKATRU_QUIET"
+          node "$GITHUB_WORKSPACE/../.nikatru-shell/quiet-step.mjs" --name store-billing.storekit-macos.13 --public -- "$NIKATRU_SHELL" -e "$NIKATRU_QUIET"
       - name: Seal storekit-macos-xcresult-${{ matrix.app }} to this run's one-time key (generated)
         id: nikatru-seal-upload-1
         if: always()
@@ -1250,6 +1241,7 @@ jobs:
         working-directory: ${{ github.workspace }}
         env:
           NIKATRU_PATHS: |
+            ${{ runner.temp }}/storekit-evidence/
             ${{ runner.temp }}/xcodebuild.log
             ${{ runner.temp }}/StoreBillingTests.xcresult
           NIKATRU_IF_NO_FILES: ignore
