@@ -722,12 +722,19 @@ jobs:
           node tooling/store/play-avds.mjs --out "${RUNNER_TEMP}/play-avds.json" > "${RUNNER_TEMP}/play-avds.txt"
           cat "${RUNNER_TEMP}/play-avds.txt"
           while read -r type port device lcd; do
-            bash tooling/ci/boot-emulator.sh --avd "play-${type}" --device "${device}" --port "${port}" --lcd "${lcd}"
+            bash tooling/ci/boot-emulator.sh --avd "play-${type}" --device "${device}" --port "${port}" --lcd "${lcd}" < /dev/null
           done < "${RUNNER_TEMP}/play-avds.txt"
-          adb devices -l
           NIKATRU_QUIET_EOF
           NIKATRU_SHELL="${BASH:-bash}"; if command -v cygpath >/dev/null 2>&1; then NIKATRU_SHELL="$(cygpath -w "$NIKATRU_SHELL")"; fi
           node "$GITHUB_WORKSPACE/../.nikatru-shell/quiet-step.mjs" --name store-screenshots.capture.10 -- "$NIKATRU_SHELL" -e "$NIKATRU_QUIET"
+      - name: List the booted Play emulators (the pinned adb boot-emulator.sh exported)
+        run: |
+          NIKATRU_QUIET="$(mktemp "${RUNNER_TEMP:-/tmp}/nikatru-step.XXXXXX")"
+          cat > "$NIKATRU_QUIET" <<'NIKATRU_QUIET_EOF'
+          "${BOOT_EMULATOR_ADB}" devices -l
+          NIKATRU_QUIET_EOF
+          NIKATRU_SHELL="${BASH:-bash}"; if command -v cygpath >/dev/null 2>&1; then NIKATRU_SHELL="$(cygpath -w "$NIKATRU_SHELL")"; fi
+          node "$GITHUB_WORKSPACE/../.nikatru-shell/quiet-step.mjs" --name store-screenshots.capture.11 -- "$NIKATRU_SHELL" -e "$NIKATRU_QUIET"
       - name: flutter pub get
         working-directory: apps/${{ matrix.app }}
         run: |
@@ -736,7 +743,7 @@ jobs:
           flutter pub get --enforce-lockfile
           NIKATRU_QUIET_EOF
           NIKATRU_SHELL="${BASH:-bash}"; if command -v cygpath >/dev/null 2>&1; then NIKATRU_SHELL="$(cygpath -w "$NIKATRU_SHELL")"; fi
-          node "$GITHUB_WORKSPACE/../.nikatru-shell/quiet-step.mjs" --name store-screenshots.capture.11 -- "$NIKATRU_SHELL" -e "$NIKATRU_QUIET"
+          node "$GITHUB_WORKSPACE/../.nikatru-shell/quiet-step.mjs" --name store-screenshots.capture.12 -- "$NIKATRU_SHELL" -e "$NIKATRU_QUIET"
       - name: Provision throwaway confirmed user
         id: user
         env:
@@ -748,7 +755,7 @@ jobs:
           node tooling/store/capture-account.mjs provision
           NIKATRU_QUIET_EOF
           NIKATRU_SHELL="${BASH:-bash}"; if command -v cygpath >/dev/null 2>&1; then NIKATRU_SHELL="$(cygpath -w "$NIKATRU_SHELL")"; fi
-          node "$GITHUB_WORKSPACE/../.nikatru-shell/quiet-step.mjs" --name store-screenshots.capture.12 -- "$NIKATRU_SHELL" -e "$NIKATRU_QUIET"
+          node "$GITHUB_WORKSPACE/../.nikatru-shell/quiet-step.mjs" --name store-screenshots.capture.13 -- "$NIKATRU_SHELL" -e "$NIKATRU_QUIET"
       - name: Capture the set
         env:
           SUPABASE_URL: ${{ secrets.SUPABASE_URL }}
@@ -764,7 +771,7 @@ jobs:
           node tooling/store/capture-deadline.mjs --minutes 45 -- node tooling/store/capture-play-screenshots.mjs --app "$APP" --locale "$LOCALE" --android-avds "${RUNNER_TEMP}/play-avds.json"
           NIKATRU_QUIET_EOF
           NIKATRU_SHELL="${BASH:-bash}"; if command -v cygpath >/dev/null 2>&1; then NIKATRU_SHELL="$(cygpath -w "$NIKATRU_SHELL")"; fi
-          node "$GITHUB_WORKSPACE/../.nikatru-shell/quiet-step.mjs" --name store-screenshots.capture.13 -- "$NIKATRU_SHELL" -e "$NIKATRU_QUIET"
+          node "$GITHUB_WORKSPACE/../.nikatru-shell/quiet-step.mjs" --name store-screenshots.capture.14 -- "$NIKATRU_SHELL" -e "$NIKATRU_QUIET"
       - name: The captured set satisfies the listing-asset guard
         id: listing
         run: |
@@ -773,7 +780,7 @@ jobs:
           node --single-threaded tooling/ci/assert-listing-assets.mjs --for-submission --channel android-play --locale "$LOCALE"
           NIKATRU_QUIET_EOF
           NIKATRU_SHELL="${BASH:-bash}"; if command -v cygpath >/dev/null 2>&1; then NIKATRU_SHELL="$(cygpath -w "$NIKATRU_SHELL")"; fi
-          node "$GITHUB_WORKSPACE/../.nikatru-shell/quiet-step.mjs" --name store-screenshots.capture.14 -- "$NIKATRU_SHELL" -e "$NIKATRU_QUIET"
+          node "$GITHUB_WORKSPACE/../.nikatru-shell/quiet-step.mjs" --name store-screenshots.capture.15 -- "$NIKATRU_SHELL" -e "$NIKATRU_QUIET"
       - name: Re-derive every set the register derives from this capture
         id: finish
         run: |
@@ -785,7 +792,7 @@ jobs:
           echo "paths=$(tr '\n' ' ' < "${RUNNER_TEMP}/finish-capture.txt")" >> "$GITHUB_OUTPUT"
           NIKATRU_QUIET_EOF
           NIKATRU_SHELL="${BASH:-bash}"; if command -v cygpath >/dev/null 2>&1; then NIKATRU_SHELL="$(cygpath -w "$NIKATRU_SHELL")"; fi
-          node "$GITHUB_WORKSPACE/../.nikatru-shell/quiet-step.mjs" --name store-screenshots.capture.15 -- "$NIKATRU_SHELL" -e "$NIKATRU_QUIET"
+          node "$GITHUB_WORKSPACE/../.nikatru-shell/quiet-step.mjs" --name store-screenshots.capture.16 -- "$NIKATRU_SHELL" -e "$NIKATRU_QUIET"
       - name: Every derived set was derived from the files in this tree
         run: |
           NIKATRU_QUIET="$(mktemp "${RUNNER_TEMP:-/tmp}/nikatru-step.XXXXXX")"
@@ -793,7 +800,7 @@ jobs:
           node tooling/ci/assert-derived-sets.mjs
           NIKATRU_QUIET_EOF
           NIKATRU_SHELL="${BASH:-bash}"; if command -v cygpath >/dev/null 2>&1; then NIKATRU_SHELL="$(cygpath -w "$NIKATRU_SHELL")"; fi
-          node "$GITHUB_WORKSPACE/../.nikatru-shell/quiet-step.mjs" --name store-screenshots.capture.16 -- "$NIKATRU_SHELL" -e "$NIKATRU_QUIET"
+          node "$GITHUB_WORKSPACE/../.nikatru-shell/quiet-step.mjs" --name store-screenshots.capture.17 -- "$NIKATRU_SHELL" -e "$NIKATRU_QUIET"
       - name: Re-derive the site copies of the Play phone frames (tooling/site-shots.json)
         id: site
         run: |
@@ -816,7 +823,7 @@ jobs:
           echo "paths=$(tr '\n' ' ' < "${RUNNER_TEMP}/site-shots.txt")" >> "$GITHUB_OUTPUT"
           NIKATRU_QUIET_EOF
           NIKATRU_SHELL="${BASH:-bash}"; if command -v cygpath >/dev/null 2>&1; then NIKATRU_SHELL="$(cygpath -w "$NIKATRU_SHELL")"; fi
-          node "$GITHUB_WORKSPACE/../.nikatru-shell/quiet-step.mjs" --name store-screenshots.capture.17 -- "$NIKATRU_SHELL" -e "$NIKATRU_QUIET"
+          node "$GITHUB_WORKSPACE/../.nikatru-shell/quiet-step.mjs" --name store-screenshots.capture.18 -- "$NIKATRU_SHELL" -e "$NIKATRU_QUIET"
       - name: Every site copy is derived from the frame on disk
         run: |
           NIKATRU_QUIET="$(mktemp "${RUNNER_TEMP:-/tmp}/nikatru-step.XXXXXX")"
@@ -824,7 +831,7 @@ jobs:
           node tooling/sites/derive-site-shots.mjs --check
           NIKATRU_QUIET_EOF
           NIKATRU_SHELL="${BASH:-bash}"; if command -v cygpath >/dev/null 2>&1; then NIKATRU_SHELL="$(cygpath -w "$NIKATRU_SHELL")"; fi
-          node "$GITHUB_WORKSPACE/../.nikatru-shell/quiet-step.mjs" --name store-screenshots.capture.18 -- "$NIKATRU_SHELL" -e "$NIKATRU_QUIET"
+          node "$GITHUB_WORKSPACE/../.nikatru-shell/quiet-step.mjs" --name store-screenshots.capture.19 -- "$NIKATRU_SHELL" -e "$NIKATRU_QUIET"
       - name: Install the fleet Playwright (lockfile)
         working-directory: _playwright
         run: |
@@ -833,7 +840,7 @@ jobs:
           node "$GITHUB_WORKSPACE/tooling/ops/npm-ci-retry.mjs" -- npm ci --ignore-scripts --no-audit --no-fund
           NIKATRU_QUIET_EOF
           NIKATRU_SHELL="${BASH:-bash}"; if command -v cygpath >/dev/null 2>&1; then NIKATRU_SHELL="$(cygpath -w "$NIKATRU_SHELL")"; fi
-          node "$GITHUB_WORKSPACE/../.nikatru-shell/quiet-step.mjs" --name store-screenshots.capture.19 -- "$NIKATRU_SHELL" -e "$NIKATRU_QUIET"
+          node "$GITHUB_WORKSPACE/../.nikatru-shell/quiet-step.mjs" --name store-screenshots.capture.20 -- "$NIKATRU_SHELL" -e "$NIKATRU_QUIET"
       - name: Re-render the social cards drawn from a re-captured frame (tooling/sites/nikatru-og-cards.json)
         id: og
         run: |
@@ -846,7 +853,7 @@ jobs:
           echo "paths=$(tr '\n' ' ' < "${RUNNER_TEMP}/og-cards.txt")" >> "$GITHUB_OUTPUT"
           NIKATRU_QUIET_EOF
           NIKATRU_SHELL="${BASH:-bash}"; if command -v cygpath >/dev/null 2>&1; then NIKATRU_SHELL="$(cygpath -w "$NIKATRU_SHELL")"; fi
-          node "$GITHUB_WORKSPACE/../.nikatru-shell/quiet-step.mjs" --name store-screenshots.capture.20 -- "$NIKATRU_SHELL" -e "$NIKATRU_QUIET"
+          node "$GITHUB_WORKSPACE/../.nikatru-shell/quiet-step.mjs" --name store-screenshots.capture.21 -- "$NIKATRU_SHELL" -e "$NIKATRU_QUIET"
       - name: Site integrity — the frames, the site copies and the social cards agree
         run: |
           NIKATRU_QUIET="$(mktemp "${RUNNER_TEMP:-/tmp}/nikatru-step.XXXXXX")"
@@ -858,7 +865,7 @@ jobs:
           node tooling/ci/check-site-integrity.mjs . $sites
           NIKATRU_QUIET_EOF
           NIKATRU_SHELL="${BASH:-bash}"; if command -v cygpath >/dev/null 2>&1; then NIKATRU_SHELL="$(cygpath -w "$NIKATRU_SHELL")"; fi
-          node "$GITHUB_WORKSPACE/../.nikatru-shell/quiet-step.mjs" --name store-screenshots.capture.21 -- "$NIKATRU_SHELL" -e "$NIKATRU_QUIET"
+          node "$GITHUB_WORKSPACE/../.nikatru-shell/quiet-step.mjs" --name store-screenshots.capture.22 -- "$NIKATRU_SHELL" -e "$NIKATRU_QUIET"
       - name: Store FAILED-not-a-listing-set-${{ github.run_id }}-${{ matrix.app }}${{ matrix.suffix }} in the bridge's private home (generated)
         if: failure()
         shell: bash
@@ -881,7 +888,7 @@ jobs:
           node --single-threaded tooling/store/measure-frame-ink.mjs "apps/${APP}/store/android-play/${LOCALE_DIR}screenshots" "apps/${APP}/store/android-play/${LOCALE_DIR}screenshots-tablet"
           NIKATRU_QUIET_EOF
           NIKATRU_SHELL="${BASH:-bash}"; if command -v cygpath >/dev/null 2>&1; then NIKATRU_SHELL="$(cygpath -w "$NIKATRU_SHELL")"; fi
-          node "$GITHUB_WORKSPACE/../.nikatru-shell/quiet-step.mjs" --name store-screenshots.capture.23 -- "$NIKATRU_SHELL" -e "$NIKATRU_QUIET"
+          node "$GITHUB_WORKSPACE/../.nikatru-shell/quiet-step.mjs" --name store-screenshots.capture.24 -- "$NIKATRU_SHELL" -e "$NIKATRU_QUIET"
       - name: Store play-screenshots-${{ matrix.app }}${{ matrix.suffix }} in the bridge's private home (generated)
         if: ${{ !inputs.dry_run && (github.event.client_payload.ref || inputs.private_ref || 'refs/heads/main') == 'refs/heads/main' }}
         shell: bash
@@ -951,7 +958,7 @@ jobs:
           node tooling/ops/bridge-propose.mjs
           NIKATRU_QUIET_EOF
           NIKATRU_SHELL="${BASH:-bash}"; if command -v cygpath >/dev/null 2>&1; then NIKATRU_SHELL="$(cygpath -w "$NIKATRU_SHELL")"; fi
-          node "$GITHUB_WORKSPACE/../.nikatru-shell/quiet-step.mjs" --name store-screenshots.capture.26 -- "$NIKATRU_SHELL" -e "$NIKATRU_QUIET"
+          node "$GITHUB_WORKSPACE/../.nikatru-shell/quiet-step.mjs" --name store-screenshots.capture.27 -- "$NIKATRU_SHELL" -e "$NIKATRU_QUIET"
       - name: Purge the throwaway user
         if: always()
         env:
@@ -969,7 +976,7 @@ jobs:
           node tooling/store/capture-account.mjs purge
           NIKATRU_QUIET_EOF
           NIKATRU_SHELL="${BASH:-bash}"; if command -v cygpath >/dev/null 2>&1; then NIKATRU_SHELL="$(cygpath -w "$NIKATRU_SHELL")"; fi
-          node "$GITHUB_WORKSPACE/../.nikatru-shell/quiet-step.mjs" --name store-screenshots.capture.27 -- "$NIKATRU_SHELL" -e "$NIKATRU_QUIET"
+          node "$GITHUB_WORKSPACE/../.nikatru-shell/quiet-step.mjs" --name store-screenshots.capture.28 -- "$NIKATRU_SHELL" -e "$NIKATRU_QUIET"
       - name: Store this job's red detail in the bridge's private home (generated)
         if: always()
         continue-on-error: true

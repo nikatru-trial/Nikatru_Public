@@ -160,7 +160,7 @@ shell/.github/workflows/status-page.yml
 shell/.github/workflows/store-billing.yml
 341888ae098e71462ab4cf7ef6c41aded5f9471adc12b431274202c897b27e5e
 shell/.github/workflows/store-screenshots.yml
-4c925ff2125d41851d0f8d7cfaa071e17223a00b78da568e39432aae5d80a50f
+da2c265bd7dd12b5c2b64e144c3f4498fd73027478542a6288c5326ee4d0f514
 shell/.github/workflows/submit-appstore.yml
 a4f79856fa1f8d47f52c2c537853d6bf32a6333bb93dc7f6418a02c27130da53
 shell/.github/workflows/submit-play.yml
